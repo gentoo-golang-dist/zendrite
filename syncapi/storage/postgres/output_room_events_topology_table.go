@@ -10,6 +10,7 @@ import (
 	"database/sql"
 
 	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal/depth"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	rstypes "codefloe.com/pat-s/dendrite/roomserver/types"
 	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
@@ -99,7 +100,7 @@ func (s *outputRoomEventsTopologyStatements) InsertEventInTopology(
 ) (topoPos types.StreamPosition, err error) {
 	// Clamp the depth to prevent issues with events that have depth values
 	// exceeding the canonical JSON integer limit (e.g., from corrupt federation data).
-	depth := internal.ClampDepth(event.Depth())
+	depth := depth.Clamp(event.Depth())
 	err = sqlutil.TxStmt(txn, s.insertEventInTopologyStmt).QueryRowContext(
 		ctx, event.EventID(), depth, event.RoomID().String(), pos,
 	).Scan(&topoPos)

@@ -4,13 +4,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 // Please see LICENSE files in the repository root for full details.
 
-package internal
+package depth
 
 import (
 	"testing"
 )
 
-func TestClampDepth(t *testing.T) {
+func TestClamp(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    int64
@@ -60,9 +60,9 @@ func TestClampDepth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ClampDepth(tt.input)
+			result := Clamp(tt.input)
 			if result != tt.expected {
-				t.Errorf("ClampDepth(%d) = %d, want %d", tt.input, result, tt.expected)
+				t.Errorf("Clamp(%d) = %d, want %d", tt.input, result, tt.expected)
 			}
 		})
 	}
