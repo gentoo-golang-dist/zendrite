@@ -31,8 +31,8 @@ type FederationInternalAPI struct {
 	federation         fclient.FederationClient
 	keyRing            *gomatrixserverlib.KeyRing
 	queues             *queue.OutgoingQueues
-	joins              sync.Map             // joins currently in progress
-	partialStateWorker *PartialStateWorker  // MSC3706: worker for background state resync
+	joins              sync.Map            // joins currently in progress
+	partialStateWorker *PartialStateWorker // MSC3706: worker for background state resync
 }
 
 func NewFederationInternalAPI(

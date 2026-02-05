@@ -33,26 +33,26 @@ import (
 // Database is a temporary struct until we have made syncserver.go the same for both pq/sqlite
 // For now this contains the shared functions
 type Database struct {
-	DB                       *sql.DB
-	Writer                   sqlutil.Writer
-	Invites                  tables.Invites
-	Peeks                    tables.Peeks
-	AccountData              tables.AccountData
-	OutputEvents             tables.Events
-	Topology                 tables.Topology
-	CurrentRoomState         tables.CurrentRoomState
-	BackwardExtremities      tables.BackwardsExtremities
-	SendToDevice             tables.SendToDevice
-	Filter                   tables.Filter
-	Receipts                 tables.Receipts
-	Memberships              tables.Memberships
-	NotificationData         tables.NotificationData
-	Ignores                  tables.Ignores
-	Presence                 tables.Presence
-	Relations                tables.Relations
-	SlidingSync              tables.SlidingSync
-	SlidingSyncRoomMetadata  tables.SlidingSyncRoomMetadata
-	UnPartialStatedRooms     tables.UnPartialStatedRooms
+	DB                      *sql.DB
+	Writer                  sqlutil.Writer
+	Invites                 tables.Invites
+	Peeks                   tables.Peeks
+	AccountData             tables.AccountData
+	OutputEvents            tables.Events
+	Topology                tables.Topology
+	CurrentRoomState        tables.CurrentRoomState
+	BackwardExtremities     tables.BackwardsExtremities
+	SendToDevice            tables.SendToDevice
+	Filter                  tables.Filter
+	Receipts                tables.Receipts
+	Memberships             tables.Memberships
+	NotificationData        tables.NotificationData
+	Ignores                 tables.Ignores
+	Presence                tables.Presence
+	Relations               tables.Relations
+	SlidingSync             tables.SlidingSync
+	SlidingSyncRoomMetadata tables.SlidingSyncRoomMetadata
+	UnPartialStatedRooms    tables.UnPartialStatedRooms
 }
 
 func (d *Database) NewDatabaseSnapshot(ctx context.Context) (*DatabaseTransaction, error) {
@@ -642,9 +642,9 @@ func (d *Database) GetOrCreateConnection(ctx context.Context, userID, deviceID, 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 			// Try to select existing connection
-			conn, err := d.SlidingSync.SelectConnectionByIDs(ctx, txn, userID, deviceID, connID)
-			if err != nil {
-				return err
+			conn, selectErr := d.SlidingSync.SelectConnectionByIDs(ctx, txn, userID, deviceID, connID)
+			if selectErr != nil {
+				return selectErr
 			}
 
 			if conn != nil {
@@ -655,8 +655,9 @@ func (d *Database) GetOrCreateConnection(ctx context.Context, userID, deviceID, 
 
 			// Connection doesn't exist, create it
 			createdTS := time.Now().UnixMilli()
-			connectionKey, err = d.SlidingSync.InsertConnection(ctx, txn, userID, deviceID, connID, createdTS)
-			return err
+			var insertErr error
+			connectionKey, insertErr = d.SlidingSync.InsertConnection(ctx, txn, userID, deviceID, connID, createdTS)
+			return insertErr
 		})
 
 		if err == nil {
@@ -683,9 +684,9 @@ func (d *Database) GetOrCreateConnection(ctx context.Context, userID, deviceID, 
 func (d *Database) CreateConnectionPosition(ctx context.Context, connectionKey int64) (connectionPosition int64, err error) {
 	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		createdTS := time.Now().UnixMilli()
-		var err error
-		connectionPosition, err = d.SlidingSync.InsertConnectionPosition(ctx, txn, connectionKey, createdTS)
-		return err
+		var insertErr error
+		connectionPosition, insertErr = d.SlidingSync.InsertConnectionPosition(ctx, txn, connectionKey, createdTS)
+		return insertErr
 	})
 	return connectionPosition, err
 }
@@ -797,9 +798,9 @@ func (d *Database) UpdateConnectionStream(ctx context.Context, connectionPositio
 func (d *Database) GetOrCreateRequiredStateID(ctx context.Context, connectionKey int64, requiredStateJSON string) (requiredStateID int64, err error) {
 	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		// Try to find existing required_state by content (deduplication)
-		existingID, exists, err := d.SlidingSync.SelectRequiredStateByContent(ctx, txn, connectionKey, requiredStateJSON)
-		if err != nil {
-			return err
+		existingID, exists, selectErr := d.SlidingSync.SelectRequiredStateByContent(ctx, txn, connectionKey, requiredStateJSON)
+		if selectErr != nil {
+			return selectErr
 		}
 		if exists {
 			requiredStateID = existingID
@@ -807,8 +808,9 @@ func (d *Database) GetOrCreateRequiredStateID(ctx context.Context, connectionKey
 		}
 
 		// Doesn't exist, create it
-		requiredStateID, err = d.SlidingSync.InsertRequiredState(ctx, txn, connectionKey, requiredStateJSON)
-		return err
+		var insertErr error
+		requiredStateID, insertErr = d.SlidingSync.InsertRequiredState(ctx, txn, connectionKey, requiredStateJSON)
+		return insertErr
 	})
 	return requiredStateID, err
 }
@@ -872,9 +874,9 @@ func (d *Database) GetRequiredState(ctx context.Context, requiredStateID int64) 
 
 func (d *Database) GetConnectionList(ctx context.Context, connectionKey int64, listName string) (roomIDsJSON string, exists bool, err error) {
 	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-		var err error
-		roomIDsJSON, exists, err = d.SlidingSync.SelectConnectionList(ctx, txn, connectionKey, listName)
-		return err
+		var selectErr error
+		roomIDsJSON, exists, selectErr = d.SlidingSync.SelectConnectionList(ctx, txn, connectionKey, listName)
+		return selectErr
 	})
 	return roomIDsJSON, exists, err
 }
@@ -915,9 +917,9 @@ func (d *Database) PopulateRoomStateAfterResync(ctx context.Context, stateEvents
 	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		// Get the current max PDU position as reference for state tracking
 		// We don't insert events into the timeline, just populate current state
-		maxEventID, err := d.OutputEvents.SelectMaxEventID(ctx, txn)
-		if err != nil {
-			return fmt.Errorf("d.OutputEvents.SelectMaxEventID: %w", err)
+		maxEventID, selectErr := d.OutputEvents.SelectMaxEventID(ctx, txn)
+		if selectErr != nil {
+			return fmt.Errorf("d.OutputEvents.SelectMaxEventID: %w", selectErr)
 		}
 		pduPosition = types.StreamPosition(maxEventID)
 
@@ -929,19 +931,19 @@ func (d *Database) PopulateRoomStateAfterResync(ctx context.Context, stateEvents
 			}
 			var membership *string
 			if event.Type() == "m.room.member" {
-				value, err := event.Membership()
-				if err != nil {
-					return fmt.Errorf("event.Membership: %w", err)
+				value, membershipErr := event.Membership()
+				if membershipErr != nil {
+					return fmt.Errorf("event.Membership: %w", membershipErr)
 				}
 				membership = &value
 				// Also update the memberships table for sync API
-				if err = d.Memberships.UpsertMembership(ctx, txn, event, pduPosition, 0); err != nil {
-					return fmt.Errorf("d.Memberships.UpsertMembership: %w", err)
+				if upsertErr := d.Memberships.UpsertMembership(ctx, txn, event, pduPosition, 0); upsertErr != nil {
+					return fmt.Errorf("d.Memberships.UpsertMembership: %w", upsertErr)
 				}
 			}
 
-			if err := d.CurrentRoomState.UpsertRoomState(ctx, txn, event, membership, pduPosition); err != nil {
-				return fmt.Errorf("d.CurrentRoomState.UpsertRoomState: %w", err)
+			if upsertErr := d.CurrentRoomState.UpsertRoomState(ctx, txn, event, membership, pduPosition); upsertErr != nil {
+				return fmt.Errorf("d.CurrentRoomState.UpsertRoomState: %w", upsertErr)
 			}
 		}
 

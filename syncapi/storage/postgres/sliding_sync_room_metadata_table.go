@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 
+	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
 	"github.com/lib/pq"
@@ -117,20 +118,20 @@ const deleteMembershipSnapshotSQL = `
 `
 
 type slidingSyncRoomMetadataStatements struct {
-	insertRoomToRecalculateStmt                      *sql.Stmt
-	selectRoomsToRecalculateStmt                     *sql.Stmt
-	deleteRoomToRecalculateStmt                      *sql.Stmt
-	upsertJoinedRoomStmt                             *sql.Stmt
-	selectJoinedRoomStmt                             *sql.Stmt
-	selectJoinedRoomsStmt                            *sql.Stmt
-	deleteJoinedRoomStmt                             *sql.Stmt
-	upsertMembershipSnapshotStmt                     *sql.Stmt
-	selectMembershipSnapshotStmt                     *sql.Stmt
-	selectMembershipSnapshotsForUserStmt             *sql.Stmt
+	insertRoomToRecalculateStmt                         *sql.Stmt
+	selectRoomsToRecalculateStmt                        *sql.Stmt
+	deleteRoomToRecalculateStmt                         *sql.Stmt
+	upsertJoinedRoomStmt                                *sql.Stmt
+	selectJoinedRoomStmt                                *sql.Stmt
+	selectJoinedRoomsStmt                               *sql.Stmt
+	deleteJoinedRoomStmt                                *sql.Stmt
+	upsertMembershipSnapshotStmt                        *sql.Stmt
+	selectMembershipSnapshotStmt                        *sql.Stmt
+	selectMembershipSnapshotsForUserStmt                *sql.Stmt
 	selectMembershipSnapshotsForUserWithMembershipsStmt *sql.Stmt
-	updateMembershipForgottenStmt                    *sql.Stmt
-	deleteMembershipSnapshotStmt                     *sql.Stmt
-	db                                               *sql.DB
+	updateMembershipForgottenStmt                       *sql.Stmt
+	deleteMembershipSnapshotStmt                        *sql.Stmt
+	db                                                  *sql.DB
 }
 
 func NewPostgresSlidingSyncRoomMetadataTable(db *sql.DB) (tables.SlidingSyncRoomMetadata, error) {
@@ -170,7 +171,7 @@ func (s *slidingSyncRoomMetadataStatements) SelectRoomsToRecalculate(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer internal.CloseAndLogIfError(ctx, rows, "close rows")
 
 	var roomIDs []string
 	for rows.Next() {
@@ -247,7 +248,7 @@ func (s *slidingSyncRoomMetadataStatements) SelectJoinedRooms(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer internal.CloseAndLogIfError(ctx, rows, "close rows")
 
 	result := make(map[string]*tables.SlidingSyncJoinedRoom)
 	for rows.Next() {
@@ -326,7 +327,7 @@ func (s *slidingSyncRoomMetadataStatements) SelectJoinedRoomsByFilters(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer internal.CloseAndLogIfError(ctx, rows, "close rows")
 
 	var rooms []tables.SlidingSyncJoinedRoom
 	for rows.Next() {
@@ -428,7 +429,7 @@ func (s *slidingSyncRoomMetadataStatements) SelectMembershipSnapshotsForUser(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer internal.CloseAndLogIfError(ctx, rows, "close rows")
 
 	var snapshots []tables.SlidingSyncMembershipSnapshot
 	for rows.Next() {

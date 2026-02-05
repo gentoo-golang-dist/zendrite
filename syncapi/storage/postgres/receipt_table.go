@@ -87,11 +87,11 @@ const deleteConnectionReceiptsForRoomSQL = "" +
 	"DELETE FROM syncapi_sliding_sync_connection_receipts WHERE connection_key = $1 AND room_id = $2"
 
 type receiptStatements struct {
-	db                           *sql.DB
-	upsertReceipt                *sql.Stmt
-	selectRoomReceipts           *sql.Stmt
-	selectMaxReceiptID           *sql.Stmt
-	purgeReceiptsStmt            *sql.Stmt
+	db                 *sql.DB
+	upsertReceipt      *sql.Stmt
+	selectRoomReceipts *sql.Stmt
+	selectMaxReceiptID *sql.Stmt
+	purgeReceiptsStmt  *sql.Stmt
 	// New statements for per-connection tracking
 	selectLatestUserReceipts        *sql.Stmt
 	selectConnectionReceipts        *sql.Stmt

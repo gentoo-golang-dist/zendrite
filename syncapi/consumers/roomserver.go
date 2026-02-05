@@ -32,26 +32,25 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/nats-io/nats.go"
-	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 )
 
 // OutputRoomEventConsumer consumes events that originated in the room server.
 type OutputRoomEventConsumer struct {
-	ctx              context.Context
-	cfg              *config.SyncAPI
-	rsAPI            api.SyncRoomserverAPI
-	jetstream        nats.JetStreamContext
-	durable          string
-	topic            string
-	db               storage.Database
-	pduStream        streams.StreamProvider
-	inviteStream     streams.StreamProvider
-	notifier         *notifier.Notifier
-	fts              fulltext.Indexer
-	asProducer       *producers.AppserviceEventProducer
-	metadataQueuer   internal.RoomMetadataQueuer
+	ctx            context.Context
+	cfg            *config.SyncAPI
+	rsAPI          api.SyncRoomserverAPI
+	jetstream      nats.JetStreamContext
+	durable        string
+	topic          string
+	db             storage.Database
+	pduStream      streams.StreamProvider
+	inviteStream   streams.StreamProvider
+	notifier       *notifier.Notifier
+	fts            fulltext.Indexer
+	asProducer     *producers.AppserviceEventProducer
+	metadataQueuer internal.RoomMetadataQueuer
 }
 
 // NewOutputRoomEventConsumer creates a new OutputRoomEventConsumer. Call Start() to begin consuming from room servers.
@@ -144,7 +143,7 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 	case api.OutputTypePurgeRoom:
 		err = s.onPurgeRoom(s.ctx, *output.PurgeRoom)
 		if err != nil {
-			logrus.WithField("room_id", output.PurgeRoom.RoomID).WithError(err).Error("Failed to purge room from sync API")
+			log.WithField("room_id", output.PurgeRoom.RoomID).WithError(err).Error("Failed to purge room from sync API")
 			return true // non-fatal, as otherwise we end up in a loop of trying to purge the room
 		}
 	case api.OutputTypeUnPartialStatedRoom:
@@ -551,13 +550,13 @@ func (s *OutputRoomEventConsumer) onRetirePeek(
 func (s *OutputRoomEventConsumer) onPurgeRoom(
 	ctx context.Context, req api.OutputPurgeRoom,
 ) error {
-	logrus.WithField("room_id", req.RoomID).Warn("Purging room from sync API")
+	log.WithField("room_id", req.RoomID).Warn("Purging room from sync API")
 
 	if err := s.db.PurgeRoom(ctx, req.RoomID); err != nil {
-		logrus.WithField("room_id", req.RoomID).WithError(err).Error("Failed to purge room from sync API")
+		log.WithField("room_id", req.RoomID).WithError(err).Error("Failed to purge room from sync API")
 		return err
 	} else {
-		logrus.WithField("room_id", req.RoomID).Warn("Room purged from sync API")
+		log.WithField("room_id", req.RoomID).Warn("Room purged from sync API")
 		return nil
 	}
 }
@@ -574,7 +573,7 @@ func (s *OutputRoomEventConsumer) onUnPartialStatedRoom(
 	trace.SetTag("room_id", msg.RoomID)
 	trace.SetTag("user_count", len(msg.JoinedUserIDs))
 
-	logger := logrus.WithFields(logrus.Fields{
+	logger := log.WithFields(log.Fields{
 		"room_id":    msg.RoomID,
 		"user_count": len(msg.JoinedUserIDs),
 		"trace":      "partial_state_resync",
@@ -610,7 +609,7 @@ func (s *OutputRoomEventConsumer) onUnPartialStatedRoom(
 			}
 		}
 		trace.SetTag("member_events_fetched", memberEventCount)
-		logger.WithFields(logrus.Fields{
+		logger.WithFields(log.Fields{
 			"state_event_count":  len(stateRes.StateEvents),
 			"member_event_count": memberEventCount,
 		}).Debug("Fetched current state from roomserver")

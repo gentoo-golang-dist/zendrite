@@ -299,16 +299,16 @@ func (u *latestEventsUpdater) latestState() error {
 					}
 
 					logrus.WithFields(logrus.Fields{
-						"event_id":                   u.event.EventID(),
-						"room_id":                    u.event.RoomID().String(),
-						"event_before_state_nid":     u.stateAtEvent.BeforeStateSnapshotNID,
-						"resync_state_nid":           resyncStateNID,
-						"old_state_nid":              u.oldStateNID,
-						"new_state_nid":              u.newStateNID,
-						"would_remove":               len(u.removed),
-						"would_add":                  len(u.added),
-						"would_remove_members":       memberRemoved,
-						"trace":                      "msc3706_state_epoch",
+						"event_id":               u.event.EventID(),
+						"room_id":                u.event.RoomID().String(),
+						"event_before_state_nid": u.stateAtEvent.BeforeStateSnapshotNID,
+						"resync_state_nid":       resyncStateNID,
+						"old_state_nid":          u.oldStateNID,
+						"new_state_nid":          u.newStateNID,
+						"would_remove":           len(u.removed),
+						"would_add":              len(u.added),
+						"would_remove_members":   memberRemoved,
+						"trace":                  "msc3706_state_epoch",
 					}).Warn("Suppressing state regression from out-of-order event after partial state resync")
 
 					// Keep the current state instead of regressing

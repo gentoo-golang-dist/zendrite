@@ -17,24 +17,24 @@ import (
 )
 
 // TestDetermineRoomStreamState tests the room stream state determination logic
-// This is critical for incremental sync behavior (initial vs live vs previously)
+// This is critical for incremental sync behaviour (initial vs live vs previously)
 func TestDetermineRoomStreamState(t *testing.T) {
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"
 
 	tests := []struct {
-		name               string
-		connState          *V4ConnectionState
-		setupMock          func(*mockSnapshot)
-		expectedStatus     types.HaveSentRoomFlag
-		expectedHasToken   bool
-		description        string
+		name             string
+		connState        *V4ConnectionState
+		setupMock        func(*mockSnapshot)
+		expectedStatus   types.HaveSentRoomFlag
+		expectedHasToken bool
+		description      string
 	}{
 		{
-			name:      "nil connection state - returns NEVER",
-			connState: nil,
-			setupMock: func(m *mockSnapshot) {},
+			name:             "nil connection state - returns NEVER",
+			connState:        nil,
+			setupMock:        func(m *mockSnapshot) {},
 			expectedStatus:   types.HaveSentRoomNever,
 			expectedHasToken: false,
 			description:      "When connState is nil, room is treated as never sent",
@@ -286,7 +286,7 @@ func TestDetermineRoomStreamStateRejoinScenarios(t *testing.T) {
 				userID: {membership: tt.currMembership, topoPos: tt.currTopoPos},
 			}
 
-			// For the "previous" position query (pos=100 from token), we need different behavior
+			// For the "previous" position query (pos=100 from token), we need different behaviour
 			// This is tricky with our simple mock - the mock doesn't support position-based queries properly
 			// For this test, we rely on the current position being different from previous
 
@@ -300,10 +300,10 @@ func TestDetermineRoomStreamStateRejoinScenarios(t *testing.T) {
 // TestV4ConnectionStateInitialization tests V4ConnectionState creation
 func TestV4ConnectionStateInitialization(t *testing.T) {
 	tests := []struct {
-		name              string
-		connectionKey     int64
-		previousStates    map[string]map[string]*types.SlidingSyncStreamState
-		expectNumRooms    int
+		name           string
+		connectionKey  int64
+		previousStates map[string]map[string]*types.SlidingSyncStreamState
+		expectNumRooms int
 	}{
 		{
 			name:           "empty connection state",
@@ -469,10 +469,10 @@ func TestGetHeroes(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		setupMock     func(*mockSnapshot)
-		expectedLen   int
-		checkHeroes   func(*testing.T, []types.MSC4186Hero)
+		name        string
+		setupMock   func(*mockSnapshot)
+		expectedLen int
+		checkHeroes func(*testing.T, []types.MSC4186Hero)
 	}{
 		{
 			name:        "no heroes",
@@ -567,9 +567,9 @@ func TestCalculateBumpStamp(t *testing.T) {
 		{
 			name: "timeline with bump event",
 			timeline: []synctypes.ClientEvent{
-				{Type: "m.room.member", OriginServerTS: 1000}, // Not a bump event
+				{Type: "m.room.member", OriginServerTS: 1000},  // Not a bump event
 				{Type: "m.room.message", OriginServerTS: 2000}, // Bump event!
-				{Type: "m.reaction", OriginServerTS: 3000}, // Not a bump event
+				{Type: "m.reaction", OriginServerTS: 3000},     // Not a bump event
 			},
 			setupMock:         func(m *mockSnapshot) {},
 			expectedBumpStamp: 2000, // Uses the most recent bump event (message at 2000)

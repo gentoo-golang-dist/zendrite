@@ -248,11 +248,11 @@ func TestApplySlidingWindowEdgeCases(t *testing.T) {
 // TestGenerateSyncOperation tests SYNC operation generation
 func TestGenerateSyncOperation(t *testing.T) {
 	tests := []struct {
-		name           string
-		rooms          []RoomWithBumpStamp
-		rangeSpec      []int
-		expectedOp     string
-		expectedRange  []int
+		name            string
+		rooms           []RoomWithBumpStamp
+		rangeSpec       []int
+		expectedOp      string
+		expectedRange   []int
 		expectedRoomIDs []string
 	}{
 		{
@@ -262,17 +262,17 @@ func TestGenerateSyncOperation(t *testing.T) {
 				{RoomID: "!room2:test", BumpStamp: 90},
 				{RoomID: "!room3:test", BumpStamp: 80},
 			},
-			rangeSpec:      []int{0, 2},
-			expectedOp:     "SYNC",
-			expectedRange:  []int{0, 2},
+			rangeSpec:       []int{0, 2},
+			expectedOp:      "SYNC",
+			expectedRange:   []int{0, 2},
 			expectedRoomIDs: []string{"!room1:test", "!room2:test", "!room3:test"},
 		},
 		{
-			name:           "empty rooms",
-			rooms:          []RoomWithBumpStamp{},
-			rangeSpec:      []int{0, 0},
-			expectedOp:     "SYNC",
-			expectedRange:  []int{0, 0},
+			name:            "empty rooms",
+			rooms:           []RoomWithBumpStamp{},
+			rangeSpec:       []int{0, 0},
+			expectedOp:      "SYNC",
+			expectedRange:   []int{0, 0},
 			expectedRoomIDs: []string{},
 		},
 		{
@@ -280,9 +280,9 @@ func TestGenerateSyncOperation(t *testing.T) {
 			rooms: []RoomWithBumpStamp{
 				{RoomID: "!only:test", BumpStamp: 50},
 			},
-			rangeSpec:      []int{0, 0},
-			expectedOp:     "SYNC",
-			expectedRange:  []int{0, 0},
+			rangeSpec:       []int{0, 0},
+			expectedOp:      "SYNC",
+			expectedRange:   []int{0, 0},
 			expectedRoomIDs: []string{"!only:test"},
 		},
 	}

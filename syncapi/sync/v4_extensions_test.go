@@ -14,7 +14,7 @@ import (
 )
 
 // TestFindRelevantRoomIDsForExtension tests the extension room filtering logic
-// This implements MSC3959/MSC3960 behavior for lists/rooms parameters
+// This implements MSC3959/MSC3960 behaviour for lists/rooms parameters
 func TestFindRelevantRoomIDsForExtension(t *testing.T) {
 	// Setup common test data
 	actualLists := map[string]types.SlidingList{
@@ -47,7 +47,7 @@ func TestFindRelevantRoomIDsForExtension(t *testing.T) {
 		description             string
 	}{
 		{
-			name:                    "nil lists and nil rooms - default wildcard behavior",
+			name:                    "nil lists and nil rooms - default wildcard behaviour",
 			requestedLists:          nil,
 			requestedRooms:          nil,
 			actualLists:             actualLists,
@@ -202,9 +202,9 @@ func TestFindRelevantRoomIDsForExtension(t *testing.T) {
 			description: "When actual subscriptions are empty, only list rooms are returned",
 		},
 		{
-			name:                    "list with multiple operations",
-			requestedLists:          []string{"multi"},
-			requestedRooms:          []string{},
+			name:           "list with multiple operations",
+			requestedLists: []string{"multi"},
+			requestedRooms: []string{},
 			actualLists: map[string]types.SlidingList{
 				"multi": {
 					Count: 4,
@@ -247,7 +247,7 @@ func TestFindRelevantRoomIDsForExtensionDeduplication(t *testing.T) {
 		},
 	}
 	actualSubscriptions := map[string]bool{
-		"!shared:test": true,
+		"!shared:test":  true,
 		"!subonly:test": true,
 	}
 

@@ -30,19 +30,19 @@ type roomSummaryTestRoomserverAPI struct {
 }
 
 type mockRoomData struct {
-	roomID           string
-	roomVersion      gomatrixserverlib.RoomVersion
-	name             string
-	topic            string
-	avatarURL        string
-	canonicalAlias   string
-	joinRule         string
-	historyVis       string
-	guestAccess      string
-	roomType         string
-	encryption       string
-	memberCount      int
-	userMemberships  map[string]string // userID -> membership
+	roomID          string
+	roomVersion     gomatrixserverlib.RoomVersion
+	name            string
+	topic           string
+	avatarURL       string
+	canonicalAlias  string
+	joinRule        string
+	historyVis      string
+	guestAccess     string
+	roomType        string
+	encryption      string
+	memberCount     int
+	userMemberships map[string]string // userID -> membership
 }
 
 func newRoomSummaryTestRoomserverAPI(t *testing.T) *roomSummaryTestRoomserverAPI {
@@ -310,8 +310,8 @@ func TestGetRoomSummary(t *testing.T) {
 			userID:       "@alice:test",
 			expectedCode: http.StatusOK,
 			expectedFields: map[string]interface{}{
-				"room_id":                       "!encrypted:test",
-				"im.nheko.summary.encryption":   "m.megolm.v1.aes-sha2",
+				"room_id":                     "!encrypted:test",
+				"im.nheko.summary.encryption": "m.megolm.v1.aes-sha2",
 			},
 		},
 		{
@@ -347,7 +347,7 @@ func TestGetRoomSummary(t *testing.T) {
 			userID:       "",
 			expectedCode: http.StatusOK,
 			expectedFields: map[string]interface{}{
-				"room_id":                        "!versioned:test",
+				"room_id":                       "!versioned:test",
 				"im.nheko.summary.room_version": "10",
 			},
 		},
@@ -426,7 +426,7 @@ func TestGetRoomSummary(t *testing.T) {
 	}
 }
 
-// TestRoomSummaryCache tests the caching behavior
+// TestRoomSummaryCache tests the caching behaviour
 func TestRoomSummaryCache(t *testing.T) {
 	rsAPI := newRoomSummaryTestRoomserverAPI(t)
 	rsAPI.addRoom(&mockRoomData{
@@ -511,10 +511,10 @@ func TestParseRoomIDOrAlias(t *testing.T) {
 	})
 
 	testCases := []struct {
-		name         string
-		input        string
-		expectedID   string
-		expectError  bool
+		name        string
+		input       string
+		expectedID  string
+		expectError bool
 	}{
 		{
 			name:        "valid room ID",

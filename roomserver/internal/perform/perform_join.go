@@ -25,7 +25,6 @@ import (
 
 	fsAPI "codefloe.com/pat-s/dendrite/federationapi/api"
 	"codefloe.com/pat-s/dendrite/internal/eventutil"
-	"codefloe.com/pat-s/dendrite/roomserver/api"
 	rsAPI "codefloe.com/pat-s/dendrite/roomserver/api"
 	"codefloe.com/pat-s/dendrite/roomserver/internal/helpers"
 	"codefloe.com/pat-s/dendrite/roomserver/internal/input"
@@ -127,11 +126,11 @@ func (r *Joiner) performJoinRoomByAlias(
 		roomID = dirRes.RoomID
 		req.ServerNames = append(req.ServerNames, dirRes.ServerNames...)
 	} else {
-		var getRoomReq = rsAPI.GetRoomIDForAliasRequest{
+		getRoomReq := rsAPI.GetRoomIDForAliasRequest{
 			Alias:              req.RoomIDOrAlias,
 			IncludeAppservices: true,
 		}
-		var getRoomRes = rsAPI.GetRoomIDForAliasResponse{}
+		getRoomRes := rsAPI.GetRoomIDForAliasResponse{}
 		// Otherwise, look up if we know this room alias locally.
 		err = r.RSAPI.GetRoomIDForAlias(ctx, &getRoomReq, &getRoomRes)
 		if err != nil {
@@ -262,7 +261,7 @@ func (r *Joiner) performJoinRoomByID(
 		isPartialState, partialStateErr := r.DB.IsRoomPartialState(ctx, info.RoomNID)
 		if partialStateErr == nil && isPartialState {
 			// Check if the user is already joined - if so, they can proceed with local operations
-			membershipRes := &api.QueryMembershipForUserResponse{}
+			membershipRes := &rsAPI.QueryMembershipForUserResponse{}
 			_ = r.Queryer.QueryMembershipForSenderID(ctx, *roomID, senderID, membershipRes)
 			if !membershipRes.IsInRoom {
 				logrus.WithFields(logrus.Fields{
@@ -393,7 +392,7 @@ func (r *Joiner) performJoinRoomByID(
 			"decision_ms": time.Since(decisionStartTime).Milliseconds(),
 			"federated":   false,
 		}).Debug("Join decision: local join")
-		membershipRes := &api.QueryMembershipForUserResponse{}
+		membershipRes := &rsAPI.QueryMembershipForUserResponse{}
 		_ = r.Queryer.QueryMembershipForSenderID(ctx, *roomID, senderID, membershipRes)
 
 		// If we haven't already joined the room then send an event

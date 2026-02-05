@@ -168,7 +168,7 @@ func Setup(
 			if !cfg.Fulltext.Enabled {
 				return util.JSONResponse{
 					Code: http.StatusNotImplemented,
-					JSON: spec.Unrecognized("Search has been disabled by the server administrator."),
+					JSON: spec.Unrecognized("Search has been disabled by the server administrator."), //nolint:misspell // external library uses US spelling
 				}
 			}
 			var nextBatch *string

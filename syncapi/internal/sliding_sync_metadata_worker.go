@@ -93,12 +93,12 @@ func (w *SlidingSyncMetadataWorker) Start() error {
 
 // checkNeedsInitialPopulation checks if we need to do initial population
 // by checking if the recalculation queue or joined_rooms table is empty
-func (w *SlidingSyncMetadataWorker) checkNeedsInitialPopulation() (bool, error) {
+func (w *SlidingSyncMetadataWorker) checkNeedsInitialPopulation() (bool, error) { //nolint:unparam // error kept for interface compatibility
 	ctx := w.process.Context()
 
 	// Check if SlidingSyncRoomMetadata is nil (tables not yet created)
 	if w.roomMetadata == nil {
-		logrus.Warn("[SLIDING_SYNC_METADATA] SlidingSyncRoomMetadata table not initialized")
+		logrus.Warn("[SLIDING_SYNC_METADATA] SlidingSyncRoomMetadata table not initialised")
 		return false, nil
 	}
 
@@ -144,7 +144,7 @@ func (w *SlidingSyncMetadataWorker) queueInitialPopulation() {
 		logrus.WithError(err).Error("[SLIDING_SYNC_METADATA] Failed to get snapshot for initial population")
 		return
 	}
-	defer snapshot.Rollback()
+	defer func() { _ = snapshot.Rollback() }()
 
 	// Query all rooms that have joined users
 	roomsWithUsers, err := snapshot.AllJoinedUsersInRooms(ctx)
@@ -289,7 +289,7 @@ func (w *SlidingSyncMetadataWorker) processRoom(roomID string) error {
 	if err != nil {
 		return err
 	}
-	defer snapshot.Rollback()
+	defer func() { _ = snapshot.Rollback() }()
 
 	// Get room metadata from current state
 	joinedRoom, err := w.extractRoomMetadata(ctx, snapshot, roomID)
@@ -345,7 +345,7 @@ func (w *SlidingSyncMetadataWorker) extractRoomMetadata(
 		var content struct {
 			Type string `json:"type"`
 		}
-		if err := json.Unmarshal(createEvent.Content(), &content); err == nil {
+		if unmarshalErr := json.Unmarshal(createEvent.Content(), &content); unmarshalErr == nil {
 			room.RoomType = content.Type
 		}
 	}
@@ -356,7 +356,7 @@ func (w *SlidingSyncMetadataWorker) extractRoomMetadata(
 		var content struct {
 			Name string `json:"name"`
 		}
-		if err := json.Unmarshal(nameEvent.Content(), &content); err == nil {
+		if unmarshalErr := json.Unmarshal(nameEvent.Content(), &content); unmarshalErr == nil {
 			room.RoomName = content.Name
 		}
 	}

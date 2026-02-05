@@ -23,20 +23,20 @@ import (
 
 // RoomSummaryResponse represents the response for MSC3266 room summary API
 type RoomSummaryResponse struct {
-	RoomID          string   `json:"room_id"`
-	RoomType        string   `json:"room_type,omitempty"`
-	Name            string   `json:"name,omitempty"`
-	Topic           string   `json:"topic,omitempty"`
-	AvatarURL       string   `json:"avatar_url,omitempty"`
-	CanonicalAlias  string   `json:"canonical_alias,omitempty"`
-	NumJoinedMembers int     `json:"num_joined_members"`
-	GuestCanJoin    bool     `json:"guest_can_join"`
-	WorldReadable   bool     `json:"world_readable"`
-	JoinRule        string   `json:"join_rule,omitempty"`
-	AllowedRoomIDs  []string `json:"allowed_room_ids,omitempty"`
-	Encryption      string   `json:"im.nheko.summary.encryption,omitempty"` // Unstable prefix
-	Membership      string   `json:"membership,omitempty"`
-	RoomVersion     string   `json:"im.nheko.summary.room_version,omitempty"` // Unstable prefix
+	RoomID           string   `json:"room_id"`
+	RoomType         string   `json:"room_type,omitempty"`
+	Name             string   `json:"name,omitempty"`
+	Topic            string   `json:"topic,omitempty"`
+	AvatarURL        string   `json:"avatar_url,omitempty"`
+	CanonicalAlias   string   `json:"canonical_alias,omitempty"`
+	NumJoinedMembers int      `json:"num_joined_members"`
+	GuestCanJoin     bool     `json:"guest_can_join"`
+	WorldReadable    bool     `json:"world_readable"`
+	JoinRule         string   `json:"join_rule,omitempty"`
+	AllowedRoomIDs   []string `json:"allowed_room_ids,omitempty"`
+	Encryption       string   `json:"im.nheko.summary.encryption,omitempty"` // Unstable prefix
+	Membership       string   `json:"membership,omitempty"`
+	RoomVersion      string   `json:"im.nheko.summary.room_version,omitempty"` // Unstable prefix
 }
 
 // GetRoomSummary implements MSC3266 room summary API
@@ -344,7 +344,7 @@ func checkRoomAccess(
 	}
 
 	// Allow access if user is/was a member (join, invite, leave, ban)
-	// This matches Synapse behavior - you can see summary of rooms you've been in
+	// This matches Synapse behaviour - you can see summary of rooms you've been in
 	if membership == "join" || membership == "invite" || membership == "leave" || membership == "ban" {
 		return true, membership
 	}
@@ -392,7 +392,6 @@ func getUserMembership(ctx context.Context, roomserverAPI rsAPI.ClientRoomserver
 		RoomID: roomID,
 		UserID: userID,
 	}, &membershipRes)
-
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("QueryMembershipForUser failed")
 		return ""
@@ -445,7 +444,7 @@ func buildRoomSummaryResponse(
 		case spec.MRoomJoinRules:
 			// Parse join rules content
 			var joinRules struct {
-				JoinRule string   `json:"join_rule"`
+				JoinRule string `json:"join_rule"`
 				Allow    []struct {
 					RoomID string `json:"room_id"`
 					Type   string `json:"type"`

@@ -26,20 +26,22 @@ import (
 // Extensions should only return results for rooms in the Sliding Sync response. This matches up
 // the requested rooms/lists with the actual lists/rooms in the Sliding Sync response.
 //
-// Behavior (MSC3959, MSC3960, MSC3961):
-//   nil (omitted)              // Default: Process all rooms (wildcard behavior)
-//   {"lists": []}              // Explicitly process no lists
-//   {"lists": ["rooms", "dms"]} // Process only specified lists
-//   {"lists": ["*"]}           // Process all lists (explicit wildcard)
-//   {"rooms": []}              // Explicitly process no room subscriptions
-//   {"rooms": ["!a:b", "!c:d"]} // Process only specified room subscriptions
-//   {"rooms": ["*"]}           // Process all room subscriptions (explicit wildcard)
+// Behaviour (MSC3959, MSC3960, MSC3961):
+//
+//	nil (omitted)              // Default: Process all rooms (wildcard behaviour)
+//	{"lists": []}              // Explicitly process no lists
+//	{"lists": ["rooms", "dms"]} // Process only specified lists
+//	{"lists": ["*"]}           // Process all lists (explicit wildcard)
+//	{"rooms": []}              // Explicitly process no room subscriptions
+//	{"rooms": ["!a:b", "!c:d"]} // Process only specified room subscriptions
+//	{"rooms": ["*"]}           // Process all room subscriptions (explicit wildcard)
 //
 // Args:
-//   requestedLists: The `lists` from the extension request (nil = default wildcard)
-//   requestedRooms: The `rooms` from the extension request (nil = default wildcard)
-//   actualLists: The actual lists from the Sliding Sync response
-//   actualRoomSubscriptions: The actual room subscriptions from the Sliding Sync request
+//
+//	requestedLists: The `lists` from the extension request (nil = default wildcard)
+//	requestedRooms: The `rooms` from the extension request (nil = default wildcard)
+//	actualLists: The actual lists from the Sliding Sync response
+//	actualRoomSubscriptions: The actual room subscriptions from the Sliding Sync request
 //
 // Returns: Set of room IDs to process for this extension
 func findRelevantRoomIDsForExtension(
@@ -73,7 +75,7 @@ func findRelevantRoomIDsForExtension(
 			}
 		}
 	} else {
-		// nil (omitted) = default to wildcard behavior (all room subscriptions)
+		// nil (omitted) = default to wildcard behaviour (all room subscriptions)
 		for roomID := range actualRoomSubscriptions {
 			relevantRoomIDs[roomID] = true
 		}
@@ -111,7 +113,7 @@ func findRelevantRoomIDsForExtension(
 			}
 		}
 	} else {
-		// nil (omitted) = default to wildcard behavior (all lists)
+		// nil (omitted) = default to wildcard behaviour (all lists)
 		for _, list := range actualLists {
 			for _, op := range list.Ops {
 				for _, roomID := range op.RoomIDs {
@@ -149,7 +151,6 @@ func (rp *RequestPool) ProcessExtensions(
 	responseLists map[string]types.SlidingList, // Actual lists in the response
 	roomSubscriptions map[string]bool, // Actual room subscriptions from request
 ) (*types.ExtensionResponse, types.StreamingToken, []types.OutputReceiptEvent, error) {
-
 	// Return empty response if no extensions requested
 	if req.Extensions == nil {
 		return &types.ExtensionResponse{}, toPos, nil, nil
@@ -198,9 +199,9 @@ func (rp *RequestPool) ProcessExtensions(
 			// Update account data position based on what was actually returned (v4 sync fix)
 			// This ensures the position token matches the account data delivered to the client
 			logrus.WithFields(logrus.Fields{
-				"accountDataLastPos":              accountDataLastPos,
+				"accountDataLastPos":             accountDataLastPos,
 				"updatedPos.AccountDataPosition": updatedPos.AccountDataPosition,
-				"toPos.AccountDataPosition":       toPos.AccountDataPosition,
+				"toPos.AccountDataPosition":      toPos.AccountDataPosition,
 			}).Debug("[ACCOUNT_DATA] Checking position update")
 			if accountDataLastPos > updatedPos.AccountDataPosition {
 				updatedPos.AccountDataPosition = accountDataLastPos
@@ -227,7 +228,7 @@ func (rp *RequestPool) ProcessExtensions(
 			deliveredReceipts = receiptsDelivered
 			// Update receipt position based on what was actually returned
 			logrus.WithFields(logrus.Fields{
-				"receiptsLastPos":           receiptsLastPos,
+				"receiptsLastPos":            receiptsLastPos,
 				"updatedPos.ReceiptPosition": updatedPos.ReceiptPosition,
 				"toPos.ReceiptPosition":      toPos.ReceiptPosition,
 			}).Debug("[RECEIPTS] Checking position update")
@@ -343,11 +344,11 @@ func (rp *RequestPool) processE2EEExtension(
 	isInitialSync bool,
 	fromPos *types.StreamingToken,
 	toPos types.StreamingToken,
-) (*types.E2EEResponse, error) {
+) (*types.E2EEResponse, error) { //nolint:unparam // error kept for interface compatibility
 	resp := &types.E2EEResponse{
 		// CRITICAL: Android compatibility - always include signed_curve25519: 0
 		// This will be overwritten if we actually have keys, but ensures the field is present
-		DeviceOneTimeKeysCount: map[string]int{"signed_curve25519": 0},
+		DeviceOneTimeKeysCount:             map[string]int{"signed_curve25519": 0},
 		DeviceUnusedFallbackKeyTypes:       []string{},
 		DeviceUnusedFallbackKeyTypesLegacy: []string{},
 		// DeviceLists intentionally nil for initial sync (will be omitted in JSON)
@@ -377,7 +378,7 @@ func (rp *RequestPool) processE2EEExtension(
 			resp.DeviceUnusedFallbackKeyTypes = queryRes.UnusedFallbackAlgorithms
 			resp.DeviceUnusedFallbackKeyTypesLegacy = queryRes.UnusedFallbackAlgorithms
 		}
-		// If nil, keep the empty slice we initialized above
+		// If nil, keep the empty slice we initialised above
 	}
 
 	// For incremental sync, get device list changes
@@ -424,7 +425,7 @@ func (rp *RequestPool) processE2EEExtension(
 	}
 
 	// Always return e2ee extension if requested
-	// Synapse behavior: always returns OTK counts and device lists (even if empty arrays)
+	// Synapse behaviour: always returns OTK counts and device lists (even if empty arrays)
 	return resp, nil
 }
 
@@ -453,9 +454,9 @@ func (rp *RequestPool) processAccountDataExtension(
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"user_id": userID,
-		"from":    from,
-		"to":      toPos.AccountDataPosition,
+		"user_id":    userID,
+		"from":       from,
+		"to":         toPos.AccountDataPosition,
 		"is_initial": fromPos == nil,
 	}).Debug("[ACCOUNT_DATA] Querying account data range")
 
@@ -470,7 +471,7 @@ func (rp *RequestPool) processAccountDataExtension(
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"num_rooms": len(dataTypes),
+		"num_rooms":  len(dataTypes),
 		"data_types": dataTypes,
 	}).Debug("[ACCOUNT_DATA] Got account data types")
 
@@ -491,7 +492,7 @@ func (rp *RequestPool) processAccountDataExtension(
 	logrus.WithFields(logrus.Fields{
 		"requested_lists": requestedLists,
 		"requested_rooms": requestedRooms,
-		"relevant_rooms": len(relevantRoomIDs),
+		"relevant_rooms":  len(relevantRoomIDs),
 	}).Debug("[ACCOUNT_DATA] Filtered rooms for extension")
 
 	// Iterate over rooms and data types
@@ -542,7 +543,7 @@ func (rp *RequestPool) processAccountDataExtension(
 	// Always return account_data extension if requested
 	// Synapse may return empty account_data objects
 	logrus.WithFields(logrus.Fields{
-		"num_global": len(resp.Global),
+		"num_global":    len(resp.Global),
 		"num_room_keys": len(resp.Rooms),
 	}).Debug("[ACCOUNT_DATA] Returning account data response")
 
@@ -554,13 +555,13 @@ func (rp *RequestPool) processAccountDataExtension(
 // IMPORTANT: Response contains a SINGLE event per room, not an array (matrix-js-sdk expects this)
 func (rp *RequestPool) processReceiptsExtension(
 	ctx context.Context,
-	snapshot storage.DatabaseTransaction,
+	_ storage.DatabaseTransaction, // unused - using fresh snapshot for read committed isolation
 	connectionKey int64, // For per-connection receipt tracking
 	userID string,
 	requestedLists []string, // Optional list filter from request (MSC3959)
 	requestedRooms []string, // Optional room filter from request (MSC3960)
-	fromPos *types.StreamingToken,
-	toPos types.StreamingToken,
+	_ *types.StreamingToken, // unused - using per-connection event-ID tracking
+	_ types.StreamingToken, // unused - using per-connection event-ID tracking
 	actualLists map[string]types.SlidingList, // Actual lists in response
 	actualRoomSubscriptions map[string]bool, // Actual room subscriptions from request
 ) (*types.ReceiptsResponse, types.StreamPosition, []types.OutputReceiptEvent, error) {
@@ -599,7 +600,7 @@ func (rp *RequestPool) processReceiptsExtension(
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("failed to create fresh snapshot for receipts: %w", err)
 	}
-	defer freshSnapshot.Rollback()
+	defer func() { _ = freshSnapshot.Rollback() }()
 
 	// NEW APPROACH: Use per-connection event-ID based tracking instead of position-based
 	// This prevents duplicate receipts across concurrent connections (room-list vs encryption)
@@ -647,7 +648,7 @@ func (rp *RequestPool) processReceiptsExtension(
 			Type: "m.receipt",
 		}
 		// Structure: eventID -> receiptType -> userID -> {ts}
-		// This allows m.read and m.read.private to be serialized separately
+		// This allows m.read and m.read.private to be serialised separately
 		content := make(map[string]map[string]map[string]ReceiptTS)
 		for _, receipt := range roomReceipts {
 			eventContent, ok := content[receipt.EventID]
@@ -675,10 +676,10 @@ func (rp *RequestPool) processReceiptsExtension(
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"connection_key":      connectionKey,
-		"num_rooms":           len(resp.Rooms),
-		"delivered_count":     len(deliveredReceipts),
-		"user_id":             userID,
+		"connection_key":  connectionKey,
+		"num_rooms":       len(resp.Rooms),
+		"delivered_count": len(deliveredReceipts),
+		"user_id":         userID,
 	}).Info("[RECEIPTS] Returning receipts response")
 
 	// Return 0 for lastPos since we no longer track position for receipts
@@ -700,13 +701,13 @@ type ReceiptTS struct {
 // processTypingExtension handles typing notifications extension
 // IMPORTANT: Response contains a SINGLE event per room, not an array (matrix-js-sdk expects this)
 func (rp *RequestPool) processTypingExtension(
-	ctx context.Context,
-	snapshot storage.DatabaseTransaction,
-	userID string,
+	_ context.Context, // unused - typing uses EDUCache directly
+	_ storage.DatabaseTransaction, // unused - typing uses EDUCache directly
+	_ string, // unused - typing is room-wide, not user-specific
 	requestedLists []string, // Optional list filter from request (MSC3959)
 	requestedRooms []string, // Optional room filter from request (MSC3960)
 	fromPos *types.StreamingToken,
-	toPos types.StreamingToken,
+	_ types.StreamingToken, // unused - typing uses fromPos only
 	actualLists map[string]types.SlidingList, // Actual lists in response
 	actualRoomSubscriptions map[string]bool, // Actual room subscriptions from request
 ) (*types.TypingResponse, error) {
@@ -727,7 +728,7 @@ func (rp *RequestPool) processTypingExtension(
 	logrus.WithFields(logrus.Fields{
 		"requested_lists": requestedLists,
 		"requested_rooms": requestedRooms,
-		"relevant_rooms": len(roomsToCheck),
+		"relevant_rooms":  len(roomsToCheck),
 	}).Debug("[TYPING] Filtered rooms for extension")
 
 	// Get the "from" position for incremental sync

@@ -27,7 +27,7 @@ type SlidingSyncStreamToken struct {
 	StreamToken StreamingToken
 }
 
-// String serializes the token to the format: "{connection_position}/{stream_token}"
+// String serialises the token to the format: "{connection_position}/{stream_token}"
 func (t *SlidingSyncStreamToken) String() string {
 	return fmt.Sprintf("%d/%s", t.ConnectionPosition, t.StreamToken.String())
 }
@@ -220,11 +220,11 @@ type SlidingSyncResponse struct {
 	Pos string `json:"pos"`
 
 	// Updated list results
-	// Always include lists key (even if empty) to match Synapse behavior
+	// Always include lists key (even if empty) to match Synapse behaviour
 	Lists map[string]SlidingList `json:"lists"`
 
 	// Changed rooms with their data
-	// Always include rooms key (even if empty) to match Synapse behavior
+	// Always include rooms key (even if empty) to match Synapse behaviour
 	Rooms map[string]SlidingRoomData `json:"rooms"`
 
 	// Extension responses (Phase 9: to_device, e2ee, account_data, receipts, typing)
@@ -312,7 +312,7 @@ type SlidingRoomData struct {
 	PrevBatch string `json:"prev_batch,omitempty"`
 
 	// Number of live events in timeline (vs historical/backfill)
-	// Note: No omitempty - field should always be present per MSC4186 (matches Synapse behavior)
+	// Note: No omitempty - field should always be present per MSC4186 (matches Synapse behaviour)
 	NumLive int `json:"num_live"`
 
 	// Direct message flag (from m.direct account data)
@@ -389,7 +389,7 @@ type ExtensionResponse struct {
 // V4ToDeviceResponse contains to-device messages for v4 sliding sync
 // Note: Different from v3's ToDeviceResponse - includes next_batch for stateful tracking
 type V4ToDeviceResponse struct {
-	NextBatch string                                   `json:"next_batch"` // Client tracks this for next request
+	NextBatch string                                `json:"next_batch"` // Client tracks this for next request
 	Events    []gomatrixserverlib.SendToDeviceEvent `json:"events"`
 }
 

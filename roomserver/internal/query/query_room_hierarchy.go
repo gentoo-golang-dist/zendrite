@@ -31,6 +31,8 @@ import (
 //
 // If returned walker is nil, then there are no more rooms left to traverse. This method does not modify the provided walker, so it
 // can be cached.
+//
+//nolint:gocyclo
 func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker roomserver.RoomHierarchyWalker, limit int) (
 	[]fclient.RoomHierarchyRoom,
 	[]string,

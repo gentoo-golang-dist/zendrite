@@ -10,14 +10,10 @@ import (
 	"context"
 	"database/sql"
 
+	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
 )
-
-const slidingSyncSchema = `
--- See syncapi/storage/postgres/sliding_sync_schema.sql for full schema
--- This should be empty as schema is applied separately
-`
 
 // SQL statements for connection management
 const insertConnectionSQL = `
@@ -182,17 +178,17 @@ const selectConnectionListSQL = `
 `
 
 type slidingSyncStatements struct {
-	insertConnectionStmt                 *sql.Stmt
-	selectConnectionByKeyStmt            *sql.Stmt
-	selectConnectionByIDsStmt            *sql.Stmt
-	deleteConnectionStmt                 *sql.Stmt
-	deleteOldConnectionsStmt             *sql.Stmt
-	insertConnectionPositionStmt         *sql.Stmt
-	selectConnectionPositionStmt         *sql.Stmt
-	selectLatestConnectionPositionStmt   *sql.Stmt
-	insertRequiredStateStmt              *sql.Stmt
-	selectRequiredStateStmt              *sql.Stmt
-	selectRequiredStateByContentStmt     *sql.Stmt
+	insertConnectionStmt                  *sql.Stmt
+	selectConnectionByKeyStmt             *sql.Stmt
+	selectConnectionByIDsStmt             *sql.Stmt
+	deleteConnectionStmt                  *sql.Stmt
+	deleteOldConnectionsStmt              *sql.Stmt
+	insertConnectionPositionStmt          *sql.Stmt
+	selectConnectionPositionStmt          *sql.Stmt
+	selectLatestConnectionPositionStmt    *sql.Stmt
+	insertRequiredStateStmt               *sql.Stmt
+	selectRequiredStateStmt               *sql.Stmt
+	selectRequiredStateByContentStmt      *sql.Stmt
 	upsertRoomConfigStmt                  *sql.Stmt
 	selectRoomConfigStmt                  *sql.Stmt
 	selectLatestRoomConfigStmt            *sql.Stmt
@@ -416,7 +412,7 @@ func (s *slidingSyncStatements) SelectRoomConfigsByPosition(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer internal.CloseAndLogIfError(ctx, rows, "close rows")
 
 	result := make(map[string]*tables.SlidingSyncRoomConfig)
 	for rows.Next() {
@@ -479,7 +475,7 @@ func (s *slidingSyncStatements) SelectAllLatestConnectionStreams(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer internal.CloseAndLogIfError(ctx, rows, "close rows")
 
 	result := make(map[string]map[string]*tables.SlidingSyncConnectionStream)
 	for rows.Next() {
@@ -510,7 +506,7 @@ func (s *slidingSyncStatements) SelectConnectionStreamsByPosition(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer internal.CloseAndLogIfError(ctx, rows, "close rows")
 
 	result := make(map[string]map[string]*tables.SlidingSyncConnectionStream)
 	for rows.Next() {

@@ -54,6 +54,7 @@ func (p *PDUStreamProvider) Setup(
 	p.latest = id
 }
 
+//nolint:gocyclo
 func (p *PDUStreamProvider) CompleteSync(
 	ctx context.Context,
 	snapshot storage.DatabaseTransaction,
@@ -85,9 +86,9 @@ func (p *PDUStreamProvider) CompleteSync(
 	// Partial state rooms may have incomplete state which can cause issues for clients
 	// expecting full room state. Lazy-load syncs can include partial state rooms.
 	if !stateFilter.LazyLoadMembers {
-		partialStateRoomIDs, err := p.rsAPI.GetPartialStateRoomIDs(ctx)
-		if err != nil {
-			req.Log.WithError(err).Warn("Failed to get partial state rooms")
+		partialStateRoomIDs, partialErr := p.rsAPI.GetPartialStateRoomIDs(ctx)
+		if partialErr != nil {
+			req.Log.WithError(partialErr).Warn("Failed to get partial state rooms")
 		} else if len(partialStateRoomIDs) > 0 {
 			partialStateRooms := make(map[string]bool, len(partialStateRoomIDs))
 			for _, roomID := range partialStateRoomIDs {
@@ -184,6 +185,7 @@ func (p *PDUStreamProvider) CompleteSync(
 	return to
 }
 
+//nolint:gocyclo
 func (p *PDUStreamProvider) IncrementalSync(
 	ctx context.Context,
 	snapshot storage.DatabaseTransaction,
@@ -217,9 +219,9 @@ func (p *PDUStreamProvider) IncrementalSync(
 
 	// MSC3706: Filter out partial state rooms for non-lazy syncs
 	if !stateFilter.LazyLoadMembers && len(stateDeltas) > 0 {
-		partialStateRoomIDs, err := p.rsAPI.GetPartialStateRoomIDs(ctx)
-		if err != nil {
-			req.Log.WithError(err).Warn("Failed to get partial state rooms")
+		partialStateRoomIDs, partialErr := p.rsAPI.GetPartialStateRoomIDs(ctx)
+		if partialErr != nil {
+			req.Log.WithError(partialErr).Warn("Failed to get partial state rooms")
 		} else if len(partialStateRoomIDs) > 0 {
 			partialStateRooms := make(map[string]bool, len(partialStateRoomIDs))
 			for _, roomID := range partialStateRoomIDs {
@@ -434,9 +436,9 @@ func (p *PDUStreamProvider) addRoomDeltaToResponse(
 	// in the sync range. If so, we need to send the room summary with updated member counts.
 	// This is similar to Synapse's forced_newly_joined_room_ids mechanism.
 	if !hasMembershipChange {
-		unPartialStatedRooms, err := snapshot.UnPartialStatedRoomsInRange(ctx, device.UserID, r)
-		if err != nil {
-			logrus.WithError(err).Warn("failed to get un-partial-stated rooms")
+		unPartialStatedRooms, unPartialErr := snapshot.UnPartialStatedRoomsInRange(ctx, device.UserID, r)
+		if unPartialErr != nil {
+			logrus.WithError(unPartialErr).Warn("failed to get un-partial-stated rooms")
 		} else {
 			for _, roomID := range unPartialStatedRooms {
 				if roomID == delta.RoomID {

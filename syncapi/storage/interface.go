@@ -41,7 +41,7 @@ type DatabaseTransaction interface {
 	GetStateDeltas(ctx context.Context, device *userapi.Device, r types.Range, userID string, stateFilter *synctypes.StateFilter, rsAPI api.SyncRoomserverAPI) ([]types.StateDelta, []string, error)
 	RoomIDsWithMembership(ctx context.Context, userID string, membership string) ([]string, error)
 	// KickedRoomIDs returns rooms where the user was kicked (leave membership where sender != user).
-	// Per MSC4186/Synapse behavior, kicked rooms should be included in the sliding sync room list.
+	// Per MSC4186/Synapse behaviour, kicked rooms should be included in the sliding sync room list.
 	KickedRoomIDs(ctx context.Context, userID string) ([]string, error)
 	MembershipCount(ctx context.Context, roomID, membership string, pos types.StreamPosition) (int, error)
 	GetRoomSummary(ctx context.Context, roomID, userID string) (summary *types.Summary, err error)

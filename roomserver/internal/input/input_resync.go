@@ -24,11 +24,13 @@ import (
 // updates the membership table, and notifies downstream components (syncapi).
 //
 // stateEventIDs are the event IDs of the state events that were fetched during resync.
+//
+//nolint:gocyclo
 func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, stateEventIDs []string) error {
 	logger := logrus.WithFields(logrus.Fields{
-		"room_id":          roomID,
+		"room_id":           roomID,
 		"state_event_count": len(stateEventIDs),
-		"trace":            "partial_state_resync",
+		"trace":             "partial_state_resync",
 	})
 	logger.Info("Updating current state after partial state resync")
 
@@ -58,9 +60,9 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 	}
 
 	logger.WithFields(logrus.Fields{
-		"state_entries":           len(stateEntries),
-		"loaded_member_events":    loadedMemberCount,
-		"loaded_type_nid_counts":  loadedEventTypeNIDCounts,
+		"state_entries":          len(stateEntries),
+		"loaded_member_events":   loadedMemberCount,
+		"loaded_type_nid_counts": loadedEventTypeNIDCounts,
 	}).Debug("Loaded state entries from event IDs with EventTypeNID breakdown")
 
 	if len(stateEntries) == 0 {
@@ -113,8 +115,8 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 				newStateKeys[entry.StateKeyTuple] = true
 				localMemberCount++
 				logger.WithFields(logrus.Fields{
-					"event_nid":         entry.EventNID,
-					"event_state_key":   entry.EventStateKeyNID,
+					"event_nid":       entry.EventNID,
+					"event_state_key": entry.EventStateKeyNID,
 				}).Debug("Preserving local member event not in remote state")
 			}
 		}
@@ -213,8 +215,8 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 			return fmt.Errorf("r.updateMemberships: %w", err)
 		}
 		logger.WithFields(logrus.Fields{
-			"output_events":   len(outputEvents),
-			"member_changes":  memberChanges,
+			"output_events":  len(outputEvents),
+			"member_changes": memberChanges,
 		}).Debug("Updated memberships (output_events are for retired invites only)")
 	}
 

@@ -455,11 +455,9 @@ func AnnotateEventWithMembership(event *ClientEvent, membership string, useStabl
 	// Choose field name based on stability preference
 	// For sjson, dots in field names need to be escaped with backslashes
 	// to prevent them from being interpreted as nested paths
-	fieldName := UnsignedFieldMSC4115Membership
 	sjsonFieldName := "io\\.element\\.msc4115\\.membership"
 	if useStableIdentifier {
-		fieldName = UnsignedFieldMembership
-		sjsonFieldName = fieldName
+		sjsonFieldName = UnsignedFieldMembership
 	}
 
 	// If unsigned is empty, create a minimal JSON object

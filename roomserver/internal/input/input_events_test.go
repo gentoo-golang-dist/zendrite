@@ -1,14 +1,12 @@
 package input
 
 import (
-	"context"
 	"testing"
 
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/stretchr/testify/assert"
 
-	"codefloe.com/pat-s/dendrite/roomserver/types"
 	"codefloe.com/pat-s/dendrite/test"
 )
 
@@ -66,22 +64,6 @@ func Test_EventAuth(t *testing.T) {
 	}); err == nil {
 		t.Fatalf("event should not be allowed, but it was")
 	}
-}
-
-// mockInputer is a minimal mock for testing resolvePartialStateAuth
-type mockInputer struct {
-	Inputer
-}
-
-func (m *mockInputer) resolvePartialStateAuth(
-	ctx context.Context,
-	roomInfo *types.RoomInfo,
-	localState []gomatrixserverlib.PDU,
-	authEvents []gomatrixserverlib.PDU,
-) ([]gomatrixserverlib.PDU, error) {
-	// Call the actual implementation through an Inputer with nil fields
-	// We'll test the logic directly instead
-	return nil, nil
 }
 
 // Test_ResolvePartialStateAuth_NoConflicts tests that when there are no conflicts,

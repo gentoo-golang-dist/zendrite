@@ -86,10 +86,10 @@ func Setup(
 	userInteractiveAuth := auth.NewUserInteractive(userAPI, cfg)
 
 	unstableFeatures := map[string]bool{
-		"org.matrix.e2e_cross_signing":      true,
-		"org.matrix.msc2285.stable":         true,
-		"org.matrix.msc3916.stable":         true,
-		"org.matrix.simplified_msc3575":     true, // MSC4186: Simplified Sliding Sync
+		"org.matrix.e2e_cross_signing":  true,
+		"org.matrix.msc2285.stable":     true,
+		"org.matrix.msc3916.stable":     true,
+		"org.matrix.simplified_msc3575": true, // MSC4186: Simplified Sliding Sync
 	}
 	for _, msc := range cfg.MSCs.MSCs {
 		unstableFeatures["org.matrix."+msc] = true

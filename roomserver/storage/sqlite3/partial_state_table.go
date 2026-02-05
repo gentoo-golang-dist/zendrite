@@ -219,7 +219,7 @@ func (s *partialStateStatements) DeletePartialStateRoom(
 
 	// Delete servers first (SQLite doesn't enforce foreign key cascades by default)
 	serversStmt := sqlutil.TxStmt(txn, s.deletePartialStateServersStmt)
-	if _, err := serversStmt.ExecContext(ctx, roomNID); err != nil {
+	if _, err = serversStmt.ExecContext(ctx, roomNID); err != nil {
 		return 0, err
 	}
 	// Delete the room entry

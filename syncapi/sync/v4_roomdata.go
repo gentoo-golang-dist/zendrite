@@ -20,6 +20,135 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// roomMembershipResult holds the result of membership detection
+type roomMembershipResult struct {
+	membership  string
+	inviteEvent *rstypes.HeaderedEvent
+}
+
+// detectRoomMembership determines the user's membership in a room
+// Checks both PDU-based membership and active invites
+func (rp *RequestPool) detectRoomMembership(
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction,
+	roomID string,
+	userID string,
+	currentPos types.StreamingToken,
+) roomMembershipResult {
+	// First check PDU-based membership (join/leave/ban)
+	pduMembership, _, err := snapshot.SelectMembershipForUser(ctx, roomID, userID, math.MaxInt64)
+	if err != nil {
+		logrus.WithError(err).WithField("room_id", roomID).Warn("Failed to get PDU membership")
+		pduMembership = "leave"
+	}
+
+	result := roomMembershipResult{membership: pduMembership}
+
+	// Check for active invite that might override PDU membership
+	if currentPos.InvitePosition > 0 {
+		inviteRange := types.Range{From: 0, To: currentPos.InvitePosition, Backwards: false}
+		invites, retired, _, inviteErr := snapshot.InviteEventsInRange(ctx, userID, inviteRange)
+		if inviteErr != nil {
+			logrus.WithError(inviteErr).WithField("room_id", roomID).Warn("Failed to check for invites")
+		} else if invite, hasInvite := invites[roomID]; hasInvite {
+			if _, isRetired := retired[roomID]; !isRetired {
+				result.membership = "invite"
+				result.inviteEvent = invite
+			}
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"room_id":        roomID,
+		"user_id":        userID,
+		"membership":     result.membership,
+		"pdu_membership": pduMembership,
+		"pdu_pos":        currentPos.PDUPosition,
+		"invite_pos":     currentPos.InvitePosition,
+	}).Debug("[V4_SYNC] Room membership detected")
+
+	return result
+}
+
+// shouldFetchRequiredState determines if required state should be fetched
+func shouldFetchRequiredState(
+	requiredStateConfig *types.RequiredStateConfig,
+	isInitialForRoom bool,
+	timelineCount int,
+) (bool, string) {
+	if requiredStateConfig == nil || len(requiredStateConfig.Include) == 0 {
+		return false, ""
+	}
+
+	if isInitialForRoom {
+		return true, "initial sync for room"
+	}
+
+	if timelineCount > 0 {
+		for _, pattern := range requiredStateConfig.Include {
+			if len(pattern) == 2 && pattern[1] == "$LAZY" {
+				return true, "incremental sync with timeline events and $LAZY"
+			}
+		}
+	}
+
+	return false, ""
+}
+
+// populateMemberCounts adds joined and invited member counts to room data
+func (rp *RequestPool) populateMemberCounts(
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction,
+	roomID string,
+	roomData *types.SlidingRoomData,
+	currentPos types.StreamingToken,
+) {
+	countPos := currentPos.PDUPosition
+	if currentPos.InvitePosition > countPos {
+		countPos = currentPos.InvitePosition
+	}
+
+	joinedCount, err := snapshot.MembershipCount(ctx, roomID, "join", countPos)
+	if err != nil {
+		logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get joined member count")
+	} else {
+		roomData.JoinedCount = joinedCount
+	}
+
+	invitedCount, err := snapshot.MembershipCount(ctx, roomID, "invite", countPos)
+	if err != nil {
+		logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get invited member count")
+	} else {
+		roomData.InvitedCount = invitedCount
+	}
+}
+
+// populatePrevBatch generates prev_batch token if timeline is limited
+func (rp *RequestPool) populatePrevBatch(
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction,
+	roomData *types.SlidingRoomData,
+	timelineLimited bool,
+) {
+	if !timelineLimited || len(roomData.Timeline) == 0 {
+		return
+	}
+
+	earliestEvent := roomData.Timeline[0]
+	if earliestEvent.EventID == "" {
+		return
+	}
+
+	topologyToken, err := snapshot.EventPositionInTopology(ctx, earliestEvent.EventID)
+	if err != nil {
+		logrus.WithError(err).WithField("event_id", earliestEvent.EventID).Error("Failed to get topology position for prev_batch")
+		return
+	}
+
+	topologyToken.Decrement()
+	roomData.PrevBatch = topologyToken.String()
+}
+
 // BuildRoomData constructs SlidingRoomData for a single room
 // Phase 3: Basic implementation with timeline and metadata
 // Phase 4: Required state filtering
@@ -42,89 +171,31 @@ func (rp *RequestPool) BuildRoomData(
 	ignoreTimelineBound bool,
 ) (*types.SlidingRoomData, error) {
 	// CRITICAL: initial indicates if this is the FIRST TIME this room is being sent on this CONNECTION
-	// Per MSC4186: "Indicates whether this is the first time this room has been sent in this connection"
-	// This is different from the sync-level fromToken:
-	// - fromToken == nil: Client's first sync ever (all rooms are initial)
-	// - roomState.Status == HaveSentRoomNever: Room never sent on this connection (this room is initial)
-	// Both cases require initial=true for the room
 	isInitialForRoom := fromToken == nil || roomState.Status == types.HaveSentRoomNever
 	roomData := &types.SlidingRoomData{
 		Initial: isInitialForRoom,
 	}
 
-	// Phase 11: Check if this is an invited room
-	// Query user's membership in the room to determine how to build room data
-	// IMPORTANT: Membership can come from two sources:
-	// 1. syncapi_memberships table: Tracks join/leave/ban from PDU stream (PDUPosition)
-	// 2. syncapi_invite_events table: Tracks invites from Invite stream (InvitePosition)
-	// We need to check BOTH and use the most recent state
-
-	// First check PDU-based membership (join/leave/ban)
-	// Use math.MaxInt64 to get the most recent membership state regardless of topological position
-	pduMembership, _, err := snapshot.SelectMembershipForUser(ctx, roomID, userID, math.MaxInt64)
-	if err != nil {
-		logrus.WithError(err).WithField("room_id", roomID).Warn("Failed to get PDU membership")
-		pduMembership = "leave" // Default if we can't determine
-	}
-
-	// Then check if there's an active invite in the invites table
-	membership := pduMembership
-	var inviteEvent *rstypes.HeaderedEvent // Store invite event for buildInviteRoomData
-	if currentPos.InvitePosition > 0 {
-		inviteRange := types.Range{
-			From:      0,
-			To:        currentPos.InvitePosition,
-			Backwards: false,
-		}
-		invites, retired, _, err := snapshot.InviteEventsInRange(ctx, userID, inviteRange)
-		if err != nil {
-			logrus.WithError(err).WithField("room_id", roomID).Warn("Failed to check for invites")
-		} else {
-			// Check if this specific room has an active invite (not retired)
-			if invite, hasInvite := invites[roomID]; hasInvite {
-				if _, isRetired := retired[roomID]; !isRetired {
-					// Active invite found! This overrides the PDU membership
-					membership = "invite"
-					inviteEvent = invite // Keep the event for extracting invite_room_state
-				}
-			}
-		}
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"room_id":        roomID,
-		"user_id":        userID,
-		"membership":     membership,
-		"pdu_membership": pduMembership,
-		"pdu_pos":        currentPos.PDUPosition,
-		"invite_pos":     currentPos.InvitePosition,
-	}).Debug("[V4_SYNC] Room membership detected")
+	// Detect membership (PDU + invite check)
+	membershipResult := rp.detectRoomMembership(ctx, snapshot, roomID, userID, currentPos)
 
 	// If user is invited, return stripped state instead of timeline/required_state
-	if membership == "invite" {
-		logrus.WithFields(logrus.Fields{
-			"room_id": roomID,
-		}).Info("[V4_SYNC] Building invite room data (stripped state)")
-		return rp.buildInviteRoomData(ctx, snapshot, roomID, userID, isInitialForRoom, inviteEvent)
+	if membershipResult.membership == "invite" {
+		logrus.WithField("room_id", roomID).Info("[V4_SYNC] Building invite room data (stripped state)")
+		return rp.buildInviteRoomData(ctx, snapshot, roomID, userID, isInitialForRoom, membershipResult.inviteEvent)
 	}
 
-	// Phase 3: Get timeline events (up to timelineLimit)
-	// Also calculates num_live (how many events are "live" vs historical)
+	// Get timeline events
 	var timelineLimited bool
 	var numLive int
 	if timelineLimit > 0 {
-		// Determine if we need to fetch from scratch (historical events):
-		// 1. ignoreTimelineBound: timeline expansion requested
-		// 2. isInitialForRoom: room never sent before on this connection
-		// In both cases, we need to fetch the latest N events regardless of sync token
 		timelineFromToken := fromToken
 		if ignoreTimelineBound || isInitialForRoom {
 			timelineFromToken = nil
 		}
-		timeline, limited, numLiveCount, err := rp.getTimelineEvents(ctx, snapshot, roomID, userID, timelineLimit, roomState, currentPos, timelineFromToken)
-		if err != nil {
-			logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get timeline events")
-			// Continue anyway, return room with empty timeline
+		timeline, limited, numLiveCount, timelineErr := rp.getTimelineEvents(ctx, snapshot, roomID, userID, timelineLimit, roomState, currentPos, timelineFromToken)
+		if timelineErr != nil {
+			logrus.WithError(timelineErr).WithField("room_id", roomID).Error("Failed to get timeline events")
 		} else {
 			roomData.Timeline = timeline
 			timelineLimited = limited
@@ -132,154 +203,57 @@ func (rp *RequestPool) BuildRoomData(
 		}
 	}
 
-	// Phase 3: Get room name from state
+	// Get room metadata
 	roomData.Name = rp.getRoomNameFromDB(ctx, snapshot, roomID)
-
-	// Phase 3: Get room avatar from state
 	roomData.AvatarURL = rp.getRoomAvatar(ctx, snapshot, roomID)
-
-	// Phase 3: Get room topic from state
 	roomData.Topic = rp.getRoomTopic(ctx, snapshot, roomID)
 
-	// Phase 4: Get required state events
-	// Phase 5: Pass timeline for lazy member loading
-	// Phase 12/13: Implement correct $LAZY member loading per MSC4186
-	// - Initial sync: Send full required_state
-	// - Incremental sync with timeline events: Send $LAZY members (senders) per MSC4186 section 279-296
-	//   This allows the SDK to look up member info needed for push rule evaluation
-	if requiredStateConfig != nil && len(requiredStateConfig.Include) > 0 {
-		// Determine if we need to fetch required_state
-		shouldFetchState := false
-		reason := ""
+	// Get required state events
+	if shouldFetch, reason := shouldFetchRequiredState(requiredStateConfig, isInitialForRoom, len(roomData.Timeline)); shouldFetch {
+		logrus.WithFields(logrus.Fields{
+			"room_id":         roomID,
+			"user_id":         userID,
+			"reason":          reason,
+			"timeline_events": len(roomData.Timeline),
+		}).Debug("[REQUIRED_STATE] Getting required state")
 
-		if isInitialForRoom {
-			// Initial sync or first time room is sent on this connection: always include full required_state
-			// This handles both fromToken == nil AND rooms with HaveSentRoomNever status
-			shouldFetchState = true
-			reason = "initial sync for room"
-		} else if len(roomData.Timeline) > 0 {
-			// Incremental sync with timeline events: check if $LAZY is requested
-			// Per MSC4186: "the server will return the membership events for all the senders
-			// of events in timeline_events, excluding membership events previously returned"
-			hasLazy := false
-			for _, pattern := range requiredStateConfig.Include {
-				if len(pattern) == 2 && pattern[1] == "$LAZY" {
-					hasLazy = true
-					break
-				}
-			}
-			if hasLazy {
-				shouldFetchState = true
-				reason = "incremental sync with timeline events and $LAZY"
-			}
-		}
-
-		if shouldFetchState {
-			logrus.WithFields(logrus.Fields{
-				"room_id": roomID,
-				"user_id": userID,
-				"reason":  reason,
-				"timeline_events": len(roomData.Timeline),
-			}).Debug("[REQUIRED_STATE] Getting required state")
-
-			requiredState, err := rp.getRequiredState(ctx, snapshot, roomID, userID, requiredStateConfig, roomData.Timeline)
-			if err != nil {
-				logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get required state")
-				// Continue anyway, return room without required state
-			} else {
-				roomData.RequiredState = requiredState
-
-				logrus.WithFields(logrus.Fields{
-					"room_id":      roomID,
-					"user_id":      userID,
-					"state_count":  len(requiredState),
-					"reason":       reason,
-				}).Debug("[REQUIRED_STATE] Returned required state events")
-			}
+		requiredState, stateErr := rp.getRequiredState(ctx, snapshot, roomID, userID, requiredStateConfig, roomData.Timeline)
+		if stateErr != nil {
+			logrus.WithError(stateErr).WithField("room_id", roomID).Error("Failed to get required state")
 		} else {
+			roomData.RequiredState = requiredState
 			logrus.WithFields(logrus.Fields{
-				"room_id": roomID,
-				"user_id": userID,
-				"has_timeline": len(roomData.Timeline) > 0,
-			}).Debug("[REQUIRED_STATE] Skipping required_state (no timeline events or $LAZY not requested)")
+				"room_id":     roomID,
+				"user_id":     userID,
+				"state_count": len(requiredState),
+				"reason":      reason,
+			}).Debug("[REQUIRED_STATE] Returned required state events")
 		}
+	} else {
+		logrus.WithFields(logrus.Fields{
+			"room_id":      roomID,
+			"user_id":      userID,
+			"has_timeline": len(roomData.Timeline) > 0,
+		}).Debug("[REQUIRED_STATE] Skipping required_state (no timeline events or $LAZY not requested)")
 	}
 
-	// Phase 6: Notification counts
-	// Hardcode notification_count and highlight_count to 0 to match Synapse behavior.
-	// Rationale: Server-side notification counts cannot be calculated correctly for
-	// encrypted rooms (the most common case) since push rules require inspecting
-	// message content. Clients MUST calculate these counts themselves from decrypted
-	// content and push rules. Returning server-calculated values confuses clients
-	// (like Element X) which expect to do client-side calculation.
-	// See: MSC4186 spec note "Synapse always returns 0 for notification_count and highlight_count"
-	// See: Synapse code comment at synapse/handlers/sliding_sync/__init__.py:1365-1367
+	// Notification counts (hardcoded to 0 per Synapse behaviour for encrypted rooms)
 	roomData.NotificationCount = 0
 	roomData.HighlightCount = 0
 
-	// Phase 8: Add member counts
-	// Use max(PDUPosition, InvitePosition) to ensure we see latest membership state
-	// This is critical for invite counts which arrive via Invite stream
-	countPos := currentPos.PDUPosition
-	if currentPos.InvitePosition > countPos {
-		countPos = currentPos.InvitePosition
-	}
+	// Member counts
+	rp.populateMemberCounts(ctx, snapshot, roomID, roomData, currentPos)
 
-	joinedCount, err := snapshot.MembershipCount(ctx, roomID, "join", countPos)
-	if err != nil {
-		logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get joined member count")
-		// Continue anyway, return room without joined count
-	} else {
-		roomData.JoinedCount = joinedCount
-	}
-
-	invitedCount, err := snapshot.MembershipCount(ctx, roomID, "invite", countPos)
-	if err != nil {
-		logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get invited member count")
-		// Continue anyway, return room without invited count
-	} else {
-		roomData.InvitedCount = invitedCount
-	}
-
-	// Phase 9: Add missing room fields
-	// Use the Limited value from database layer (more accurate than manually checking len >= limit)
+	// Limited flag and prev_batch token
 	roomData.Limited = timelineLimited
+	rp.populatePrevBatch(ctx, snapshot, roomData, timelineLimited)
 
-	// If limited, generate prev_batch token for pagination
-	if timelineLimited && len(roomData.Timeline) > 0 {
-		// Use earliest event's position for prev_batch
-		// The earliest event is at index 0 (chronological order, oldest first)
-		earliestEvent := roomData.Timeline[0]
-		if earliestEvent.EventID != "" {
-			// Get the topological position of the earliest event
-			topologyToken, err := snapshot.EventPositionInTopology(ctx, earliestEvent.EventID)
-			if err != nil {
-				logrus.WithError(err).WithField("event_id", earliestEvent.EventID).Error("Failed to get topology position for prev_batch")
-				// Continue without prev_batch - client can still use the room
-			} else {
-				// Decrement the token to point to the position BEFORE this event
-				// This matches the behavior in /messages handler (messages.go:433)
-				topologyToken.Decrement()
-				roomData.PrevBatch = topologyToken.String()
-			}
-		}
-	}
-
-	// Set num_live from getTimelineEvents (calculated using Synapse's algorithm)
-	// num_live indicates how many timeline events are "live" (arrived after sync request's since token)
-	// vs historical. This is critical for clients like Element X to determine if events should
-	// trigger notifications. See getTimelineEvents for the algorithm implementation.
+	// num_live for notification triggering
 	roomData.NumLive = numLive
 
-	// Phase 11: Add is_dm (direct message flag from m.direct account data)
+	// Additional room fields
 	roomData.IsDM = rp.isDirectMessage(ctx, roomID, userID)
-
-	// Phase 11: Calculate bump_stamp (timestamp of most recent event)
-	// BumpStamp is used for client-side room sorting by recency
 	roomData.BumpStamp = rp.calculateBumpStamp(ctx, snapshot, roomID, roomData.Timeline)
-
-	// Phase 12: Add heroes (MSC4186Hero with displayname/avatar)
-	// Heroes are used for rooms without explicit names to show "User A, User B" style names
 	roomData.Heroes = rp.getHeroes(ctx, snapshot, roomID, userID)
 
 	return roomData, nil
@@ -294,9 +268,9 @@ func (rp *RequestPool) getTimelineEvents(
 	ctx context.Context,
 	snapshot storage.DatabaseTransaction,
 	roomID string,
-	userID string,
+	_ string, // userID unused - timeline retrieval is room-scoped
 	limit int,
-	roomState types.RoomStreamState,
+	_ types.RoomStreamState, // roomState unused - using sync-level token for incremental logic
 	currentPos types.StreamingToken,
 	fromToken *types.StreamingToken,
 ) (timeline []synctypes.ClientEvent, limited bool, numLive int, err error) {
@@ -400,11 +374,11 @@ func (rp *RequestPool) getTimelineEvents(
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"room_id":       roomID,
-		"num_live":      numLive,
-		"total":         len(clientEvents),
+		"room_id":        roomID,
+		"num_live":       numLive,
+		"total":          len(clientEvents),
 		"has_from_token": fromToken != nil,
-		"limited":       events.Limited,
+		"limited":        events.Limited,
 	}).Debug("[NUM_LIVE] Calculated num_live in getTimelineEvents")
 
 	// Add output tags to trace
@@ -771,9 +745,9 @@ func (rp *RequestPool) buildInviteRoomData(
 	roomData.StrippedState = strippedEvents
 
 	logrus.WithFields(logrus.Fields{
-		"room_id":       roomID,
-		"stripped_count": len(strippedEvents),
-		"name":          roomData.Name,
+		"room_id":          roomID,
+		"stripped_count":   len(strippedEvents),
+		"name":             roomData.Name,
 		"has_invite_event": inviteEvent != nil,
 	}).Debug("[V4_SYNC] Built invite room data")
 

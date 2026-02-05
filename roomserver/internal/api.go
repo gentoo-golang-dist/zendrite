@@ -430,7 +430,7 @@ func (r *RoomserverInternalAPI) NotifyUnPartialStated(roomID string) {
 	// Query local joined members to notify downstream components
 	ctx := context.Background()
 	membershipsReq := &api.QueryMembershipsForRoomRequest{
-		RoomID:    roomID,
+		RoomID:     roomID,
 		JoinedOnly: true,
 		LocalOnly:  true,
 	}
@@ -468,8 +468,8 @@ func (r *RoomserverInternalAPI) NotifyUnPartialStated(roomID string) {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"room_id":     roomID,
-		"user_count":  len(joinedUserIDs),
+		"room_id":    roomID,
+		"user_count": len(joinedUserIDs),
 	}).Info("Room completed partial state resync, notified downstream components")
 }
 

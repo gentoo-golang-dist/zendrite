@@ -21,7 +21,7 @@ import (
 // Timeline Scenario Tests (based on Synapse's test_rooms_timeline.py)
 // =============================================================================
 
-// TestTimelineLimitedFlag tests the limited flag behavior
+// TestTimelineLimitedFlag tests the limited flag behaviour
 // Based on Synapse's test_rooms_limited_initial_sync and test_rooms_not_limited_initial_sync
 func TestTimelineLimitedFlag(t *testing.T) {
 	tests := []struct {
@@ -249,48 +249,48 @@ func TestBanVisibilityTimeline(t *testing.T) {
 // Based on Synapse's test_rooms_invite_shared_history_initial_sync
 func TestInviteRoomDataStructure(t *testing.T) {
 	tests := []struct {
-		name               string
-		membership         string
-		expectTimeline     bool
-		expectNumLive      bool
-		expectLimited      bool
-		expectPrevBatch    bool
+		name                string
+		membership          string
+		expectTimeline      bool
+		expectNumLive       bool
+		expectLimited       bool
+		expectPrevBatch     bool
 		expectRequiredState bool
-		expectInviteState  bool
-		description        string
+		expectInviteState   bool
+		description         string
 	}{
 		{
-			name:               "invite room - no timeline",
-			membership:         spec.Invite,
-			expectTimeline:     false,
-			expectNumLive:      false,
-			expectLimited:      false,
-			expectPrevBatch:    false,
+			name:                "invite room - no timeline",
+			membership:          spec.Invite,
+			expectTimeline:      false,
+			expectNumLive:       false,
+			expectLimited:       false,
+			expectPrevBatch:     false,
 			expectRequiredState: false,
-			expectInviteState:  true,
-			description:        "Invited users get stripped state, not timeline",
+			expectInviteState:   true,
+			description:         "Invited users get stripped state, not timeline",
 		},
 		{
-			name:               "joined room - has timeline",
-			membership:         spec.Join,
-			expectTimeline:     true,
-			expectNumLive:      true,
-			expectLimited:      true,
-			expectPrevBatch:    true,
+			name:                "joined room - has timeline",
+			membership:          spec.Join,
+			expectTimeline:      true,
+			expectNumLive:       true,
+			expectLimited:       true,
+			expectPrevBatch:     true,
 			expectRequiredState: true,
-			expectInviteState:  false,
-			description:        "Joined users get full room data",
+			expectInviteState:   false,
+			description:         "Joined users get full room data",
 		},
 		{
-			name:               "banned room - has timeline",
-			membership:         spec.Ban,
-			expectTimeline:     true,
-			expectNumLive:      true,
-			expectLimited:      true,
-			expectPrevBatch:    true,
+			name:                "banned room - has timeline",
+			membership:          spec.Ban,
+			expectTimeline:      true,
+			expectNumLive:       true,
+			expectLimited:       true,
+			expectPrevBatch:     true,
 			expectRequiredState: true,
-			expectInviteState:  false,
-			description:        "Banned users get timeline (up to ban)",
+			expectInviteState:   false,
+			description:         "Banned users get timeline (up to ban)",
 		},
 	}
 
@@ -424,7 +424,7 @@ func TestRequiredStateDeltaLIVE(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Calculate expected behavior based on BuildRoomData logic
+			// Calculate expected behaviour based on BuildRoomData logic
 			shouldFetchState := false
 			reason := ""
 
@@ -449,18 +449,18 @@ func TestRequiredStateDeltaLIVE(t *testing.T) {
 	}
 }
 
-// TestRequiredStateWildcardPatterns tests wildcard pattern behavior
+// TestRequiredStateWildcardPatterns tests wildcard pattern behaviour
 // Based on Synapse's test_rooms_required_state_wildcard_*
 func TestRequiredStateWildcardPatterns(t *testing.T) {
 	userID := "@alice:localhost"
 
 	tests := []struct {
-		name           string
-		patterns       [][]string
-		eventType      string
-		stateKey       string
-		expectedMatch  bool
-		description    string
+		name          string
+		patterns      [][]string
+		eventType     string
+		stateKey      string
+		expectedMatch bool
+		description   string
 	}{
 		{
 			name:          "wildcard type and key matches everything",
@@ -604,11 +604,11 @@ func TestConnectionStatePersistence(t *testing.T) {
 // Based on Synapse's test_room_subscriptions_* tests
 func TestConnectionStateRoomSubscriptions(t *testing.T) {
 	tests := []struct {
-		name              string
-		inList            bool
-		inSubscription    bool
-		expectInResponse  bool
-		description       string
+		name             string
+		inList           bool
+		inSubscription   bool
+		expectInResponse bool
+		description      string
 	}{
 		{
 			name:             "room in list - included",
@@ -662,9 +662,9 @@ func TestConnectionStateRoomSubscriptions(t *testing.T) {
 // Newly Joined Room Tests (based on Synapse's test_rooms_newly_joined_*)
 // =============================================================================
 
-// TestNewlyJoinedRoomBehavior tests behavior for newly joined rooms
+// TestNewlyJoinedRoomBehaviour tests behaviour for newly joined rooms
 // Based on Synapse's test_rooms_newly_joined_incremental_sync
-func TestNewlyJoinedRoomBehavior(t *testing.T) {
+func TestNewlyJoinedRoomBehaviour(t *testing.T) {
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"

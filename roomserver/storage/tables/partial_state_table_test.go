@@ -136,7 +136,8 @@ func TestPartialStateTableMultipleRooms(t *testing.T) {
 
 		// Verify each room's servers
 		for _, room := range rooms {
-			servers, err := tab.SelectPartialStateServers(ctx, nil, room.roomNID)
+			var servers []string
+			servers, err = tab.SelectPartialStateServers(ctx, nil, room.roomNID)
 			require.NoError(t, err)
 			assert.Len(t, servers, len(room.servers))
 		}

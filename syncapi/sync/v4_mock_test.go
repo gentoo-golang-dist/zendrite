@@ -24,15 +24,15 @@ type mockSnapshot struct {
 	storage.DatabaseTransaction
 
 	// Configurable return values
-	membershipForUser       map[string]map[string]mockMembership // roomID -> userID -> membership
-	stateEvents             map[string]map[string]*rstypes.HeaderedEvent // roomID -> "type|stateKey" -> event
-	recentEvents            map[string]types.RecentEvents // roomID -> events
-	roomSummaries           map[string]*types.Summary
-	maxStreamPositions      map[string]types.StreamPosition // roomID -> position
-	inviteEvents            map[string]*rstypes.HeaderedEvent // roomID -> invite event
-	retiredInvites          map[string]*rstypes.HeaderedEvent // roomID -> retired invite
-	maxInvitePos            types.StreamPosition
-	membershipCounts        map[string]map[string]int // roomID -> membership -> count
+	membershipForUser  map[string]map[string]mockMembership         // roomID -> userID -> membership
+	stateEvents        map[string]map[string]*rstypes.HeaderedEvent // roomID -> "type|stateKey" -> event
+	recentEvents       map[string]types.RecentEvents                // roomID -> events
+	roomSummaries      map[string]*types.Summary
+	maxStreamPositions map[string]types.StreamPosition   // roomID -> position
+	inviteEvents       map[string]*rstypes.HeaderedEvent // roomID -> invite event
+	retiredInvites     map[string]*rstypes.HeaderedEvent // roomID -> retired invite
+	maxInvitePos       types.StreamPosition
+	membershipCounts   map[string]map[string]int // roomID -> membership -> count
 }
 
 type mockMembership struct {

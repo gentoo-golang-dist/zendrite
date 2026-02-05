@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHaveSentRoomFlag tests the HaveSentRoomFlag enum behavior
+// TestHaveSentRoomFlag tests the HaveSentRoomFlag enum behaviour
 func TestHaveSentRoomFlag(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -133,11 +133,11 @@ func TestRoomStreamStateCreation(t *testing.T) {
 // TestNumLiveCalculation tests that num_live is calculated correctly
 func TestNumLiveCalculation(t *testing.T) {
 	tests := []struct {
-		name          string
-		roomState     types.RoomStreamState
-		timelineLen   int
-		wantNumLive   int
-		description   string
+		name        string
+		roomState   types.RoomStreamState
+		timelineLen int
+		wantNumLive int
+		description string
 	}{
 		{
 			name: "NEVER status - all historical",
@@ -329,12 +329,12 @@ func TestInitialFieldCalculation(t *testing.T) {
 // TestLimitedFieldFromDatabase tests that limited field comes from database
 func TestLimitedFieldFromDatabase(t *testing.T) {
 	tests := []struct {
-		name             string
-		eventsReturned   int
-		timelineLimit    int
-		dbLimited        bool
-		wantLimited      bool
-		description      string
+		name           string
+		eventsReturned int
+		timelineLimit  int
+		dbLimited      bool
+		wantLimited    bool
+		description    string
 	}{
 		{
 			name:           "db says limited - trust it",

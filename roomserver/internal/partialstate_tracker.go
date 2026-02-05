@@ -93,7 +93,7 @@ func (t *PartialStateTracker) NotifyUnPartialStated(roomID string) {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"room_id":       roomID,
+		"room_id":        roomID,
 		"observer_count": len(observers),
 	}).Debug("Notifying observers that room is no longer partial state")
 

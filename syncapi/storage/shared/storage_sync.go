@@ -94,7 +94,7 @@ func (d *DatabaseTransaction) RoomIDsWithMembership(ctx context.Context, userID 
 }
 
 // KickedRoomIDs returns rooms where the user was kicked (leave membership where sender != user).
-// Per MSC4186/Synapse behavior, kicked rooms should be included in the sliding sync room list.
+// Per MSC4186/Synapse behaviour, kicked rooms should be included in the sliding sync room list.
 func (d *DatabaseTransaction) KickedRoomIDs(ctx context.Context, userID string) ([]string, error) {
 	return d.CurrentRoomState.SelectKickedRoomIDs(ctx, d.txn, userID)
 }

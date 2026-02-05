@@ -198,22 +198,22 @@ const selectMaxStreamPositionsForRoomsSQL = "" +
 	"WHERE room_id = ANY($1) AND type = ANY($2) GROUP BY room_id"
 
 type outputRoomEventsStatements struct {
-	insertEventStmt                     *sql.Stmt
-	selectEventsStmt                    *sql.Stmt
-	selectEventsWitFilterStmt           *sql.Stmt
-	selectMaxEventIDStmt                *sql.Stmt
-	selectRecentEventsStmt              *sql.Stmt
-	selectRecentEventsForSyncStmt       *sql.Stmt
-	selectStateInRangeFilteredStmt      *sql.Stmt
-	selectStateInRangeStmt              *sql.Stmt
-	updateEventJSONStmt                 *sql.Stmt
-	deleteEventsForRoomStmt             *sql.Stmt
-	selectContextEventStmt              *sql.Stmt
-	selectContextBeforeEventStmt        *sql.Stmt
-	selectContextAfterEventStmt         *sql.Stmt
-	selectRoomsWithEventsSinceStmt      *sql.Stmt
-	purgeEventsStmt                     *sql.Stmt
-	selectSearchStmt                    *sql.Stmt
+	insertEventStmt                      *sql.Stmt
+	selectEventsStmt                     *sql.Stmt
+	selectEventsWitFilterStmt            *sql.Stmt
+	selectMaxEventIDStmt                 *sql.Stmt
+	selectRecentEventsStmt               *sql.Stmt
+	selectRecentEventsForSyncStmt        *sql.Stmt
+	selectStateInRangeFilteredStmt       *sql.Stmt
+	selectStateInRangeStmt               *sql.Stmt
+	updateEventJSONStmt                  *sql.Stmt
+	deleteEventsForRoomStmt              *sql.Stmt
+	selectContextEventStmt               *sql.Stmt
+	selectContextBeforeEventStmt         *sql.Stmt
+	selectContextAfterEventStmt          *sql.Stmt
+	selectRoomsWithEventsSinceStmt       *sql.Stmt
+	purgeEventsStmt                      *sql.Stmt
+	selectSearchStmt                     *sql.Stmt
 	selectMaxStreamPositionsForRoomsStmt *sql.Stmt
 }
 

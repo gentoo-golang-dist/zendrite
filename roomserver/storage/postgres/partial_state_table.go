@@ -70,13 +70,13 @@ const deletePartialStateRoomSQL = "" +
 	"DELETE FROM roomserver_partial_state_rooms WHERE room_nid = $1 RETURNING device_lists_stream_id"
 
 type partialStateStatements struct {
-	insertPartialStateRoomStmt         *sql.Stmt
-	insertPartialStateRoomServersStmt  *sql.Stmt
-	selectPartialStateRoomStmt         *sql.Stmt
-	selectPartialStateServersStmt      *sql.Stmt
-	selectAllPartialStateRoomsStmt     *sql.Stmt
-	selectDeviceListStreamIDStmt       *sql.Stmt
-	deletePartialStateRoomStmt         *sql.Stmt
+	insertPartialStateRoomStmt        *sql.Stmt
+	insertPartialStateRoomServersStmt *sql.Stmt
+	selectPartialStateRoomStmt        *sql.Stmt
+	selectPartialStateServersStmt     *sql.Stmt
+	selectAllPartialStateRoomsStmt    *sql.Stmt
+	selectDeviceListStreamIDStmt      *sql.Stmt
+	deletePartialStateRoomStmt        *sql.Stmt
 }
 
 func CreatePartialStateTable(db *sql.DB) error {

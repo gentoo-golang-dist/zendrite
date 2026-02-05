@@ -81,10 +81,10 @@ type roomStatements struct {
 	selectLatestEventNIDsStmt          *sql.Stmt
 	selectLatestEventNIDsForUpdateStmt *sql.Stmt
 	updateLatestEventNIDsStmt          *sql.Stmt
-	//selectRoomVersionForRoomNIDStmt    *sql.Stmt
-	selectRoomInfoStmt         *sql.Stmt
-	selectResyncStateNIDStmt   *sql.Stmt
-	updateResyncStateNIDStmt   *sql.Stmt
+	// selectRoomVersionForRoomNIDStmt    *sql.Stmt
+	selectRoomInfoStmt       *sql.Stmt
+	selectResyncStateNIDStmt *sql.Stmt
+	updateResyncStateNIDStmt *sql.Stmt
 }
 
 func CreateRoomsTable(db *sql.DB) error {

@@ -37,9 +37,9 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 	var succeeded bool
 	defer func() {
 		if succeeded {
-			snapshot.Commit() // Best effort
+			_ = snapshot.Commit() // Best effort
 		}
-		snapshot.Rollback() // No-op if already committed
+		_ = snapshot.Rollback() // No-op if already committed
 	}()
 
 	var roomIDs []string
@@ -50,9 +50,9 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 	if membership == "invite" || membership == spec.Invite {
 		// Query the invites table using InviteEventsInRange
 		// Use range from 0 to max to get all current invites
-		maxID, err := snapshot.MaxStreamPositionForInvites(ctx)
-		if err != nil {
-			logrus.WithError(err).Warn("Failed to get max invite ID")
+		maxID, maxIDErr := snapshot.MaxStreamPositionForInvites(ctx)
+		if maxIDErr != nil {
+			logrus.WithError(maxIDErr).Warn("Failed to get max invite ID")
 		} else if maxID > 0 {
 			// Get all invite events for this user
 			inviteRange := types.Range{
@@ -60,8 +60,8 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 				To:        maxID,
 				Backwards: false,
 			}
-			invites, retired, _, err := snapshot.InviteEventsInRange(ctx, userID, inviteRange)
-			if err != nil {
+			invites, retired, _, inviteErr := snapshot.InviteEventsInRange(ctx, userID, inviteRange)
+			if inviteErr != nil {
 				logrus.WithError(err).Warn("Failed to query invite events")
 			} else {
 				// Extract room IDs from active invites (not retired)
@@ -111,7 +111,7 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 }
 
 // GetKickedRooms retrieves rooms where the user was kicked (leave membership where sender != user).
-// Per MSC4186/Synapse behavior, kicked rooms should be included in the sliding sync room list.
+// Per MSC4186/Synapse behaviour, kicked rooms should be included in the sliding sync room list.
 func (rp *RequestPool) GetKickedRooms(ctx context.Context, userID string) ([]RoomWithBumpStamp, error) {
 	snapshot, err := rp.db.NewDatabaseSnapshot(ctx)
 	if err != nil {
@@ -121,9 +121,9 @@ func (rp *RequestPool) GetKickedRooms(ctx context.Context, userID string) ([]Roo
 	var succeeded bool
 	defer func() {
 		if succeeded {
-			snapshot.Commit() // Best effort
+			_ = snapshot.Commit() // Best effort
 		}
-		snapshot.Rollback() // No-op if already committed
+		_ = snapshot.Rollback() // No-op if already committed
 	}()
 
 	roomIDs, err := snapshot.KickedRoomIDs(ctx, userID)
@@ -194,7 +194,7 @@ func (rp *RequestPool) roomMatchesFilter(
 	userID string,
 ) bool {
 	// Phase 2: Basic implementation
-	// Phase 7: Add optimized queries using sliding_sync_joined_rooms table
+	// Phase 7: Add optimised queries using sliding_sync_joined_rooms table
 
 	// Filter by DM status
 	if filter.IsDM != nil {
@@ -281,7 +281,7 @@ func (rp *RequestPool) isDirectMessage(ctx context.Context, roomID string, userI
 	var res userapi.QueryAccountDataResponse
 	err := rp.userAPI.QueryAccountData(ctx, &userapi.QueryAccountDataRequest{
 		UserID:   userID,
-		RoomID:   "",        // Global account data
+		RoomID:   "", // Global account data
 		DataType: "m.direct",
 	}, &res)
 	if err != nil || res.GlobalAccountData == nil {
@@ -317,7 +317,7 @@ func (rp *RequestPool) getRoomName(ctx context.Context, roomID string) string {
 	if err != nil {
 		return ""
 	}
-	defer snapshot.Rollback()
+	defer func() { _ = snapshot.Rollback() }()
 
 	// Query m.room.name state event
 	event, err := snapshot.GetStateEvent(ctx, roomID, "m.room.name", "")
@@ -342,7 +342,7 @@ func (rp *RequestPool) isRoomEncrypted(ctx context.Context, roomID string) bool 
 	if err != nil {
 		return false
 	}
-	defer snapshot.Rollback()
+	defer func() { _ = snapshot.Rollback() }()
 
 	// Check for m.room.encryption state event
 	event, err := snapshot.GetStateEvent(ctx, roomID, "m.room.encryption", "")
@@ -357,7 +357,7 @@ func (rp *RequestPool) getRoomType(ctx context.Context, roomID string) string {
 		logrus.WithError(err).Error("Failed to acquire database snapshot for room type")
 		return ""
 	}
-	defer snapshot.Rollback()
+	defer func() { _ = snapshot.Rollback() }()
 
 	// Query m.room.create state event
 	event, err := snapshot.GetStateEvent(ctx, roomID, "m.room.create", "")

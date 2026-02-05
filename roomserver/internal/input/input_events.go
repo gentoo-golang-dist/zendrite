@@ -748,10 +748,10 @@ func (r *Inputer) processStateBefore(
 // when we don't have the complete state.
 func (r *Inputer) resolvePartialStateAuth(
 	ctx context.Context,
-	roomInfo *types.RoomInfo,
+	_ *types.RoomInfo, // unused but kept for potential future use
 	localState []gomatrixserverlib.PDU,
 	authEvents []gomatrixserverlib.PDU,
-) ([]gomatrixserverlib.PDU, error) {
+) ([]gomatrixserverlib.PDU, error) { //nolint:unparam // error kept for interface compatibility
 	// Build a map of state key tuples to events for conflict detection
 	type stateKey struct {
 		eventType string

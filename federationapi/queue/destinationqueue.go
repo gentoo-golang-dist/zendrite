@@ -375,7 +375,7 @@ func (oq *destinationQueue) backgroundSend() {
 			oq.backingOff.Store(true)
 			destinationQueueBackingOff.Inc()
 			logrus.WithFields(logrus.Fields{
-				"destination":  oq.destination,
+				"destination":   oq.destination,
 				"backoff_until": backoffUntil,
 			}).Debug("Destination queue respecting persisted backoff")
 			return

@@ -14,7 +14,7 @@ import (
 // SlidingSyncConnection represents a sliding sync connection
 // Each connection is uniquely identified by (user_id, device_id, conn_id)
 type SlidingSyncConnection struct {
-	ConnectionKey int64  // Primary key (auto-increment)
+	ConnectionKey int64 // Primary key (auto-increment)
 	UserID        string
 	DeviceID      string
 	ConnID        string
@@ -40,7 +40,7 @@ type SlidingSyncRequiredState struct {
 // SlidingSyncRoomConfig tracks what room config was used at a specific position
 // This allows detecting config changes (timeline_limit increase, required_state expansion)
 type SlidingSyncRoomConfig struct {
-	ConnectionPosition int64 // FK to positions (composite key part 1)
+	ConnectionPosition int64  // FK to positions (composite key part 1)
 	RoomID             string // Composite key part 2
 	TimelineLimit      int
 	RequiredStateID    int64 // FK to required_state

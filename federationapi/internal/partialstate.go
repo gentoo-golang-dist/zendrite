@@ -69,7 +69,7 @@ func NewPartialStateWorker(
 // backoffDuration calculates the backoff duration for a given retry count using
 // exponential backoff with jitter, similar to the federation queue statistics.
 func (w *PartialStateWorker) backoffDuration(retryCount uint32) time.Duration {
-	// Add jitter to minimize thundering herd effects
+	// Add jitter to minimise thundering herd effects
 	jitter := rand.Float64()*(maxJitterMultiplier-minJitterMultiplier) + minJitterMultiplier
 
 	// Exponential backoff: minBackoff * 2^retryCount, capped at maxBackoff
@@ -359,7 +359,7 @@ func (w *PartialStateWorker) processRoom(roomNID types.RoomNID) error {
 		sendStateRegion.SetTag("state_events", len(stateEvents.UntrustedEvents(roomInfo.RoomVersion)))
 		sendStateRegion.SetTag("auth_events", len(authEvents.UntrustedEvents(roomInfo.RoomVersion)))
 		sendStateStartTime := time.Now()
-		if err := roomserverAPI.SendStateAsOutliers(
+		if err = roomserverAPI.SendStateAsOutliers(
 			ctx,
 			w.rsAPI,
 			w.fedAPI.cfg.Matrix.ServerName,
@@ -392,7 +392,7 @@ func (w *PartialStateWorker) processRoom(roomNID types.RoomNID) error {
 			stateEventIDs = append(stateEventIDs, ev.EventID())
 		}
 		updateStateRegion.SetTag("state_event_count", len(stateEventIDs))
-		if err := w.rsAPI.UpdateCurrentStateAfterResync(ctx, roomID, stateEventIDs); err != nil {
+		if err = w.rsAPI.UpdateCurrentStateAfterResync(ctx, roomID, stateEventIDs); err != nil {
 			updateStateRegion.EndRegion()
 			logger.WithError(err).WithFields(logrus.Fields{
 				"update_state_ms": time.Since(updateStateStartTime).Milliseconds(),

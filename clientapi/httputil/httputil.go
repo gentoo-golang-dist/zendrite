@@ -62,7 +62,7 @@ func UnmarshalJSON(body []byte, iface interface{}) *util.JSONResponse {
 //
 // HTTP status code mapping follows the Matrix spec:
 //   - M_FORBIDDEN, M_UNABLE_TO_AUTHORISE_JOIN -> 403
-//   - M_NOT_FOUND, M_UNRECOGNIZED -> 404
+//   - M_NOT_FOUND, M_UNRECOGNISED -> 404
 //   - All other Matrix errors -> 400 (bad request)
 func MatrixErrorResponse(err error) *util.JSONResponse {
 	var matrixErr spec.MatrixError

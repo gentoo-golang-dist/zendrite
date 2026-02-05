@@ -78,7 +78,7 @@ const selectRoomIDsWithMembershipSQL = "" +
 	"SELECT DISTINCT room_id FROM syncapi_current_room_state WHERE type = 'm.room.member' AND state_key = $1 AND membership = $2"
 
 // selectKickedRoomIDsSQL returns rooms where the user was kicked (leave membership where sender != user).
-// Per MSC4186/Synapse behavior, kicked rooms should be included in the sliding sync room list.
+// Per MSC4186/Synapse behaviour, kicked rooms should be included in the sliding sync room list.
 const selectKickedRoomIDsSQL = "" +
 	"SELECT DISTINCT room_id FROM syncapi_current_room_state WHERE type = 'm.room.member' AND state_key = $1 AND membership = 'leave' AND sender != $1"
 
@@ -245,7 +245,7 @@ func (s *currentRoomStateStatements) SelectRoomIDsWithMembership(
 }
 
 // SelectKickedRoomIDs returns rooms where the user was kicked (leave membership where sender != user).
-// Per MSC4186/Synapse behavior, kicked rooms should be included in the sliding sync room list.
+// Per MSC4186/Synapse behaviour, kicked rooms should be included in the sliding sync room list.
 func (s *currentRoomStateStatements) SelectKickedRoomIDs(
 	ctx context.Context,
 	txn *sql.Tx,

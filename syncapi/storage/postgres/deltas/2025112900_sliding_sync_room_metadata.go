@@ -12,7 +12,7 @@ import (
 	"fmt"
 )
 
-// UpCreateSlidingSyncRoomMetadata creates optimized tables for room metadata
+// UpCreateSlidingSyncRoomMetadata creates optimised tables for room metadata
 // in sliding sync (MSC4186 Phase 12). These tables cache room state to avoid
 // expensive queries against current_state_events during sync.
 //
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS syncapi_sliding_sync_rooms_to_recalculate (
     room_id TEXT NOT NULL PRIMARY KEY
 );
 
--- Optimized room metadata for rooms with local members (joined rooms)
+-- Optimised room metadata for rooms with local members (joined rooms)
 -- One row per room where local server is participating
 -- Kept in sync with current_state_events
 CREATE TABLE IF NOT EXISTS syncapi_sliding_sync_joined_rooms (
