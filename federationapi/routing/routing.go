@@ -613,7 +613,7 @@ func ErrorIfLocalServerNotInRoom(
 // to proceed even if the room is in partial state (MSC3706 faster joins).
 func ErrorIfLocalServerNotInRoomAllowPartialState(
 	ctx context.Context,
-	rsAPI api.FederationRoomserverAPI,
+	rsAPI roomserverAPI.FederationRoomserverAPI,
 	roomID string,
 ) *util.JSONResponse {
 	return errorIfLocalServerNotInRoomWithPartialState(ctx, rsAPI, roomID, true)
@@ -621,7 +621,7 @@ func ErrorIfLocalServerNotInRoomAllowPartialState(
 
 func errorIfLocalServerNotInRoomWithPartialState(
 	ctx context.Context,
-	rsAPI api.FederationRoomserverAPI,
+	rsAPI roomserverAPI.FederationRoomserverAPI,
 	roomID string,
 	allowPartialState bool,
 ) *util.JSONResponse {
