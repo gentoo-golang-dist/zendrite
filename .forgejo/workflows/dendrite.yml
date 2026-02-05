@@ -115,11 +115,14 @@ jobs:
     needs: [tests-done]
     steps:
       - uses: actions/checkout@v6
+      - name: Get Go version from go.mod
+        id: go-version
+        run: echo "version=$(grep '^go ' go.mod | awk '{print $2}')" >> $GITHUB_OUTPUT
       - name: Build with xgo
         uses: https://github.com/crazy-max/ghaction-xgo@v3
         with:
           xgo_version: latest
-          go_version: file:go.mod
+          go_version: ${{ steps.go-version.outputs.version }}
           dest: dist
           prefix: dendrite
           targets: linux/amd64,linux/arm64,linux/arm-7,darwin/amd64,darwin/arm64,windows/amd64
