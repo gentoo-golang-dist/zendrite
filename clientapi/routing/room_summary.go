@@ -442,30 +442,10 @@ func buildRoomSummaryResponse(
 			response.CanonicalAlias = content
 
 		case spec.MRoomJoinRules:
-			// Parse join rules content
-			var joinRules struct {
-				JoinRule string `json:"join_rule"`
-				Allow    []struct {
-					RoomID string `json:"room_id"`
-					Type   string `json:"type"`
-				} `json:"allow"`
-			}
-			if err := json.Unmarshal([]byte(content), &joinRules); err == nil {
-				response.JoinRule = joinRules.JoinRule
-
-				// Extract allowed room IDs for restricted rooms
-				if joinRules.JoinRule == "restricted" && len(joinRules.Allow) > 0 {
-					allowedRooms := make([]string, 0, len(joinRules.Allow))
-					for _, allow := range joinRules.Allow {
-						if allow.Type == "m.room_membership" && allow.RoomID != "" {
-							allowedRooms = append(allowedRooms, allow.RoomID)
-						}
-					}
-					if len(allowedRooms) > 0 {
-						response.AllowedRoomIDs = allowedRooms
-					}
-				}
-			}
+			// ExtractContentValue returns just the join_rule value (e.g., "public", "invite", "restricted")
+			// Note: For restricted rooms, we don't have access to the allowed_room_ids here
+			// as that would require the full event content, not just the extracted value
+			response.JoinRule = content
 
 		case spec.MRoomGuestAccess:
 			response.GuestCanJoin = content == "can_join"

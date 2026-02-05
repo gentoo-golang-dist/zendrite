@@ -708,11 +708,12 @@ func (s *outputRoomEventsStatements) SelectMaxStreamPositionsForRooms(
 
 	// Build the SQL query with the correct number of placeholders for SQLite
 	// We need placeholders for roomIDs and for event types
+	// Note: QueryVariadic/QueryVariadicOffset already include parentheses
 	roomIDPlaceholders := sqlutil.QueryVariadic(len(roomIDs))
 	eventTypePlaceholders := sqlutil.QueryVariadicOffset(len(BumpEventTypes), len(roomIDs))
 
 	query := "SELECT room_id, MAX(id) AS max_stream_pos FROM syncapi_output_room_events " +
-		"WHERE room_id IN (" + roomIDPlaceholders + ") AND type IN (" + eventTypePlaceholders + ") GROUP BY room_id"
+		"WHERE room_id IN " + roomIDPlaceholders + " AND type IN " + eventTypePlaceholders + " GROUP BY room_id"
 
 	params := make([]interface{}, len(roomIDs)+len(BumpEventTypes))
 	for i, roomID := range roomIDs {
