@@ -28,7 +28,7 @@ func TestPartialStateWorkerQueueRoom(t *testing.T) {
 	worker := &PartialStateWorker{
 		process:  processCtx,
 		workerCh: make(chan types.RoomNID, 10),
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Queue a room
@@ -52,7 +52,7 @@ func TestPartialStateWorkerQueueRoomFullChannel(t *testing.T) {
 	worker := &PartialStateWorker{
 		process:  processCtx,
 		workerCh: make(chan types.RoomNID, 1),
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Fill the channel
@@ -77,7 +77,7 @@ func TestPartialStateWorkerDuplicateQueue(t *testing.T) {
 	worker := &PartialStateWorker{
 		process:  processCtx,
 		workerCh: make(chan types.RoomNID, 1),
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Fill channel
@@ -87,7 +87,7 @@ func TestPartialStateWorkerDuplicateQueue(t *testing.T) {
 	worker.QueueRoom(types.RoomNID(2))
 
 	worker.retryMu.Lock()
-	firstTime := worker.retryMap[types.RoomNID(2)]
+	firstInfo := worker.retryMap[types.RoomNID(2)]
 	worker.retryMu.Unlock()
 
 	// Wait a bit
@@ -97,10 +97,10 @@ func TestPartialStateWorkerDuplicateQueue(t *testing.T) {
 	worker.QueueRoom(types.RoomNID(2))
 
 	worker.retryMu.Lock()
-	secondTime := worker.retryMap[types.RoomNID(2)]
+	secondInfo := worker.retryMap[types.RoomNID(2)]
 	worker.retryMu.Unlock()
 
-	assert.Equal(t, firstTime, secondTime, "Duplicate queue should not update retry time")
+	assert.Equal(t, firstInfo.retryAt, secondInfo.retryAt, "Duplicate queue should not update retry time")
 }
 
 // TestPartialStateWorkerRetryMapCleanup tests that retry map entries are properly moved to the queue
@@ -111,22 +111,22 @@ func TestPartialStateWorkerRetryMapCleanup(t *testing.T) {
 	worker := &PartialStateWorker{
 		process:  processCtx,
 		workerCh: make(chan types.RoomNID, 10),
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Add entries to retry map with past times
 	worker.retryMu.Lock()
-	worker.retryMap[types.RoomNID(1)] = time.Now().Add(-time.Hour)
-	worker.retryMap[types.RoomNID(2)] = time.Now().Add(-time.Hour)
-	worker.retryMap[types.RoomNID(3)] = time.Now().Add(time.Hour) // Future - should not be retried
+	worker.retryMap[types.RoomNID(1)] = &roomRetryInfo{retryAt: time.Now().Add(-time.Hour)}
+	worker.retryMap[types.RoomNID(2)] = &roomRetryInfo{retryAt: time.Now().Add(-time.Hour)}
+	worker.retryMap[types.RoomNID(3)] = &roomRetryInfo{retryAt: time.Now().Add(time.Hour)} // Future - should not be retried
 	worker.retryMu.Unlock()
 
 	// Manually trigger retry logic (simulating what retryLoop does)
 	worker.retryMu.Lock()
 	now := time.Now()
 	var toRetry []types.RoomNID
-	for roomNID, retryAt := range worker.retryMap {
-		if now.After(retryAt) {
+	for roomNID, info := range worker.retryMap {
+		if now.After(info.retryAt) {
 			toRetry = append(toRetry, roomNID)
 		}
 	}
@@ -220,7 +220,7 @@ func TestPartialStateWorkerSkipsNonPartialRooms(t *testing.T) {
 		process:  processCtx,
 		rsAPI:    nil, // Will use mockAPI in processRoom
 		workerCh: make(chan types.RoomNID, 10),
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Manually test the check logic (since processRoom requires full API)
@@ -258,7 +258,7 @@ func TestPartialStateWorkerConcurrency(t *testing.T) {
 	worker := &PartialStateWorker{
 		process:  processCtx,
 		workerCh: make(chan types.RoomNID, 100),
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Concurrently queue many rooms
@@ -291,7 +291,7 @@ func TestPartialStateWorkerRaceConditions(t *testing.T) {
 	worker := &PartialStateWorker{
 		process:  processCtx,
 		workerCh: make(chan types.RoomNID, 5), // Small channel to force retry map usage
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Run concurrent reads and writes
@@ -358,7 +358,9 @@ func TestPartialStateWorkerRaceConditions(t *testing.T) {
 // TestPartialStateConstants verifies the configuration constants
 func TestPartialStateConstants(t *testing.T) {
 	assert.Equal(t, 4, partialStateWorkerCount, "Worker count should be 4")
-	assert.Equal(t, 5*time.Minute, partialStateRetryDelay, "Retry delay should be 5 minutes")
+	assert.Equal(t, time.Minute*1, partialStateMinBackoff, "Min backoff should be 1 minute")
+	assert.Equal(t, time.Hour*1, partialStateMaxBackoff, "Max backoff should be 1 hour")
+	assert.Equal(t, 16, partialStateMaxRetries, "Max retries should be 16")
 }
 
 // TestPartialStateWorkerContextCancellation tests that workers respect context cancellation
@@ -368,7 +370,7 @@ func TestPartialStateWorkerContextCancellation(t *testing.T) {
 	worker := &PartialStateWorker{
 		process:  processCtx,
 		workerCh: make(chan types.RoomNID, 10),
-		retryMap: make(map[types.RoomNID]time.Time),
+		retryMap: make(map[types.RoomNID]*roomRetryInfo),
 	}
 
 	// Start a goroutine that would block on channel read
