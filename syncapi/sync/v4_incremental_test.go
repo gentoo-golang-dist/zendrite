@@ -18,6 +18,7 @@ import (
 
 // TestHaveSentRoomFlag tests the HaveSentRoomFlag enum behaviour
 func TestHaveSentRoomFlag(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		status        types.HaveSentRoomFlag
@@ -45,7 +46,9 @@ func TestHaveSentRoomFlag(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tt.wantIsInitial, tt.status.IsInitial())
 			assert.Equal(t, tt.wantString, tt.status.String())
 		})
@@ -54,6 +57,7 @@ func TestHaveSentRoomFlag(t *testing.T) {
 
 // TestHaveSentRoomFlagShouldSendHistorical tests timeline fetch mode determination
 func TestHaveSentRoomFlagShouldSendHistorical(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name               string
 		status             types.HaveSentRoomFlag
@@ -77,7 +81,9 @@ func TestHaveSentRoomFlagShouldSendHistorical(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tt.wantSendHistorical, tt.status.ShouldSendHistorical())
 		})
 	}
@@ -85,6 +91,7 @@ func TestHaveSentRoomFlagShouldSendHistorical(t *testing.T) {
 
 // TestRoomStreamStateCreation tests creating RoomStreamState for different scenarios
 func TestRoomStreamStateCreation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		status       types.HaveSentRoomFlag
@@ -112,7 +119,9 @@ func TestRoomStreamStateCreation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			state := types.RoomStreamState{
 				Status: tt.status,
 			}
@@ -132,6 +141,7 @@ func TestRoomStreamStateCreation(t *testing.T) {
 
 // TestNumLiveCalculation tests that num_live is calculated correctly
 func TestNumLiveCalculation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		roomState   types.RoomStreamState
@@ -187,7 +197,9 @@ func TestNumLiveCalculation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Simulate the num_live calculation logic from v4_roomdata.go:217-224
 			var numLive int
 			if tt.roomState.Status == types.HaveSentRoomNever {
@@ -203,6 +215,7 @@ func TestNumLiveCalculation(t *testing.T) {
 
 // TestTimelineRangeCalculation tests that timeline event ranges are correct
 func TestTimelineRangeCalculation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		roomState     types.RoomStreamState
@@ -261,7 +274,9 @@ func TestTimelineRangeCalculation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Simulate timeline range calculation from v4_roomdata.go:265-293
 			fromPos := tt.currentPos
 			var toPos types.StreamPosition
@@ -284,6 +299,7 @@ func TestTimelineRangeCalculation(t *testing.T) {
 
 // TestInitialFieldCalculation tests that the initial field is set correctly
 func TestInitialFieldCalculation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		roomState   types.RoomStreamState
@@ -319,7 +335,9 @@ func TestInitialFieldCalculation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			initial := tt.roomState.Status.IsInitial()
 			assert.Equal(t, tt.wantInitial, initial)
 		})
@@ -328,6 +346,7 @@ func TestInitialFieldCalculation(t *testing.T) {
 
 // TestLimitedFieldFromDatabase tests that limited field comes from database
 func TestLimitedFieldFromDatabase(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		eventsReturned int
@@ -379,7 +398,9 @@ func TestLimitedFieldFromDatabase(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// The key fix: use dbLimited directly from RecentEvents.Limited
 			// Not a manual calculation like: limited = (len(timeline) >= limit)
 			limited := tt.dbLimited
@@ -391,6 +412,7 @@ func TestLimitedFieldFromDatabase(t *testing.T) {
 
 // TestStreamTokenParsing tests position token format
 func TestStreamTokenParsing(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		input     string
@@ -424,7 +446,9 @@ func TestStreamTokenParsing(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			token, err := types.NewStreamTokenFromString(tt.input)
 			if tt.wantError {
 				assert.Error(t, err)
@@ -440,6 +464,7 @@ func TestStreamTokenParsing(t *testing.T) {
 
 // TestRoomStreamStateStatusMapping tests status string mapping
 func TestRoomStreamStateStatusMapping(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		status     types.HaveSentRoomFlag
@@ -463,7 +488,9 @@ func TestRoomStreamStateStatusMapping(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Verify string representation
 			assert.Equal(t, tt.wantString, tt.status.String())
 
@@ -478,6 +505,7 @@ func TestRoomStreamStateStatusMapping(t *testing.T) {
 
 // TestV4ResponseHasUpdates tests the response update detection logic
 func TestV4ResponseHasUpdates(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		response types.SlidingSyncResponse
@@ -760,7 +788,9 @@ func TestV4ResponseHasUpdates(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := v4ResponseHasUpdates(tt.response)
 			assert.Equal(t, tt.expected, result, "v4ResponseHasUpdates returned unexpected result")
 		})

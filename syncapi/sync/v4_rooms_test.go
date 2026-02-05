@@ -14,6 +14,7 @@ import (
 
 // TestSortRoomsByActivity tests room sorting by bump stamp
 func TestSortRoomsByActivity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    []RoomWithBumpStamp
@@ -91,7 +92,9 @@ func TestSortRoomsByActivity(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Make a copy to avoid modifying test data
 			rooms := make([]RoomWithBumpStamp, len(tt.input))
 			copy(rooms, tt.input)
@@ -115,6 +118,7 @@ func TestSortRoomsByActivity(t *testing.T) {
 
 // TestApplySlidingWindow tests the sliding window extraction
 func TestApplySlidingWindow(t *testing.T) {
+	t.Parallel()
 	rooms := []RoomWithBumpStamp{
 		{RoomID: "!room0:test", BumpStamp: 100},
 		{RoomID: "!room1:test", BumpStamp: 90},
@@ -181,7 +185,9 @@ func TestApplySlidingWindow(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := ApplySlidingWindow(rooms, tt.rangeSpec)
 
 			resultIDs := make([]string, len(result))
@@ -196,6 +202,7 @@ func TestApplySlidingWindow(t *testing.T) {
 
 // TestApplySlidingWindowEdgeCases tests edge cases for sliding window
 func TestApplySlidingWindowEdgeCases(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		rooms       []RoomWithBumpStamp
@@ -238,7 +245,9 @@ func TestApplySlidingWindowEdgeCases(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := ApplySlidingWindow(tt.rooms, tt.rangeSpec)
 			assert.Len(t, result, tt.expectedLen)
 		})
@@ -247,6 +256,7 @@ func TestApplySlidingWindowEdgeCases(t *testing.T) {
 
 // TestGenerateSyncOperation tests SYNC operation generation
 func TestGenerateSyncOperation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		rooms           []RoomWithBumpStamp
@@ -288,7 +298,9 @@ func TestGenerateSyncOperation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			op := GenerateSyncOperation(tt.rooms, tt.rangeSpec)
 
 			assert.Equal(t, tt.expectedOp, op.Op)
@@ -300,6 +312,7 @@ func TestGenerateSyncOperation(t *testing.T) {
 
 // TestContains tests the contains helper function
 func TestContains(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		slice    []string
@@ -369,7 +382,9 @@ func TestContains(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := contains(tt.slice, tt.item)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -378,6 +393,7 @@ func TestContains(t *testing.T) {
 
 // TestEqualStringSlices tests the equalStringSlices helper function
 func TestEqualStringSlices(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		a        []string
@@ -441,7 +457,9 @@ func TestEqualStringSlices(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := equalStringSlices(tt.a, tt.b)
 			assert.Equal(t, tt.expected, result)
 		})

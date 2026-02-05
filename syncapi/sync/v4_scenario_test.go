@@ -24,6 +24,7 @@ import (
 // TestTimelineLimitedFlag tests the limited flag behaviour
 // Based on Synapse's test_rooms_limited_initial_sync and test_rooms_not_limited_initial_sync
 func TestTimelineLimitedFlag(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		timelineLimit   int
@@ -67,7 +68,9 @@ func TestTimelineLimitedFlag(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// The Limited field comes from the database layer
 			// This tests our understanding of how limited should be set
 			recentEvents := types.RecentEvents{
@@ -89,6 +92,7 @@ func TestTimelineLimitedFlag(t *testing.T) {
 // TestNumLiveCalculationScenarios tests num_live calculation scenarios
 // Based on Synapse's num_live assertions in test_rooms_timeline.py
 func TestNumLiveCalculationScenarios(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		hasFromToken    bool
@@ -148,7 +152,9 @@ func TestNumLiveCalculationScenarios(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Simulate num_live calculation (matching Synapse's algorithm)
 			numLive := 0
 			if tt.hasFromToken {
@@ -170,6 +176,7 @@ func TestNumLiveCalculationScenarios(t *testing.T) {
 // TestBanVisibilityTimeline tests that banned users only see events up to their ban
 // Based on Synapse's test_rooms_ban_initial_sync
 func TestBanVisibilityTimeline(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"
@@ -213,7 +220,9 @@ func TestBanVisibilityTimeline(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mock := newMockSnapshot()
 			mock.SetMembership(roomID, userID, tt.userMembership, tt.userMembershipPos)
 
@@ -248,6 +257,7 @@ func TestBanVisibilityTimeline(t *testing.T) {
 // TestInviteRoomDataStructure tests that invite rooms have correct structure
 // Based on Synapse's test_rooms_invite_shared_history_initial_sync
 func TestInviteRoomDataStructure(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                string
 		membership          string
@@ -295,7 +305,9 @@ func TestInviteRoomDataStructure(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// This tests the expected structure based on membership
 			// The actual BuildRoomData function branches based on membership
 			isInvite := tt.membership == spec.Invite
@@ -313,6 +325,7 @@ func TestInviteRoomDataStructure(t *testing.T) {
 // TestInviteStrippedStateTypes tests which state types are included in invite_state
 // Based on Synapse's expected stripped state in test_rooms_invite_shared_history_initial_sync
 func TestInviteStrippedStateTypes(t *testing.T) {
+	t.Parallel()
 	expectedStrippedTypes := []struct {
 		eventType string
 		stateKey  string
@@ -360,6 +373,7 @@ func TestInviteStrippedStateTypes(t *testing.T) {
 // TestRequiredStateDeltaLIVE tests that LIVE rooms only get state updates
 // Based on Synapse's test_rooms_required_state_incremental_sync_LIVE
 func TestRequiredStateDeltaLIVE(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name               string
 		roomStatus         types.HaveSentRoomFlag
@@ -423,7 +437,9 @@ func TestRequiredStateDeltaLIVE(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Calculate expected behaviour based on BuildRoomData logic
 			shouldFetchState := false
 			reason := ""
@@ -452,6 +468,7 @@ func TestRequiredStateDeltaLIVE(t *testing.T) {
 // TestRequiredStateWildcardPatterns tests wildcard pattern behaviour
 // Based on Synapse's test_rooms_required_state_wildcard_*
 func TestRequiredStateWildcardPatterns(t *testing.T) {
+	t.Parallel()
 	userID := "@alice:localhost"
 
 	tests := []struct {
@@ -521,7 +538,9 @@ func TestRequiredStateWildcardPatterns(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			config := &types.RequiredStateConfig{
 				Include: tt.patterns,
 			}
@@ -548,6 +567,7 @@ func TestRequiredStateWildcardPatterns(t *testing.T) {
 // TestConnectionStatePersistence tests connection state tracking
 // Based on Synapse's LIVE/PREVIOUSLY/NEVER state transitions
 func TestConnectionStatePersistence(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		initialState    string
@@ -565,7 +585,9 @@ func TestConnectionStatePersistence(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Test the state transition logic
 			roomID := "!testroom:localhost"
 
@@ -603,6 +625,7 @@ func TestConnectionStatePersistence(t *testing.T) {
 // TestConnectionStateRoomSubscriptions tests room subscription handling
 // Based on Synapse's test_room_subscriptions_* tests
 func TestConnectionStateRoomSubscriptions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		inList           bool
@@ -641,7 +664,9 @@ func TestConnectionStateRoomSubscriptions(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			roomID := "!testroom:localhost"
 			roomsToProcess := make(map[string]bool)
 
@@ -665,6 +690,7 @@ func TestConnectionStateRoomSubscriptions(t *testing.T) {
 // TestNewlyJoinedRoomBehaviour tests behaviour for newly joined rooms
 // Based on Synapse's test_rooms_newly_joined_incremental_sync
 func TestNewlyJoinedRoomBehaviour(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"
@@ -712,7 +738,9 @@ func TestNewlyJoinedRoomBehaviour(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mock := newMockSnapshot()
 
 			// Set up membership at different positions
@@ -765,6 +793,7 @@ func TestNewlyJoinedRoomBehaviour(t *testing.T) {
 // TestBumpStampEventFiltering tests which events affect bump_stamp
 // Based on Synapse's test_rooms_bump_stamp
 func TestBumpStampEventFiltering(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		timelineEvents []synctypes.ClientEvent
@@ -854,7 +883,9 @@ func TestBumpStampEventFiltering(t *testing.T) {
 	rp := &RequestPool{rsAPI: &mockRoomserverAPI{}}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mock := newMockSnapshot()
 			// Don't set max stream position - should fall back to timeline
 
@@ -872,6 +903,7 @@ func TestBumpStampEventFiltering(t *testing.T) {
 // TestHeroesMaxLimit tests the maximum number of heroes
 // Based on Synapse's test_rooms_meta_heroes_max
 func TestHeroesMaxLimit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"
@@ -914,6 +946,7 @@ func TestHeroesMaxLimit(t *testing.T) {
 // TestHeroesWhenBanned tests hero extraction when user is banned
 // Based on Synapse's test_rooms_meta_heroes_when_banned
 func TestHeroesWhenBanned(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"

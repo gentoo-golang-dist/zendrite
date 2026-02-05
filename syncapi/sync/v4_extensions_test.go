@@ -16,6 +16,7 @@ import (
 // TestFindRelevantRoomIDsForExtension tests the extension room filtering logic
 // This implements MSC3959/MSC3960 behaviour for lists/rooms parameters
 func TestFindRelevantRoomIDsForExtension(t *testing.T) {
+	t.Parallel()
 	// Setup common test data
 	actualLists := map[string]types.SlidingList{
 		"rooms": {
@@ -223,7 +224,9 @@ func TestFindRelevantRoomIDsForExtension(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := findRelevantRoomIDsForExtension(
 				tt.requestedLists,
 				tt.requestedRooms,
@@ -238,6 +241,7 @@ func TestFindRelevantRoomIDsForExtension(t *testing.T) {
 
 // TestFindRelevantRoomIDsForExtensionDeduplication tests that duplicate rooms are handled
 func TestFindRelevantRoomIDsForExtensionDeduplication(t *testing.T) {
+	t.Parallel()
 	// Room appears in both list and subscription
 	actualLists := map[string]types.SlidingList{
 		"rooms": {

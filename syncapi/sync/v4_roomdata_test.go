@@ -16,6 +16,7 @@ import (
 
 // TestMatchesPattern tests the event type pattern matching logic
 func TestMatchesPattern(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		value    string
@@ -79,7 +80,9 @@ func TestMatchesPattern(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := matchesPattern(tt.value, tt.pattern)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -89,6 +92,7 @@ func TestMatchesPattern(t *testing.T) {
 // TestMatchesStateKeyPattern tests the state key pattern matching logic
 // Includes $ME, $LAZY, and wildcard patterns
 func TestMatchesStateKeyPattern(t *testing.T) {
+	t.Parallel()
 	userID := "@alice:example.com"
 	lazySenders := map[string]bool{
 		"@bob:example.com":   true,
@@ -235,7 +239,9 @@ func TestMatchesStateKeyPattern(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := matchesStateKeyPattern(tt.stateKey, tt.pattern, tt.userID, tt.lazySenders)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -244,6 +250,7 @@ func TestMatchesStateKeyPattern(t *testing.T) {
 
 // TestExtractLazySenders tests extraction of sender IDs from timeline events
 func TestExtractLazySenders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		config      *types.RequiredStateConfig
@@ -372,7 +379,9 @@ func TestExtractLazySenders(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Need to create a dummy RequestPool to call extractLazySenders
 			// Since it's a method on RequestPool but doesn't use any fields,
 			// we can just use a nil-safe approach or test the logic directly
@@ -385,6 +394,7 @@ func TestExtractLazySenders(t *testing.T) {
 
 // TestBumpEventTypes tests that the BumpEventTypes map is correct
 func TestBumpEventTypes(t *testing.T) {
+	t.Parallel()
 	// Verify expected bump event types are included
 	expectedBumpTypes := []string{
 		"m.room.create",

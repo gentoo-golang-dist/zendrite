@@ -19,6 +19,7 @@ import (
 // TestDetermineRoomStreamState tests the room stream state determination logic
 // This is critical for incremental sync behaviour (initial vs live vs previously)
 func TestDetermineRoomStreamState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"
@@ -192,7 +193,9 @@ func TestDetermineRoomStreamState(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mock := newMockSnapshot()
 			tt.setupMock(mock)
 
@@ -210,6 +213,7 @@ func TestDetermineRoomStreamState(t *testing.T) {
 
 // TestDetermineRoomStreamStateRejoinScenarios tests various rejoin scenarios
 func TestDetermineRoomStreamStateRejoinScenarios(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"
@@ -277,7 +281,9 @@ func TestDetermineRoomStreamStateRejoinScenarios(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mock := newMockSnapshot()
 
 			// Set up membership state
@@ -299,6 +305,7 @@ func TestDetermineRoomStreamStateRejoinScenarios(t *testing.T) {
 
 // TestV4ConnectionStateInitialization tests V4ConnectionState creation
 func TestV4ConnectionStateInitialization(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		connectionKey  int64
@@ -323,7 +330,9 @@ func TestV4ConnectionStateInitialization(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			connState := &V4ConnectionState{
 				ConnectionKey:        tt.connectionKey,
 				PreviousStreamStates: tt.previousStates,
@@ -341,6 +350,7 @@ func TestV4ConnectionStateInitialization(t *testing.T) {
 
 // TestGetRoomMetadata tests room metadata extraction functions
 func TestGetRoomMetadata(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 
@@ -381,7 +391,9 @@ func TestGetRoomMetadata(t *testing.T) {
 		}
 
 		for _, tt := range tests {
+			tt := tt // capture range variable
 			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
 				mock := newMockSnapshot()
 				tt.setupMock(mock)
 
@@ -414,7 +426,9 @@ func TestGetRoomMetadata(t *testing.T) {
 		}
 
 		for _, tt := range tests {
+			tt := tt // capture range variable
 			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
 				mock := newMockSnapshot()
 				tt.setupMock(mock)
 
@@ -447,7 +461,9 @@ func TestGetRoomMetadata(t *testing.T) {
 		}
 
 		for _, tt := range tests {
+			tt := tt // capture range variable
 			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
 				mock := newMockSnapshot()
 				tt.setupMock(mock)
 
@@ -460,6 +476,7 @@ func TestGetRoomMetadata(t *testing.T) {
 
 // TestGetHeroes tests the heroes extraction for room display
 func TestGetHeroes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 	userID := "@alice:localhost"
@@ -525,7 +542,9 @@ func TestGetHeroes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mock := newMockSnapshot()
 			tt.setupMock(mock)
 
@@ -545,6 +564,7 @@ func TestGetHeroes(t *testing.T) {
 
 // TestCalculateBumpStamp tests bump stamp calculation
 func TestCalculateBumpStamp(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	roomID := "!testroom:localhost"
 
@@ -614,7 +634,9 @@ func TestCalculateBumpStamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mock := newMockSnapshot()
 			tt.setupMock(mock)
 

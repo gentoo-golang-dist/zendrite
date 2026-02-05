@@ -84,6 +84,11 @@ func (w *PartialStateWorker) backoffDuration(retryCount uint32) time.Duration {
 
 // Start begins the partial state worker, queuing all rooms with partial state for processing
 func (w *PartialStateWorker) Start() error {
+	// Skip if rsAPI is not available (e.g., in tests)
+	if w.rsAPI == nil {
+		return nil
+	}
+
 	// Start worker goroutines
 	for i := 0; i < partialStateWorkerCount; i++ {
 		go w.worker(i)
