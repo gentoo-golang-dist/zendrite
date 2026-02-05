@@ -428,7 +428,7 @@ func (s *slidingSyncStatements) SelectLatestRoomConfigsBatch(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]*tables.SlidingSyncRoomConfig, len(roomIDs))
 	for rows.Next() {

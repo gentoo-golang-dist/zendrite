@@ -180,7 +180,7 @@ func (rp *RequestPool) ApplyRoomFilters(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot for room filtering: %w", err)
 	}
-	defer snapshot.Rollback()
+	defer func() { _ = snapshot.Rollback() }()
 
 	filtered := make([]RoomWithBumpStamp, 0, len(rooms))
 
@@ -322,18 +322,6 @@ func (rp *RequestPool) isDirectMessage(ctx context.Context, roomID string, userI
 	return false
 }
 
-// getRoomName creates its own snapshot - use getRoomNameWithSnapshot for batch operations
-func (rp *RequestPool) getRoomName(ctx context.Context, roomID string) string {
-	// Get a database snapshot
-	snapshot, err := rp.db.NewDatabaseSnapshot(ctx)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = snapshot.Rollback() }()
-
-	return rp.getRoomNameWithSnapshot(ctx, snapshot, roomID)
-}
-
 // getRoomNameWithSnapshot uses an existing snapshot for efficient batch operations
 func (rp *RequestPool) getRoomNameWithSnapshot(ctx context.Context, snapshot storage.DatabaseTransaction, roomID string) string {
 	// Query m.room.name state event
@@ -353,37 +341,12 @@ func (rp *RequestPool) getRoomNameWithSnapshot(ctx context.Context, snapshot sto
 	return content.Name
 }
 
-// isRoomEncrypted creates its own snapshot - use isRoomEncryptedWithSnapshot for batch operations
-func (rp *RequestPool) isRoomEncrypted(ctx context.Context, roomID string) bool {
-	// Get a database snapshot
-	snapshot, err := rp.db.NewDatabaseSnapshot(ctx)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = snapshot.Rollback() }()
-
-	return rp.isRoomEncryptedWithSnapshot(ctx, snapshot, roomID)
-}
-
 // isRoomEncryptedWithSnapshot uses an existing snapshot for efficient batch operations
 func (rp *RequestPool) isRoomEncryptedWithSnapshot(ctx context.Context, snapshot storage.DatabaseTransaction, roomID string) bool {
 	// Check for m.room.encryption state event
 	event, err := snapshot.GetStateEvent(ctx, roomID, "m.room.encryption", "")
 	// If the event exists, the room is encrypted
 	return err == nil && event != nil
-}
-
-// getRoomType creates its own snapshot - use getRoomTypeWithSnapshot for batch operations
-func (rp *RequestPool) getRoomType(ctx context.Context, roomID string) string {
-	// Get a database snapshot
-	snapshot, err := rp.db.NewDatabaseSnapshot(ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to acquire database snapshot for room type")
-		return ""
-	}
-	defer func() { _ = snapshot.Rollback() }()
-
-	return rp.getRoomTypeWithSnapshot(ctx, snapshot, roomID)
 }
 
 // getRoomTypeWithSnapshot uses an existing snapshot for efficient batch operations
