@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/element-hq/dendrite/roomserver/api"
-	rstypes "github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/syncapi/types"
-	userapi "github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
+	rstypes "codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/syncapi/types"
+	userapi "codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 )
@@ -29,7 +29,7 @@ var (
 	syncPositionVeryOld = types.StreamingToken{PDUPosition: 5}
 	syncPositionBefore  = types.StreamingToken{PDUPosition: 11}
 	syncPositionAfter   = types.StreamingToken{PDUPosition: 12}
-	//syncPositionNewEDU  = types.NewStreamToken(syncPositionAfter.PDUPosition, 1, 0, 0, nil)
+	// syncPositionNewEDU  = types.NewStreamToken(syncPositionAfter.PDUPosition, 1, 0, 0, nil)
 	syncPositionAfter2 = types.StreamingToken{PDUPosition: 13}
 )
 

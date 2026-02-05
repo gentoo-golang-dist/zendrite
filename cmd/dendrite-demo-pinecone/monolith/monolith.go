@@ -20,29 +20,29 @@ import (
 	"sync"
 	"time"
 
-	"github.com/element-hq/dendrite/appservice"
-	"github.com/element-hq/dendrite/cmd/dendrite-demo-pinecone/conn"
-	"github.com/element-hq/dendrite/cmd/dendrite-demo-pinecone/embed"
-	"github.com/element-hq/dendrite/cmd/dendrite-demo-pinecone/relay"
-	"github.com/element-hq/dendrite/cmd/dendrite-demo-pinecone/rooms"
-	"github.com/element-hq/dendrite/cmd/dendrite-demo-pinecone/users"
-	"github.com/element-hq/dendrite/cmd/dendrite-demo-yggdrasil/signing"
-	"github.com/element-hq/dendrite/federationapi"
-	federationAPI "github.com/element-hq/dendrite/federationapi/api"
-	"github.com/element-hq/dendrite/federationapi/producers"
-	"github.com/element-hq/dendrite/internal/caching"
-	"github.com/element-hq/dendrite/internal/httputil"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/relayapi"
-	relayAPI "github.com/element-hq/dendrite/relayapi/api"
-	"github.com/element-hq/dendrite/roomserver"
-	"github.com/element-hq/dendrite/setup"
-	"github.com/element-hq/dendrite/setup/base"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/setup/jetstream"
-	"github.com/element-hq/dendrite/setup/process"
-	"github.com/element-hq/dendrite/userapi"
-	userAPI "github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/appservice"
+	"codefloe.com/pat-s/dendrite/cmd/dendrite-demo-pinecone/conn"
+	"codefloe.com/pat-s/dendrite/cmd/dendrite-demo-pinecone/embed"
+	"codefloe.com/pat-s/dendrite/cmd/dendrite-demo-pinecone/relay"
+	"codefloe.com/pat-s/dendrite/cmd/dendrite-demo-pinecone/rooms"
+	"codefloe.com/pat-s/dendrite/cmd/dendrite-demo-pinecone/users"
+	"codefloe.com/pat-s/dendrite/cmd/dendrite-demo-yggdrasil/signing"
+	"codefloe.com/pat-s/dendrite/federationapi"
+	federationAPI "codefloe.com/pat-s/dendrite/federationapi/api"
+	"codefloe.com/pat-s/dendrite/federationapi/producers"
+	"codefloe.com/pat-s/dendrite/internal/caching"
+	"codefloe.com/pat-s/dendrite/internal/httputil"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/relayapi"
+	relayAPI "codefloe.com/pat-s/dendrite/relayapi/api"
+	"codefloe.com/pat-s/dendrite/roomserver"
+	"codefloe.com/pat-s/dendrite/setup"
+	"codefloe.com/pat-s/dendrite/setup/base"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/jetstream"
+	"codefloe.com/pat-s/dendrite/setup/process"
+	"codefloe.com/pat-s/dendrite/userapi"
+	userAPI "codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/matrix-org/gomatrixserverlib/spec"
@@ -121,8 +121,8 @@ func (p *P2PMonolith) SetupPinecone(sk ed25519.PrivateKey) {
 
 func (p *P2PMonolith) SetupDendrite(
 	processCtx *process.ProcessContext, cfg *config.Dendrite, cm *sqlutil.Connections, routers httputil.Routers,
-	port int, enableRelaying bool, enableMetrics bool, enableWebsockets bool) {
-
+	port int, enableRelaying bool, enableMetrics bool, enableWebsockets bool,
+) {
 	p.port = port
 	base.ConfigureAdminEndpoints(processCtx, routers)
 

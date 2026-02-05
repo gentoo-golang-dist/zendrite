@@ -9,19 +9,19 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/element-hq/dendrite/internal/eventutil"
-	"github.com/element-hq/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/internal/eventutil"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 
-	"github.com/element-hq/dendrite/internal/caching"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver/state"
-	"github.com/element-hq/dendrite/roomserver/storage/tables"
-	"github.com/element-hq/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/internal/caching"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver/state"
+	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
 )
 
 // Ideally, when we have both events we should redact the event JSON and forget about the redaction, but we currently
@@ -502,10 +502,9 @@ func (d *Database) GetMembership(ctx context.Context, roomNID types.RoomNID, req
 		return 0, false, false, fmt.Errorf("d.assignStateKeyNID: %w", err)
 	}
 
-	senderMembershipEventNID, senderMembership, isRoomforgotten, err :=
-		d.MembershipTable.SelectMembershipFromRoomAndTarget(
-			ctx, nil, roomNID, requestSenderUserNID,
-		)
+	senderMembershipEventNID, senderMembership, isRoomforgotten, err := d.MembershipTable.SelectMembershipFromRoomAndTarget(
+		ctx, nil, roomNID, requestSenderUserNID,
+	)
 	if err == sql.ErrNoRows {
 		// The user has never been a member of that room
 		return 0, false, false, nil
@@ -1688,7 +1687,6 @@ func (d *Database) GetKnownUsers(ctx context.Context, userID, searchString strin
 }
 
 func (d *Database) RoomsWithACLs(ctx context.Context) ([]string, error) {
-
 	eventTypeNID, err := d.GetOrCreateEventTypeNID(ctx, "m.room.server_acl")
 	if err != nil {
 		return nil, err
@@ -1768,7 +1766,6 @@ func (d *Database) PurgeRoom(ctx context.Context, roomID string) error {
 }
 
 func (d *Database) UpgradeRoom(ctx context.Context, oldRoomID, newRoomID, eventSender string) error {
-
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		published, err := d.PublishedTable.SelectPublishedFromRoomID(ctx, txn, oldRoomID)
 		if err != nil {
@@ -2128,7 +2125,6 @@ func (d *Database) QueryAdminEventReports(ctx context.Context, from uint64, limi
 }
 
 func (d *Database) QueryAdminEventReport(ctx context.Context, reportID uint64) (api.QueryAdminEventReportResponse, error) {
-
 	report, err := d.ReportedEventsTable.SelectReportedEvent(ctx, nil, reportID)
 	if err != nil {
 		return api.QueryAdminEventReportResponse{}, err

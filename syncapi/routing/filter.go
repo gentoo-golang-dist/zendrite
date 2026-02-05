@@ -15,10 +15,10 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/tidwall/gjson"
 
-	"github.com/element-hq/dendrite/syncapi/storage"
-	"github.com/element-hq/dendrite/syncapi/sync"
-	"github.com/element-hq/dendrite/syncapi/synctypes"
-	"github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/syncapi/storage"
+	"codefloe.com/pat-s/dendrite/syncapi/sync"
+	"codefloe.com/pat-s/dendrite/syncapi/synctypes"
+	"codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
@@ -43,7 +43,7 @@ func GetFilter(
 
 	filter := synctypes.DefaultFilter()
 	if err := syncDB.GetFilter(req.Context(), &filter, localpart, filterID); err != nil {
-		//TODO better error handling. This error message is *probably* right,
+		// TODO better error handling. This error message is *probably* right,
 		// but if there are obscure db errors, this will also be returned,
 		// even though it is not correct.
 		return util.JSONResponse{

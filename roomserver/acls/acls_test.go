@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/element-hq/dendrite/roomserver/storage/tables"
+	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/stretchr/testify/assert"
 )
@@ -101,9 +101,7 @@ func TestDefaultACLsWithWhitelist(t *testing.T) {
 	}
 }
 
-var (
-	content1 = `{"allow":["*"],"allow_ip_literals":false,"deny":["hello.world", "*.hello.world"]}`
-)
+var content1 = `{"allow":["*"],"allow_ip_literals":false,"deny":["hello.world", "*.hello.world"]}`
 
 type dummyACLDB struct{}
 

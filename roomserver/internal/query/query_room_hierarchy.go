@@ -13,10 +13,10 @@ import (
 	"fmt"
 	"sort"
 
-	fs "github.com/element-hq/dendrite/federationapi/api"
-	roomserver "github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/roomserver/types"
-	userapi "github.com/element-hq/dendrite/userapi/api"
+	fs "codefloe.com/pat-s/dendrite/federationapi/api"
+	roomserver "codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	userapi "codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
@@ -196,7 +196,6 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 
 		return discoveredRooms, inaccessible, &newWalker, nil
 	}
-
 }
 
 // authorised returns true iff the user is joined this room or the room is world_readable

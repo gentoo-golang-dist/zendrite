@@ -13,15 +13,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/element-hq/dendrite/syncapi/synctypes"
-	"github.com/element-hq/dendrite/userapi/types"
+	"codefloe.com/pat-s/dendrite/syncapi/synctypes"
+	"codefloe.com/pat-s/dendrite/userapi/types"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 
-	clientapi "github.com/element-hq/dendrite/clientapi/api"
-	"github.com/element-hq/dendrite/clientapi/auth/authtypes"
-	"github.com/element-hq/dendrite/internal/pushrules"
+	clientapi "codefloe.com/pat-s/dendrite/clientapi/api"
+	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
+	"codefloe.com/pat-s/dendrite/internal/pushrules"
 )
 
 // UserInternalAPI is the internal API for information about users and devices.
@@ -220,8 +220,7 @@ type InputAccountDataRequest struct {
 }
 
 // InputAccountDataResponse is the response for InputAccountData
-type InputAccountDataResponse struct {
-}
+type InputAccountDataResponse struct{}
 
 type PerformDeviceUpdateRequest struct {
 	RequestingUserID string
@@ -242,8 +241,7 @@ type PerformDeviceDeletionRequest struct {
 	ExceptDeviceID string
 }
 
-type PerformDeviceDeletionResponse struct {
-}
+type PerformDeviceDeletionResponse struct{}
 
 // QueryDeviceInfosRequest is the request to QueryDeviceInfos
 type QueryDeviceInfosRequest struct {
@@ -350,8 +348,7 @@ type PerformLastSeenUpdateRequest struct {
 }
 
 // PerformLastSeenUpdateResponse is the response for PerformLastSeenUpdate.
-type PerformLastSeenUpdateResponse struct {
-}
+type PerformLastSeenUpdateResponse struct{}
 
 // PerformDeviceCreationRequest is the request for PerformDeviceCreation
 type PerformDeviceCreationRequest struct {

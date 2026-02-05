@@ -15,20 +15,20 @@ import (
 	"strconv"
 	"time"
 
-	syncAPITypes "github.com/element-hq/dendrite/syncapi/types"
+	syncAPITypes "codefloe.com/pat-s/dendrite/syncapi/types"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/element-hq/dendrite/federationapi/queue"
-	"github.com/element-hq/dendrite/federationapi/storage"
-	"github.com/element-hq/dendrite/federationapi/types"
-	"github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/setup/jetstream"
-	"github.com/element-hq/dendrite/setup/process"
+	"codefloe.com/pat-s/dendrite/federationapi/queue"
+	"codefloe.com/pat-s/dendrite/federationapi/storage"
+	"codefloe.com/pat-s/dendrite/federationapi/types"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/jetstream"
+	"codefloe.com/pat-s/dendrite/setup/process"
 )
 
 // OutputRoomEventConsumer consumes events that originated in the room server.
@@ -143,7 +143,6 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 // processInboundPeek starts tracking a new federated inbound peek (replacing the existing one if any)
 // causing the federationapi to start sending messages to the peeking server
 func (s *OutputRoomEventConsumer) processInboundPeek(orp api.OutputNewInboundPeek) error {
-
 	// FIXME: there's a race here - we should start /sending new peeked events
 	// atomically after the orp.LatestEventID to ensure there are no gaps between
 	// the peek beginning and the send stream beginning.
@@ -160,7 +159,6 @@ func (s *OutputRoomEventConsumer) processInboundPeek(orp api.OutputNewInboundPee
 // processMessage updates the list of currently joined hosts in the room
 // and then sends the event to the hosts that were joined before the event.
 func (s *OutputRoomEventConsumer) processMessage(ore api.OutputNewRoomEvent, rewritesState bool) error {
-
 	addsStateEvents, missingEventIDs := ore.NeededStateEventIDs()
 
 	// Ask the roomserver and add in the rest of the results into the set.

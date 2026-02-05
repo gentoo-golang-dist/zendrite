@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"sync"
 
-	roomserverAPI "github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/roomserver/types"
-	userapi "github.com/element-hq/dendrite/userapi/api"
+	roomserverAPI "codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	userapi "codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/google/uuid"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
@@ -131,7 +131,6 @@ func QueryRoomHierarchy(req *http.Request, device *userapi.Device, roomIDStr str
 	}
 
 	discoveredRooms, _, nextWalker, err := rsAPI.QueryNextRoomHierarchyPage(req.Context(), walker, limit)
-
 	if err != nil {
 		switch err.(type) {
 		case roomserverAPI.ErrRoomUnknownOrNotAllowed:
@@ -162,7 +161,6 @@ func QueryRoomHierarchy(req *http.Request, device *userapi.Device, roomIDStr str
 			NextBatch: nextBatch,
 		},
 	}
-
 }
 
 // Success response for /_matrix/client/v1/rooms/{roomID}/hierarchy

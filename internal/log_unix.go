@@ -17,7 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 	lSyslog "github.com/sirupsen/logrus/hooks/syslog"
 
-	"github.com/element-hq/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/config"
 )
 
 // SetupHookLogging configures the logging hooks defined in the configuration.
@@ -75,7 +75,6 @@ func checkSyslogHookParams(params map[string]interface{}) {
 	if _, ok2 := proto.(string); !ok2 {
 		logrus.Fatalf("Parameter \"protocol\" for logging hook of type \"syslog\" should be a string")
 	}
-
 }
 
 func setupStdLogHook(level logrus.Level) {

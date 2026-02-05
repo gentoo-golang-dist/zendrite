@@ -25,11 +25,11 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/element-hq/dendrite/mediaapi/fileutils"
-	"github.com/element-hq/dendrite/mediaapi/storage"
-	"github.com/element-hq/dendrite/mediaapi/thumbnailer"
-	"github.com/element-hq/dendrite/mediaapi/types"
-	"github.com/element-hq/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/mediaapi/fileutils"
+	"codefloe.com/pat-s/dendrite/mediaapi/storage"
+	"codefloe.com/pat-s/dendrite/mediaapi/thumbnailer"
+	"codefloe.com/pat-s/dendrite/mediaapi/types"
+	"codefloe.com/pat-s/dendrite/setup/config"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
@@ -43,8 +43,10 @@ const mediaIDCharacters = "A-Za-z0-9_=-"
 var mediaIDRegex = regexp.MustCompile("^[" + mediaIDCharacters + "]+$")
 
 // Regular expressions to help us cope with Content-Disposition parsing
-var rfc2183 = regexp.MustCompile(`filename\=utf-8\"(.*)\"`)
-var rfc6266 = regexp.MustCompile(`filename\*\=utf-8\'\'(.*)`)
+var (
+	rfc2183 = regexp.MustCompile(`filename\=utf-8\"(.*)\"`)
+	rfc6266 = regexp.MustCompile(`filename\*\=utf-8\'\'(.*)`)
+)
 
 // downloadRequest metadata included in or derivable from a download or thumbnail request
 // https://matrix.org/docs/spec/client_server/r0.2.0.html#get-matrix-media-r0-download-servername-mediaid
@@ -193,7 +195,6 @@ func Download(
 		})
 		return
 	}
-
 }
 
 func (r *downloadRequest) jsonErrorResponse(w http.ResponseWriter, res util.JSONResponse) {

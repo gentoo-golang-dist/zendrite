@@ -18,10 +18,10 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
 
-	"github.com/element-hq/dendrite/internal/eventutil"
-	"github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/internal/eventutil"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/setup/config"
 )
 
 // MakeJoin implements the /make_join API
@@ -349,9 +349,11 @@ type eventsByDepth []*types.HeaderedEvent
 func (e eventsByDepth) Len() int {
 	return len(e)
 }
+
 func (e eventsByDepth) Swap(i, j int) {
 	e[i], e[j] = e[j], e[i]
 }
+
 func (e eventsByDepth) Less(i, j int) bool {
 	return e[i].Depth() < e[j].Depth()
 }

@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/element-hq/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/config"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
@@ -24,7 +24,6 @@ func ParseUsernameParam(usernameParam string, cfg *config.Global) (string, spec.
 
 	if strings.HasPrefix(usernameParam, "@") {
 		lp, domain, err := gomatrixserverlib.SplitID('@', usernameParam)
-
 		if err != nil {
 			return "", "", errors.New("invalid username")
 		}

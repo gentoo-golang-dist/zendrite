@@ -19,40 +19,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/element-hq/dendrite/clientapi/auth/authtypes"
-	"github.com/element-hq/dendrite/internal"
-	"github.com/element-hq/dendrite/internal/caching"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/setup/jetstream"
-	"github.com/element-hq/dendrite/test"
-	"github.com/element-hq/dendrite/test/testrig"
-	"github.com/element-hq/dendrite/userapi"
-	"github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal/caching"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/jetstream"
+	"codefloe.com/pat-s/dendrite/test"
+	"codefloe.com/pat-s/dendrite/test/testrig"
+	"codefloe.com/pat-s/dendrite/userapi"
+	"codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 )
 
-var (
-	// Registration Flows that the server allows.
-	allowedFlows = []authtypes.Flow{
-		{
-			Stages: []authtypes.LoginType{
-				authtypes.LoginType("stage1"),
-				authtypes.LoginType("stage2"),
-			},
+// Registration Flows that the server allows.
+var allowedFlows = []authtypes.Flow{
+	{
+		Stages: []authtypes.LoginType{
+			authtypes.LoginType("stage1"),
+			authtypes.LoginType("stage2"),
 		},
-		{
-			Stages: []authtypes.LoginType{
-				authtypes.LoginType("stage1"),
-				authtypes.LoginType("stage3"),
-			},
+	},
+	{
+		Stages: []authtypes.LoginType{
+			authtypes.LoginType("stage1"),
+			authtypes.LoginType("stage3"),
 		},
-	}
-)
+	},
+}
 
 // Should return true as we're completing all the stages of a single flow in
 // order.

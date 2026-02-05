@@ -15,11 +15,11 @@ import (
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/sirupsen/logrus"
 
-	"github.com/element-hq/dendrite/internal"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/userapi/api"
-	"github.com/element-hq/dendrite/userapi/storage/tables"
-	"github.com/element-hq/dendrite/userapi/types"
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
+	"codefloe.com/pat-s/dendrite/userapi/types"
 )
 
 const userDailyVisitsSchema = `
@@ -301,7 +301,7 @@ func (s *statsStatements) registeredUserByType(ctx context.Context, txn *sql.Tx)
 
 	var userType string
 	var count int64
-	var result = make(map[string]int64)
+	result := make(map[string]int64)
 	for rows.Next() {
 		if err = rows.Scan(&userType, &count); err != nil {
 			return nil, err
@@ -351,7 +351,7 @@ func (s *statsStatements) r30Users(ctx context.Context, txn *sql.Tx) (map[string
 
 	var platform string
 	var count int64
-	var result = make(map[string]int64)
+	result := make(map[string]int64)
 	for rows.Next() {
 		if err = rows.Scan(&platform, &count); err != nil {
 			return nil, err
@@ -389,7 +389,7 @@ func (s *statsStatements) r30UsersV2(ctx context.Context, txn *sql.Tx) (map[stri
 
 	var platform string
 	var count int64
-	var result = map[string]int64{
+	result := map[string]int64{
 		"ios":      0,
 		"android":  0,
 		"web":      0,

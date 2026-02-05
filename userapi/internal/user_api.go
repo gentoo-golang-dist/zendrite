@@ -15,29 +15,29 @@ import (
 	"strconv"
 	"time"
 
-	appserviceAPI "github.com/element-hq/dendrite/appservice/api"
-	"github.com/element-hq/dendrite/clientapi/auth/authtypes"
-	fedsenderapi "github.com/element-hq/dendrite/federationapi/api"
-	"github.com/element-hq/dendrite/internal/pushrules"
+	appserviceAPI "codefloe.com/pat-s/dendrite/appservice/api"
+	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
+	fedsenderapi "codefloe.com/pat-s/dendrite/federationapi/api"
+	"codefloe.com/pat-s/dendrite/internal/pushrules"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 
-	clientapi "github.com/element-hq/dendrite/clientapi/api"
-	"github.com/element-hq/dendrite/clientapi/userutil"
-	"github.com/element-hq/dendrite/internal/eventutil"
-	"github.com/element-hq/dendrite/internal/pushgateway"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	rsapi "github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/setup/config"
-	synctypes "github.com/element-hq/dendrite/syncapi/types"
-	"github.com/element-hq/dendrite/userapi/api"
-	"github.com/element-hq/dendrite/userapi/producers"
-	"github.com/element-hq/dendrite/userapi/storage"
-	"github.com/element-hq/dendrite/userapi/storage/tables"
-	userapiUtil "github.com/element-hq/dendrite/userapi/util"
+	clientapi "codefloe.com/pat-s/dendrite/clientapi/api"
+	"codefloe.com/pat-s/dendrite/clientapi/userutil"
+	"codefloe.com/pat-s/dendrite/internal/eventutil"
+	"codefloe.com/pat-s/dendrite/internal/pushgateway"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	rsapi "codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	synctypes "codefloe.com/pat-s/dendrite/syncapi/types"
+	"codefloe.com/pat-s/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/userapi/producers"
+	"codefloe.com/pat-s/dendrite/userapi/storage"
+	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
+	userapiUtil "codefloe.com/pat-s/dendrite/userapi/util"
 )
 
 type UserInternalAPI struct {
@@ -447,9 +447,7 @@ func (a *UserInternalAPI) PerformDeviceUpdate(ctx context.Context, req *api.Perf
 	return nil
 }
 
-var (
-	ErrIsRemoteServer = errors.New("cannot query profile of remote users")
-)
+var ErrIsRemoteServer = errors.New("cannot query profile of remote users")
 
 func (a *UserInternalAPI) QueryProfile(ctx context.Context, userID string) (*authtypes.Profile, error) {
 	local, domain, err := gomatrixserverlib.SplitID('@', userID)
@@ -814,7 +812,7 @@ func (a *UserInternalAPI) QueryNotifications(ctx context.Context, req *api.Query
 			return fmt.Errorf("QueryNotifications: parsing 'from': %w", err)
 		}
 	}
-	var filter = tables.AllNotifications
+	filter := tables.AllNotifications
 	if req.Only == "highlight" {
 		filter = tables.HighlightNotifications
 	}

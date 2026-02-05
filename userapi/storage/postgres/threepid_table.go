@@ -10,12 +10,12 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/element-hq/dendrite/internal"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/userapi/storage/tables"
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 
-	"github.com/element-hq/dendrite/clientapi/auth/authtypes"
+	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
 )
 
 const threepidSchema = `
@@ -115,7 +115,8 @@ func (s *threepidStatements) InsertThreePID(
 }
 
 func (s *threepidStatements) DeleteThreePID(
-	ctx context.Context, txn *sql.Tx, threepid string, medium string) (err error) {
+	ctx context.Context, txn *sql.Tx, threepid string, medium string,
+) (err error) {
 	stmt := sqlutil.TxStmt(txn, s.deleteThreePIDStmt)
 	_, err = stmt.ExecContext(ctx, threepid, medium)
 	return

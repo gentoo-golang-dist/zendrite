@@ -8,23 +8,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/element-hq/dendrite/internal/caching"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver"
-	"github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/setup/jetstream"
-	"github.com/element-hq/dendrite/test/testrig"
+	"codefloe.com/pat-s/dendrite/internal/caching"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/setup/jetstream"
+	"codefloe.com/pat-s/dendrite/test/testrig"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/element-hq/dendrite/internal/pushrules"
-	rsapi "github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/test"
-	"github.com/element-hq/dendrite/userapi/storage"
-	userAPITypes "github.com/element-hq/dendrite/userapi/types"
+	"codefloe.com/pat-s/dendrite/internal/pushrules"
+	rsapi "codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/test"
+	"codefloe.com/pat-s/dendrite/userapi/storage"
+	userAPITypes "codefloe.com/pat-s/dendrite/userapi/types"
 )
 
 func mustCreateDatabase(t *testing.T, dbType test.DBType) (storage.UserDatabase, func()) {
@@ -136,7 +136,6 @@ func Test_evaluatePushRules(t *testing.T) {
 					t.Fatalf("expected to notify but didn't")
 				}
 			})
-
 		}
 	})
 }
@@ -174,7 +173,6 @@ func TestLocalRoomMembers(t *testing.T) {
 		expectedLocalMember := &localMembership{UserID: alice.ID, Localpart: alice.Localpart, Domain: "test", MemberContent: gomatrixserverlib.MemberContent{Membership: spec.Join}}
 		assert.Equal(t, expectedLocalMember, members[0])
 	})
-
 }
 
 func TestMessageStats(t *testing.T) {

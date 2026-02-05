@@ -10,9 +10,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/element-hq/dendrite/clientapi/httputil"
-	"github.com/element-hq/dendrite/clientapi/producers"
-	"github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/clientapi/httputil"
+	"codefloe.com/pat-s/dendrite/clientapi/producers"
+	"codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrix"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
@@ -27,7 +27,6 @@ func GetTags(
 	roomID string,
 	syncProducer *producers.SyncAPIProducer,
 ) util.JSONResponse {
-
 	if device.UserID != userID {
 		return util.JSONResponse{
 			Code: http.StatusForbidden,
@@ -62,7 +61,6 @@ func PutTag(
 	tag string,
 	syncProducer *producers.SyncAPIProducer,
 ) util.JSONResponse {
-
 	if device.UserID != userID {
 		return util.JSONResponse{
 			Code: http.StatusForbidden,
@@ -115,7 +113,6 @@ func DeleteTag(
 	tag string,
 	syncProducer *producers.SyncAPIProducer,
 ) util.JSONResponse {
-
 	if device.UserID != userID {
 		return util.JSONResponse{
 			Code: http.StatusForbidden,

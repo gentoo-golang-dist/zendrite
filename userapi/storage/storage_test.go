@@ -10,23 +10,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/syncapi/synctypes"
-	"github.com/element-hq/dendrite/userapi/types"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/syncapi/synctypes"
+	"codefloe.com/pat-s/dendrite/userapi/types"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/element-hq/dendrite/clientapi/auth/authtypes"
-	"github.com/element-hq/dendrite/internal/pushrules"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/test"
-	"github.com/element-hq/dendrite/test/testrig"
-	"github.com/element-hq/dendrite/userapi/api"
-	"github.com/element-hq/dendrite/userapi/storage"
-	"github.com/element-hq/dendrite/userapi/storage/tables"
+	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
+	"codefloe.com/pat-s/dendrite/internal/pushrules"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/test"
+	"codefloe.com/pat-s/dendrite/test/testrig"
+	"codefloe.com/pat-s/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/userapi/storage"
+	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
 )
 
 const loginTokenLifetime = time.Minute
@@ -668,8 +668,10 @@ func TestKeyChangesUpperLimit(t *testing.T) {
 	})
 }
 
-var dbLock sync.Mutex
-var deviceArray = []string{"AAA", "another_device"}
+var (
+	dbLock      sync.Mutex
+	deviceArray = []string{"AAA", "another_device"}
+)
 
 // The purpose of this test is to make sure that the storage layer is generating sequential stream IDs per user,
 // and that they are returned correctly when querying for device keys.
@@ -741,7 +743,6 @@ func TestDeviceKeysStreamIDGeneration(t *testing.T) {
 		defer dbLock.Unlock()
 		// Querying for device keys returns the latest stream IDs
 		msgs, err = db.DeviceKeysForUser(ctx, alice, deviceArray, false)
-
 		if err != nil {
 			t.Fatalf("DeviceKeysForUser returned error: %s", err)
 		}

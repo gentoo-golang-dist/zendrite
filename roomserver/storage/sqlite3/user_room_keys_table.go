@@ -13,10 +13,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/element-hq/dendrite/internal"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver/storage/tables"
-	"github.com/element-hq/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
@@ -57,7 +57,7 @@ type userRoomKeysStatements struct {
 	selectUserRoomKeyStmt              *sql.Stmt
 	selectUserRoomPublicKeyStmt        *sql.Stmt
 	selectAllUserRoomPublicKeysForUser *sql.Stmt
-	//selectUserNIDsStmt           *sql.Stmt //prepared at runtime
+	// selectUserNIDsStmt           *sql.Stmt //prepared at runtime
 }
 
 func CreateUserRoomKeysTable(db *sql.DB) error {
@@ -120,7 +120,6 @@ func (s *userRoomKeysStatements) SelectUserRoomPublicKey(
 }
 
 func (s *userRoomKeysStatements) BulkSelectUserNIDs(ctx context.Context, txn *sql.Tx, senderKeys map[types.RoomNID][]ed25519.PublicKey) (map[string]types.UserRoomKeyPair, error) {
-
 	roomNIDs := make([]any, 0, len(senderKeys))
 	var senders []any
 	for roomNID := range senderKeys {

@@ -10,8 +10,8 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
 )
 
 const purgeEventJSONSQL = "" +
@@ -97,7 +97,6 @@ func PreparePurgeStatements(db *sql.DB) (*purgeStatements, error) {
 func (s *purgeStatements) PurgeRoom(
 	ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, roomID string,
 ) error {
-
 	// purge by roomID
 	purgeByRoomID := []*sql.Stmt{
 		s.purgeRoomAliasesStmt,

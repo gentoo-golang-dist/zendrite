@@ -10,7 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/element-hq/dendrite/federationapi/storage"
+	"codefloe.com/pat-s/dendrite/federationapi/storage"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
@@ -129,8 +129,10 @@ type ServerStatistics struct {
 	relayMutex        sync.Mutex
 }
 
-const maxJitterMultiplier = 1.4
-const minJitterMultiplier = 0.8
+const (
+	maxJitterMultiplier = 1.4
+	minJitterMultiplier = 0.8
+)
 
 // duration returns how long the next backoff interval should be.
 func (s *ServerStatistics) duration(count uint32) time.Duration {

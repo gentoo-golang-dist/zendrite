@@ -20,13 +20,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/element-hq/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal"
 	"github.com/tidwall/gjson"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/term"
 
-	"github.com/element-hq/dendrite/setup"
+	"codefloe.com/pat-s/dendrite/setup"
 )
 
 const usage = `Usage: %s
@@ -160,7 +160,6 @@ func sharedSecretRegister(sharedSecret, serverURL, localpart, password string, a
 	registerReq, err := http.NewRequest(http.MethodPost, registerURL, bytes.NewBuffer(js))
 	if err != nil {
 		return "", fmt.Errorf("unable to create http request: %w", err)
-
 	}
 	regResp, err := cl.Do(registerReq)
 	if err != nil {

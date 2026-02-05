@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/element-hq/dendrite/clientapi/userutil"
-	"github.com/element-hq/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/clientapi/userutil"
+	"codefloe.com/pat-s/dendrite/setup/config"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
@@ -121,7 +121,7 @@ func userIDIsWithinApplicationServiceNamespace(
 	userID string,
 	appservice *config.ApplicationService,
 ) bool {
-	var localpart, domain, err = gomatrixserverlib.SplitID('@', userID)
+	localpart, domain, err := gomatrixserverlib.SplitID('@', userID)
 	if err != nil {
 		// Not a valid userID
 		return false

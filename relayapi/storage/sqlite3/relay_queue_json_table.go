@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/element-hq/dendrite/internal"
-	"github.com/element-hq/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 )
 
 const relayQueueJSONSchema = `
@@ -44,8 +44,8 @@ const selectQueueJSONSQL = "" +
 type relayQueueJSONStatements struct {
 	db             *sql.DB
 	insertJSONStmt *sql.Stmt
-	//deleteJSONStmt *sql.Stmt - prepared at runtime due to variadic
-	//selectJSONStmt *sql.Stmt - prepared at runtime due to variadic
+	// deleteJSONStmt *sql.Stmt - prepared at runtime due to variadic
+	// selectJSONStmt *sql.Stmt - prepared at runtime due to variadic
 }
 
 func NewSQLiteRelayQueueJSONTable(db *sql.DB) (s *relayQueueJSONStatements, err error) {

@@ -14,19 +14,19 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	rstypes "github.com/element-hq/dendrite/roomserver/types"
-	userapi "github.com/element-hq/dendrite/userapi/api"
+	rstypes "codefloe.com/pat-s/dendrite/roomserver/types"
+	userapi "codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/sirupsen/logrus"
 
-	"github.com/element-hq/dendrite/internal/eventutil"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/syncapi/storage/tables"
-	"github.com/element-hq/dendrite/syncapi/synctypes"
-	"github.com/element-hq/dendrite/syncapi/types"
+	"codefloe.com/pat-s/dendrite/internal/eventutil"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
+	"codefloe.com/pat-s/dendrite/syncapi/synctypes"
+	"codefloe.com/pat-s/dendrite/syncapi/types"
 )
 
 // Database is a temporary struct until we have made syncserver.go the same for both pq/sqlite
@@ -446,7 +446,6 @@ func (d *Database) fetchMissingStateEvents(
 	// events that we received from outside the main event stream.
 	// These should be in the room state table.
 	stateEvents, err := d.CurrentRoomState.SelectEventsWithEventIDs(ctx, txn, missing)
-
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +456,7 @@ func (d *Database) fetchMissingStateEvents(
 		// this error again when we work out what it is and fix it, otherwise we
 		// just end up returning lots of 500s to the client and that breaks
 		// pretty much everything, rather than just sending what we have.
-		//return nil, fmt.Errorf("failed to map all event IDs to events: (got %d, wanted %d)", len(stateEvents), len(missing))
+		// return nil, fmt.Errorf("failed to map all event IDs to events: (got %d, wanted %d)", len(stateEvents), len(missing))
 	}
 	events = append(events, stateEvents...)
 	return events, nil
@@ -547,6 +546,7 @@ func (d *Database) SelectContextEvent(ctx context.Context, roomID, eventID strin
 func (d *Database) SelectContextBeforeEvent(ctx context.Context, id int, roomID string, filter *synctypes.RoomEventFilter) ([]*rstypes.HeaderedEvent, error) {
 	return d.OutputEvents.SelectContextBeforeEvent(ctx, nil, id, roomID, filter)
 }
+
 func (d *Database) SelectContextAfterEvent(ctx context.Context, id int, roomID string, filter *synctypes.RoomEventFilter) (int, []*rstypes.HeaderedEvent, error) {
 	return d.OutputEvents.SelectContextAfterEvent(ctx, nil, id, roomID, filter)
 }

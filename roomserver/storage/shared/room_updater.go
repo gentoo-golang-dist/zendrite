@@ -7,7 +7,7 @@ import (
 
 	"github.com/matrix-org/gomatrixserverlib"
 
-	"github.com/element-hq/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
 )
 
 type RoomUpdater struct {
@@ -39,8 +39,7 @@ func NewRoomUpdater(ctx context.Context, d *Database, txn *sql.Tx, roomInfo *typ
 		}, nil
 	}
 
-	eventNIDs, lastEventNIDSent, currentStateSnapshotNID, err :=
-		d.RoomsTable.SelectLatestEventsNIDsForUpdate(ctx, txn, roomInfo.RoomNID)
+	eventNIDs, lastEventNIDSent, currentStateSnapshotNID, err := d.RoomsTable.SelectLatestEventsNIDsForUpdate(ctx, txn, roomInfo.RoomNID)
 	if err != nil {
 		rollback(txn)
 		return nil, err

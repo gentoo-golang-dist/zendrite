@@ -20,9 +20,9 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/element-hq/dendrite/internal"
-	"github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
 )
 
 type StateResolutionStorage interface {
@@ -802,8 +802,7 @@ func (v *StateResolution) calculateAndStoreStateAfterManyEvents(
 	trace, ctx := internal.StartRegion(ctx, "StateResolution.calculateAndStoreStateAfterManyEvents")
 	defer trace.EndRegion()
 
-	state, algorithm, conflictLength, err :=
-		v.calculateStateAfterManyEvents(ctx, v.roomInfo.RoomVersion, prevStates)
+	state, algorithm, conflictLength, err := v.calculateStateAfterManyEvents(ctx, v.roomInfo.RoomVersion, prevStates)
 	metrics.algorithm = algorithm
 	if err != nil {
 		return metrics.stop(0, fmt.Errorf("v.calculateStateAfterManyEvents: %w", err))

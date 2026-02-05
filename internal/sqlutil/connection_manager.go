@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/setup/process"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/process"
 )
 
 type Connections struct {
@@ -74,5 +74,4 @@ func (c *Connections) Connection(dbProperties *config.DatabaseOptions) (*sql.DB,
 		c.processContext.ComponentFinished()
 	}()
 	return db, writer, nil
-
 }

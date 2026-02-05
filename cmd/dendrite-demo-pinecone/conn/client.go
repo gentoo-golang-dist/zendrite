@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"strings"
 
+	"codefloe.com/pat-s/dendrite/setup/config"
 	"github.com/coder/websocket"
-	"github.com/element-hq/dendrite/setup/config"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 
 	pineconeRouter "github.com/matrix-org/pinecone/router"

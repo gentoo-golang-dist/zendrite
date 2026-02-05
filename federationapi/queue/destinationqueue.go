@@ -20,11 +20,11 @@ import (
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/sirupsen/logrus"
 
-	"github.com/element-hq/dendrite/federationapi/statistics"
-	"github.com/element-hq/dendrite/federationapi/storage"
-	"github.com/element-hq/dendrite/federationapi/storage/shared/receipt"
-	"github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/setup/process"
+	"codefloe.com/pat-s/dendrite/federationapi/statistics"
+	"codefloe.com/pat-s/dendrite/federationapi/storage"
+	"codefloe.com/pat-s/dendrite/federationapi/storage/shared/receipt"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/setup/process"
 )
 
 const (
@@ -454,13 +454,13 @@ func (oq *destinationQueue) nextTransaction(
 	case nil:
 		// Clean up the transaction in the database.
 		if pduReceipts != nil {
-			//logrus.Infof("Cleaning PDUs %q", pduReceipt.String())
+			// logrus.Infof("Cleaning PDUs %q", pduReceipt.String())
 			if err = oq.db.CleanPDUs(oq.process.Context(), oq.destination, pduReceipts); err != nil {
 				logrus.WithError(err).Errorf("Failed to clean PDUs for server %q", t.Destination)
 			}
 		}
 		if eduReceipts != nil {
-			//logrus.Infof("Cleaning EDUs %q", eduReceipt.String())
+			// logrus.Infof("Cleaning EDUs %q", eduReceipt.String())
 			if err = oq.db.CleanEDUs(oq.process.Context(), oq.destination, eduReceipts); err != nil {
 				logrus.WithError(err).Errorf("Failed to clean EDUs for server %q", t.Destination)
 			}

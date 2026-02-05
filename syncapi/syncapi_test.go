@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/element-hq/dendrite/internal/caching"
-	"github.com/element-hq/dendrite/internal/httputil"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/internal/caching"
+	"codefloe.com/pat-s/dendrite/internal/httputil"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/setup/config"
 	"github.com/gorilla/mux"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
@@ -22,19 +22,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/tidwall/gjson"
 
-	rstypes "github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/syncapi/routing"
-	"github.com/element-hq/dendrite/syncapi/storage"
-	"github.com/element-hq/dendrite/syncapi/synctypes"
+	rstypes "codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/syncapi/routing"
+	"codefloe.com/pat-s/dendrite/syncapi/storage"
+	"codefloe.com/pat-s/dendrite/syncapi/synctypes"
 
-	"github.com/element-hq/dendrite/clientapi/producers"
-	"github.com/element-hq/dendrite/roomserver"
-	rsapi "github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/setup/jetstream"
-	"github.com/element-hq/dendrite/syncapi/types"
-	"github.com/element-hq/dendrite/test"
-	"github.com/element-hq/dendrite/test/testrig"
-	userapi "github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/clientapi/producers"
+	"codefloe.com/pat-s/dendrite/roomserver"
+	rsapi "codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/setup/jetstream"
+	"codefloe.com/pat-s/dendrite/syncapi/types"
+	"codefloe.com/pat-s/dendrite/test"
+	"codefloe.com/pat-s/dendrite/test/testrig"
+	userapi "codefloe.com/pat-s/dendrite/userapi/api"
 )
 
 type syncRoomserverAPI struct {
@@ -71,6 +71,7 @@ func (s *syncRoomserverAPI) QuerySharedUsers(ctx context.Context, req *rsapi.Que
 	res.UserIDsToCount = make(map[string]int)
 	return nil
 }
+
 func (s *syncRoomserverAPI) QueryBulkStateContent(ctx context.Context, req *rsapi.QueryBulkStateContentRequest, res *rsapi.QueryBulkStateContentResponse) error {
 	return nil
 }
@@ -512,7 +513,6 @@ func testSyncAPIUpdatePresenceImmediately(t *testing.T, dbType test.DBType) {
 	if gjson.ParseBytes(res.Presence.Events[0].Content).Get("presence").Str != "online" {
 		t.Errorf("content: not online,  got %v", res.Presence.Events[0].Content)
 	}
-
 }
 
 // This is mainly what Sytest is doing in "test_history_visibility"
@@ -874,7 +874,6 @@ func TestGetMembership(t *testing.T) {
 	}
 
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
-
 		cfg, processCtx, close := testrig.CreateConfig(t, dbType)
 		routers := httputil.NewRouters()
 		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
@@ -1081,7 +1080,6 @@ func TestContext(t *testing.T) {
 }
 
 func testContext(t *testing.T, dbType test.DBType) {
-
 	tests := []struct {
 		name             string
 		roomID           string
@@ -1425,6 +1423,7 @@ func searchRequest(t *testing.T, router *mux.Router, accessToken, searchTerm str
 	assert.NoError(t, err)
 	return body
 }
+
 func syncUntil(t *testing.T,
 	routers httputil.Routers, accessToken string,
 	skip bool,

@@ -13,15 +13,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/element-hq/dendrite/federationapi/storage/shared/receipt"
-	"github.com/element-hq/dendrite/federationapi/types"
-	rstypes "github.com/element-hq/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/federationapi/storage/shared/receipt"
+	"codefloe.com/pat-s/dendrite/federationapi/types"
+	rstypes "codefloe.com/pat-s/dendrite/roomserver/types"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
-var nidMutex sync.Mutex
-var nid = int64(0)
+var (
+	nidMutex sync.Mutex
+	nid      = int64(0)
+)
 
 type InMemoryFederationDatabase struct {
 	dbMutex            sync.Mutex

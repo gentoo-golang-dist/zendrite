@@ -12,7 +12,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/element-hq/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
@@ -117,7 +117,6 @@ func (s *serverSigningKeyStatements) BulkSelectServerKeys(
 			return nil
 		},
 	)
-
 	if err != nil {
 		return nil, err
 	}

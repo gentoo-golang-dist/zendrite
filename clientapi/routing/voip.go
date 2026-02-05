@@ -17,8 +17,8 @@ import (
 	"github.com/matrix-org/gomatrix"
 	"github.com/matrix-org/util"
 
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
@@ -49,7 +49,6 @@ func RequestTurnServer(req *http.Request, device *api.Device, cfg *config.Client
 		resp.Username = fmt.Sprintf("%d:%s", expiry, device.UserID)
 		mac := hmac.New(sha1.New, []byte(turnConfig.SharedSecret))
 		_, err := mac.Write([]byte(resp.Username))
-
 		if err != nil {
 			util.GetLogger(req.Context()).WithError(err).Error("mac.Write failed")
 			return util.JSONResponse{

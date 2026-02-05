@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/syncapi/storage/postgres"
-	"github.com/element-hq/dendrite/syncapi/storage/sqlite3"
-	"github.com/element-hq/dendrite/syncapi/storage/tables"
-	"github.com/element-hq/dendrite/syncapi/types"
-	"github.com/element-hq/dendrite/test"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/syncapi/storage/postgres"
+	"codefloe.com/pat-s/dendrite/syncapi/storage/sqlite3"
+	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
+	"codefloe.com/pat-s/dendrite/syncapi/types"
+	"codefloe.com/pat-s/dendrite/test"
 )
 
 func newRelationsTable(t *testing.T, dbType test.DBType) (tables.Relations, *sql.DB, func()) {
@@ -59,9 +59,11 @@ func compareRelationsToExpected(t *testing.T, tab tables.Relations, r types.Rang
 	}
 }
 
-const roomID = "!roomid:server"
-const childType = "m.room.something"
-const relType = "m.reaction"
+const (
+	roomID    = "!roomid:server"
+	childType = "m.room.something"
+	relType   = "m.reaction"
+)
 
 func TestRelationsTable(t *testing.T) {
 	ctx := context.Background()

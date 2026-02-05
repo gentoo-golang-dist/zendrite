@@ -13,12 +13,12 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
 
-	fedapi "github.com/element-hq/dendrite/federationapi/api"
-	"github.com/element-hq/dendrite/internal"
-	"github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/roomserver/state"
-	"github.com/element-hq/dendrite/roomserver/storage"
-	"github.com/element-hq/dendrite/roomserver/types"
+	fedapi "codefloe.com/pat-s/dendrite/federationapi/api"
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/roomserver/state"
+	"codefloe.com/pat-s/dendrite/roomserver/storage"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
 )
 
 type parsedRespState struct {
@@ -476,7 +476,8 @@ func (t *missingStateReq) lookupStateAfterEventLocally(ctx context.Context, even
 // lookuptStateBeforeEvent returns the room state before the event e, which is just /state_ids and/or /state depending on what
 // the server supports.
 func (t *missingStateReq) lookupStateBeforeEvent(ctx context.Context, roomVersion gomatrixserverlib.RoomVersion, roomID, eventID string) (
-	*parsedRespState, error) {
+	*parsedRespState, error,
+) {
 	trace, ctx := internal.StartRegion(ctx, "lookupStateBeforeEvent")
 	defer trace.EndRegion()
 
@@ -708,7 +709,8 @@ func (t *missingStateReq) lookupMissingStateViaState(
 }
 
 func (t *missingStateReq) lookupMissingStateViaStateIDs(ctx context.Context, roomID, eventID string, roomVersion gomatrixserverlib.RoomVersion) (
-	*parsedRespState, error) {
+	*parsedRespState, error,
+) {
 	trace, ctx := internal.StartRegion(ctx, "lookupMissingStateViaStateIDs")
 	defer trace.EndRegion()
 
@@ -989,6 +991,7 @@ type missingPrevEventsError struct {
 func (e verifySigError) Error() string {
 	return fmt.Sprintf("unable to verify signature of event %q: %s", e.eventID, e.err)
 }
+
 func (e missingPrevEventsError) Error() string {
 	return fmt.Sprintf("unable to get prev_events for event %q: %s", e.eventID, e.err)
 }

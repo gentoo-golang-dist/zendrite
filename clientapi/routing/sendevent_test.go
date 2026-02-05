@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	rsapi "github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/setup/config"
-	uapi "github.com/element-hq/dendrite/userapi/api"
+	rsapi "codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	uapi "codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
@@ -72,7 +72,6 @@ func (s *sendEventTestRoomserverAPI) QueryLatestEventsAndState(ctx context.Conte
 		s.t.Logf("room event/state queried for %s", req.RoomID)
 		return fmt.Errorf("unknown room")
 	}
-
 }
 
 func (s *sendEventTestRoomserverAPI) QuerySenderIDForUser(

@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/element-hq/dendrite/internal/caching"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver/state"
-	"github.com/element-hq/dendrite/roomserver/storage"
-	"github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/setup"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/setup/process"
+	"codefloe.com/pat-s/dendrite/internal/caching"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver/state"
+	"codefloe.com/pat-s/dendrite/roomserver/storage"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/setup"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/process"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
@@ -29,9 +29,11 @@ import (
 // Usage: ./resolve-state --roomversion=version snapshot [snapshot ...]
 //   e.g. ./resolve-state --roomversion=5 1254 1235 1282
 
-var roomVersion = flag.String("roomversion", "5", "the room version to parse events as")
-var filterType = flag.String("filtertype", "", "the event types to filter on")
-var difference = flag.Bool("difference", false, "whether to calculate the difference between snapshots")
+var (
+	roomVersion = flag.String("roomversion", "5", "the room version to parse events as")
+	filterType  = flag.String("filtertype", "", "the event types to filter on")
+	difference  = flag.Bool("difference", false, "whether to calculate the difference between snapshots")
+)
 
 // dummyQuerier implements QuerySenderIDAPI. Does **NOT** do any "magic" for pseudoID rooms
 // to avoid having to "start" a full roomserver API.

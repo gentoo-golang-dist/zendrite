@@ -11,8 +11,8 @@ import (
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 
-	"github.com/element-hq/dendrite/clientapi/httputil"
-	roomserverAPI "github.com/element-hq/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/clientapi/httputil"
+	roomserverAPI "codefloe.com/pat-s/dendrite/roomserver/api"
 )
 
 type PublicRoomReq struct {
@@ -53,7 +53,6 @@ func GetPostPublicRooms(req *http.Request, rsAPI roomserverAPI.FederationRoomser
 func publicRooms(
 	ctx context.Context, request PublicRoomReq, rsAPI roomserverAPI.FederationRoomserverAPI,
 ) (*fclient.RespPublicRooms, error) {
-
 	var response fclient.RespPublicRooms
 	var limit int16
 	var offset int64

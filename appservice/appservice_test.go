@@ -14,33 +14,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/element-hq/dendrite/clientapi"
-	"github.com/element-hq/dendrite/clientapi/auth/authtypes"
-	"github.com/element-hq/dendrite/federationapi/statistics"
-	"github.com/element-hq/dendrite/internal/httputil"
-	"github.com/element-hq/dendrite/roomserver/types"
-	"github.com/element-hq/dendrite/syncapi"
-	uapi "github.com/element-hq/dendrite/userapi/api"
+	"codefloe.com/pat-s/dendrite/clientapi"
+	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
+	"codefloe.com/pat-s/dendrite/federationapi/statistics"
+	"codefloe.com/pat-s/dendrite/internal/httputil"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/syncapi"
+	uapi "codefloe.com/pat-s/dendrite/userapi/api"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/util"
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
 	"github.com/tidwall/gjson"
 
-	"github.com/element-hq/dendrite/appservice"
-	"github.com/element-hq/dendrite/appservice/api"
-	"github.com/element-hq/dendrite/appservice/consumers"
-	"github.com/element-hq/dendrite/internal/caching"
-	"github.com/element-hq/dendrite/internal/sqlutil"
-	"github.com/element-hq/dendrite/roomserver"
-	rsapi "github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/setup/config"
-	"github.com/element-hq/dendrite/setup/jetstream"
-	"github.com/element-hq/dendrite/test"
-	"github.com/element-hq/dendrite/userapi"
+	"codefloe.com/pat-s/dendrite/appservice"
+	"codefloe.com/pat-s/dendrite/appservice/api"
+	"codefloe.com/pat-s/dendrite/appservice/consumers"
+	"codefloe.com/pat-s/dendrite/internal/caching"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
+	"codefloe.com/pat-s/dendrite/roomserver"
+	rsapi "codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/setup/config"
+	"codefloe.com/pat-s/dendrite/setup/jetstream"
+	"codefloe.com/pat-s/dendrite/test"
+	"codefloe.com/pat-s/dendrite/userapi"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 
-	"github.com/element-hq/dendrite/test/testrig"
+	"codefloe.com/pat-s/dendrite/test/testrig"
 )
 
 var testIsBlacklistedOrBackingOff = func(s spec.ServerName) (*statistics.ServerStatistics, error) {
@@ -48,7 +48,6 @@ var testIsBlacklistedOrBackingOff = func(s spec.ServerName) (*statistics.ServerS
 }
 
 func TestAppserviceInternalAPI(t *testing.T) {
-
 	// Set expected results
 	existingProtocol := "irc"
 	wantLocationResponse := []api.ASLocationResponse{{Protocol: existingProtocol, Fields: []byte("{}")}}
@@ -167,7 +166,6 @@ func TestAppserviceInternalAPI(t *testing.T) {
 }
 
 func TestAppserviceInternalAPI_UnixSocket_Simple(t *testing.T) {
-
 	// Set expected results
 	existingProtocol := "irc"
 	wantLocationResponse := []api.ASLocationResponse{{Protocol: existingProtocol, Fields: []byte("{}")}}
@@ -261,7 +259,6 @@ func TestAppserviceInternalAPI_UnixSocket_Simple(t *testing.T) {
 		testUserIDExists(t, asAPI, "@as-testing:test", true)
 		testUserIDExists(t, asAPI, "@as1-testing:test", false)
 	})
-
 }
 
 func testUserIDExists(t *testing.T, asAPI api.AppServiceInternalAPI, userID string, wantExists bool) {
@@ -336,7 +333,6 @@ func testProtocol(t *testing.T, asAPI api.AppServiceInternalAPI, proto string, w
 
 // Tests that the roomserver consumer only receives one invite
 func TestRoomserverConsumerOneInvite(t *testing.T) {
-
 	alice := test.NewUser(t)
 	bob := test.NewUser(t)
 	room := test.NewRoom(t, alice)

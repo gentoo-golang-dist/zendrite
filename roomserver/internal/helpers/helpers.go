@@ -11,13 +11,13 @@ import (
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 
-	"github.com/element-hq/dendrite/roomserver/api"
-	"github.com/element-hq/dendrite/roomserver/auth"
-	"github.com/element-hq/dendrite/roomserver/state"
-	"github.com/element-hq/dendrite/roomserver/storage"
-	"github.com/element-hq/dendrite/roomserver/storage/shared"
-	"github.com/element-hq/dendrite/roomserver/storage/tables"
-	"github.com/element-hq/dendrite/roomserver/types"
+	"codefloe.com/pat-s/dendrite/roomserver/api"
+	"codefloe.com/pat-s/dendrite/roomserver/auth"
+	"codefloe.com/pat-s/dendrite/roomserver/state"
+	"codefloe.com/pat-s/dendrite/roomserver/storage"
+	"codefloe.com/pat-s/dendrite/roomserver/storage/shared"
+	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
+	"codefloe.com/pat-s/dendrite/roomserver/types"
 )
 
 // TODO: temporary package which has helper functions used by both internal/perform packages.
@@ -165,7 +165,6 @@ func IsInvitePending(
 func GetMembershipsAtState(
 	ctx context.Context, db storage.RoomDatabase, roomInfo *types.RoomInfo, stateEntries []types.StateEntry, joinedOnly bool,
 ) ([]types.Event, error) {
-
 	var eventNIDs types.EventNIDs
 	for _, entry := range stateEntries {
 		// Filter the events to retrieve to only keep the membership events
@@ -466,8 +465,7 @@ func QueryLatestEventsAndState(
 	response.RoomVersion = roomInfo.RoomVersion
 
 	var currentStateSnapshotNID types.StateSnapshotNID
-	response.LatestEvents, currentStateSnapshotNID, response.Depth, err =
-		db.LatestEventIDs(ctx, roomInfo.RoomNID)
+	response.LatestEvents, currentStateSnapshotNID, response.Depth, err = db.LatestEventIDs(ctx, roomInfo.RoomNID)
 	if err != nil {
 		return err
 	}
