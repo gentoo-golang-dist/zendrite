@@ -36,6 +36,10 @@ type Statistics struct {
 	FailuresUntilAssumedOffline uint32
 
 	enableRelays bool
+
+	// MinBackoffExponent controls the minimum backoff exponent (default: 8 = 256 seconds).
+	// Can be set to a lower value for tests.
+	MinBackoffExponent uint32
 }
 
 func NewStatistics(
@@ -51,6 +55,7 @@ func NewStatistics(
 		backoffTimers:               make(map[spec.ServerName]*time.Timer),
 		servers:                     make(map[spec.ServerName]*ServerStatistics),
 		enableRelays:                enableRelays,
+		MinBackoffExponent:          minBackoffExponent,
 	}
 }
 
@@ -173,16 +178,22 @@ const (
 )
 
 // duration returns how long the next backoff interval should be.
-// Uses exponential backoff starting at 2^8 seconds (~4 min) and capping at
-// 2^19 seconds (~6 days), with jitter to avoid thundering herd.
+// Uses exponential backoff starting at 2^MinBackoffExponent seconds and capping at
+// 2^maxBackoffExponent seconds, with jitter to avoid thundering herd.
 func (s *ServerStatistics) duration(count uint32) time.Duration {
 	// Add some jitter to minimise the chance of having multiple backoffs
 	// ending at the same time.
 	jitter := rand.Float64()*(maxJitterMultiplier-minJitterMultiplier) + minJitterMultiplier
 
-	// Apply offset so first failure (count=1) starts at 2^minBackoffExponent
+	// Use configurable minimum backoff exponent (set in NewStatistics, defaults to minBackoffExponent)
+	minExp := s.statistics.MinBackoffExponent
+
+	// Apply offset so first failure (count=1) starts at 2^minExp
 	// and cap at maxBackoffExponent to avoid extremely long backoffs
-	exponent := float64(count) + float64(minBackoffExponent-1)
+	exponent := float64(count) + float64(minExp) - 1
+	if exponent < 0 {
+		exponent = 0
+	}
 	if exponent > float64(maxBackoffExponent) {
 		exponent = float64(maxBackoffExponent)
 	}
