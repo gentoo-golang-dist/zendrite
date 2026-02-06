@@ -9,7 +9,7 @@ require (
 	github.com/cretz/bine v0.2.0
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/eyedeekay/goSam v0.32.54
-	github.com/eyedeekay/onramp v0.33.8
+	github.com/eyedeekay/onramp v0.33.91
 	github.com/getsentry/sentry-go v0.42.0
 	github.com/gologme/log v1.3.0
 	github.com/google/go-cmp v0.7.0
