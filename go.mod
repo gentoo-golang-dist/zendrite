@@ -138,4 +138,4 @@ go 1.25
 
 toolchain go1.25.6
 
-replace github.com/matrix-org/gomatrixserverlib => github.com/jackmaninov/gomatrixserverlib v0.0.0-20251212030803-43f2ab9620cb
+replace github.com/matrix-org/gomatrixserverlib => github.com/jackmaninov/gomatrixserverlib eb14008fe6d1
