@@ -9,14 +9,14 @@ require (
 	github.com/cretz/bine v0.2.0
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/eyedeekay/goSam v0.32.54
-	github.com/eyedeekay/onramp v0.33.8
+	github.com/eyedeekay/onramp v0.33.91
 	github.com/getsentry/sentry-go v0.42.0
 	github.com/gologme/log v1.3.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/jackc/pgx/v5 v5.7.4
+	github.com/jackc/pgx/v5 v5.8.0
 	github.com/kardianos/minwinsvc v1.0.2
 	github.com/matrix-org/dugong v0.0.0-20210921133753-66e6b1c67e2e
 	github.com/matrix-org/go-sqlite3-js v0.0.0-20220419092513-28aa791a1c91
@@ -38,7 +38,7 @@ require (
 	github.com/tidwall/sjson v1.2.5
 	github.com/uber/jaeger-client-go v2.30.0+incompatible
 	github.com/uber/jaeger-lib v2.4.1+incompatible
-	github.com/yggdrasil-network/yggdrasil-go v0.5.13-0.20251124092915-ae405adf7c4c
+	github.com/yggdrasil-network/yggdrasil-go v0.5.13-RC.1
 	github.com/yggdrasil-network/yggquic v0.0.0-20251128173046-40cea64eaa96
 	go.uber.org/atomic v1.11.0
 	golang.org/x/crypto v0.47.0
@@ -139,6 +139,6 @@ require (
 
 go 1.25
 
-toolchain go1.25.6
+toolchain go1.25.7
 
-replace github.com/matrix-org/gomatrixserverlib => github.com/jackmaninov/gomatrixserverlib v0.0.0-20251212030803-43f2ab9620cb
+replace github.com/matrix-org/gomatrixserverlib => github.com/jackmaninov/gomatrixserverlib eb14008fe6d1
