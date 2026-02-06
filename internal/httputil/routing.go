@@ -68,21 +68,57 @@ type Route struct {
 	handler  http.Handler
 }
 
+// allHTTPMethods lists common HTTP methods used for 405 handling
+var allHTTPMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+	http.MethodPatch, http.MethodDelete, http.MethodOptions,
+}
+
+// tryRegisterHandler attempts to register a handler for a pattern, silently skipping
+// if the pattern conflicts with an existing registration
+func (r *Router) tryRegisterHandler(pattern string, handler http.Handler) (registered bool) {
+	defer func() {
+		if recover() != nil {
+			// Pattern conflicted with existing registration, skip it
+			registered = false
+		}
+	}()
+	r.mux.Handle(pattern, handler)
+	return true
+}
+
 // Methods registers the route for the specified HTTP methods
 func (rt *Route) Methods(methods ...string) *Route {
+	// Build a set of allowed methods
+	allowedMethods := make(map[string]bool)
+	for _, m := range methods {
+		allowedMethods[m] = true
+	}
+
 	for _, pattern := range rt.patterns {
 		fullPattern := rt.router.prefix + pattern
-		for _, method := range methods {
-			if method == http.MethodOptions {
+		for _, method := range allHTTPMethods {
+			methodPattern := method + " " + fullPattern
+			// Skip if already registered
+			if rt.router.registeredOptions[methodPattern] {
 				continue
 			}
-			rt.router.mux.Handle(method+" "+fullPattern, rt.handler)
-		}
-		// Handle OPTIONS for CORS, but only register once per pattern
-		optionsPattern := http.MethodOptions + " " + fullPattern
-		if !rt.router.registeredOptions[optionsPattern] {
-			rt.router.mux.Handle(optionsPattern, rt.handler)
-			rt.router.registeredOptions[optionsPattern] = true
+
+			var handler http.Handler
+			if method == http.MethodOptions {
+				// Always register OPTIONS for CORS
+				handler = rt.handler
+			} else if allowedMethods[method] {
+				// Register the actual handler for allowed methods
+				handler = rt.handler
+			} else {
+				// Register 405 handler for disallowed methods
+				handler = rt.router.methodNotAllowedHandler
+			}
+
+			if rt.router.tryRegisterHandler(methodPattern, handler) {
+				rt.router.registeredOptions[methodPattern] = true
+			}
 		}
 	}
 	return rt
@@ -209,13 +245,52 @@ func (sb *SubrouterBuilder) HandlerFunc(f func(http.ResponseWriter, *http.Reques
 
 // ServeHTTP implements http.Handler
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.mux.ServeHTTP(w, req)
+	// Wrap response to detect 404s and use custom handler
+	wrapped := &responseWriter404{ResponseWriter: w, router: r}
+	r.mux.ServeHTTP(wrapped, req)
+	// If we intercepted a 404 from stdlib mux (nothing else was written),
+	// use our custom not found handler instead
+	if wrapped.is404FromMux && !wrapped.written {
+		r.notFoundHandler.ServeHTTP(w, req)
+	}
+}
+
+// responseWriter404 wraps http.ResponseWriter to intercept stdlib's default 404 responses
+type responseWriter404 struct {
+	http.ResponseWriter
+	router        *Router
+	written       bool
+	status        int
+	is404FromMux  bool
+	bufferedWrite []byte
+}
+
+func (w *responseWriter404) WriteHeader(code int) {
+	w.status = code
+	// If this is a 404, it might be from stdlib mux's default handler
+	// Buffer it instead of forwarding immediately
+	if code == http.StatusNotFound && !w.written {
+		w.is404FromMux = true
+		return
+	}
+	w.written = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *responseWriter404) Write(b []byte) (int, error) {
+	// If we're buffering a potential stdlib 404, buffer the write too
+	if w.is404FromMux && !w.written {
+		w.bufferedWrite = append(w.bufferedWrite, b...)
+		return len(b), nil
+	}
+	w.written = true
+	return w.ResponseWriter.Write(b)
 }
 
 // SetNotFoundHandler sets the handler for 404 responses (for compatibility with gorilla/mux)
 func (r *Router) SetNotFoundHandler(handler http.Handler) {
 	r.notFoundHandler = handler
-	// Register a catch-all handler for the prefix
+	// Register a catch-all handler for the prefix with wildcard
 	pattern := r.prefix
 	if pattern == "" {
 		pattern = "/"
@@ -223,7 +298,11 @@ func (r *Router) SetNotFoundHandler(handler http.Handler) {
 	if !strings.HasSuffix(pattern, "/") {
 		pattern += "/"
 	}
-	r.mux.Handle(pattern, handler)
+	// Register for all common methods with a wildcard to catch unmatched paths
+	wildcardPattern := pattern + "{notfound...}"
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions} {
+		r.mux.Handle(method+" "+wildcardPattern, handler)
+	}
 }
 
 // SetMethodNotAllowedHandler sets the handler for 405 responses (for compatibility with gorilla/mux)
