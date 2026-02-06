@@ -30,10 +30,11 @@ import (
 	"codefloe.com/pat-s/dendrite/mediaapi/thumbnailer"
 	"codefloe.com/pat-s/dendrite/mediaapi/types"
 	"codefloe.com/pat-s/dendrite/setup/config"
+	"errors"
+
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
