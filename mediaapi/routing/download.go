@@ -9,6 +9,7 @@ package routing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -30,7 +31,6 @@ import (
 	"codefloe.com/pat-s/dendrite/mediaapi/thumbnailer"
 	"codefloe.com/pat-s/dendrite/mediaapi/types"
 	"codefloe.com/pat-s/dendrite/setup/config"
-	"errors"
 
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
