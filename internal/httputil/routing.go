@@ -234,7 +234,7 @@ func (sb *SubrouterBuilder) Handler(handler http.Handler) {
 	pattern += "{path...}"
 	// Register for common HTTP methods to avoid conflicts with method-specific routes
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
-		sb.parent.mux.Handle(method+" "+pattern, handler)
+		sb.parent.tryRegisterHandler(method+" "+pattern, handler)
 	}
 }
 
@@ -301,7 +301,7 @@ func (r *Router) SetNotFoundHandler(handler http.Handler) {
 	// Register for all common methods with a wildcard to catch unmatched paths
 	wildcardPattern := pattern + "{notfound...}"
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions} {
-		r.mux.Handle(method+" "+wildcardPattern, handler)
+		r.tryRegisterHandler(method+" "+wildcardPattern, handler)
 	}
 }
 
