@@ -152,9 +152,9 @@ func setupFileHook(hook config.LogrusHook, level logrus.Level) {
 	// Create timberjack logger with daily rotation and gzip compression
 	writer := &timberjack.Logger{
 		Filename:    fullPath,
-		MaxBackups:  7,                   // keep 7 days of backups
-		Compression: "gzip",              // compress rotated files
-		RotateAt:    []string{"00:00"},   // rotate daily at midnight
+		MaxBackups:  7,                 // keep 7 days of backups
+		Compression: "gzip",            // compress rotated files
+		RotateAt:    []string{"00:00"}, // rotate daily at midnight
 	}
 
 	logrus.AddHook(&logLevelHook{
