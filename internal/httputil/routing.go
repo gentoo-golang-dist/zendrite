@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
@@ -32,30 +33,16 @@ func URLDecodeMapValues(vmap map[string]string) (map[string]string, error) {
 	return decoded, nil
 }
 
-// Vars extracts all path variables from an http.Request.
-// This replaces mux.Vars() usage. It extracts variable names from the
-// request's pattern and returns their values.
+// Vars extracts all path variables from an http.Request using chi's URL params.
 func Vars(r *http.Request) map[string]string {
 	vars := make(map[string]string)
-	pattern := r.Pattern
-	if pattern == "" {
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil {
 		return vars
 	}
-	// Extract variable names from the pattern
-	// Pattern format is like "GET /path/{var1}/more/{var2}"
-	// Remove the method prefix if present
-	if idx := strings.Index(pattern, " "); idx != -1 {
-		pattern = pattern[idx+1:]
-	}
-	// Find all {varName} patterns
-	re := regexp.MustCompile(`\{([^}]+)\}`)
-	matches := re.FindAllStringSubmatch(pattern, -1)
-	for _, match := range matches {
-		if len(match) >= 2 {
-			varName := match[1]
-			// Handle patterns like {var...} for wildcards
-			varName = strings.TrimSuffix(varName, "...")
-			vars[varName] = r.PathValue(varName)
+	for i, key := range rctx.URLParams.Keys {
+		if i < len(rctx.URLParams.Values) {
+			vars[key] = rctx.URLParams.Values[i]
 		}
 	}
 	return vars
@@ -68,96 +55,52 @@ type Route struct {
 	handler  http.Handler
 }
 
-// allHTTPMethods lists common HTTP methods used for 405 handling
-var allHTTPMethods = []string{
-	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
-	http.MethodPatch, http.MethodDelete, http.MethodOptions,
-}
-
-// tryRegisterHandler attempts to register a handler for a pattern, silently skipping
-// if the pattern conflicts with an existing registration
-func (r *Router) tryRegisterHandler(pattern string, handler http.Handler) (registered bool) {
-	defer func() {
-		if recover() != nil {
-			// Pattern conflicted with existing registration, skip it
-			registered = false
-		}
-	}()
-	r.mux.Handle(pattern, handler)
-	return true
-}
-
 // Methods registers the route for the specified HTTP methods
 func (rt *Route) Methods(methods ...string) *Route {
-	// Build a set of allowed methods
-	allowedMethods := make(map[string]bool)
-	for _, m := range methods {
-		allowedMethods[m] = true
-	}
-
 	for _, pattern := range rt.patterns {
 		fullPattern := rt.router.prefix + pattern
-		for _, method := range allHTTPMethods {
-			methodPattern := method + " " + fullPattern
-			// Skip if already registered
-			if rt.router.registeredOptions[methodPattern] {
-				continue
-			}
-
-			var handler http.Handler
-			if method == http.MethodOptions {
-				// Always register OPTIONS for CORS
-				handler = rt.handler
-			} else if allowedMethods[method] {
-				// Register the actual handler for allowed methods
-				handler = rt.handler
-			} else {
-				// Register 405 handler for disallowed methods
-				handler = rt.router.methodNotAllowedHandler
-			}
-
-			if rt.router.tryRegisterHandler(methodPattern, handler) {
-				rt.router.registeredOptions[methodPattern] = true
-			}
+		for _, method := range methods {
+			rt.router.mux.Method(method, fullPattern, rt.handler)
 		}
 	}
 	return rt
 }
 
 // Name sets a name for the route (for compatibility with gorilla/mux).
-// The name is not used with stdlib routing but is kept for API compatibility.
+// The name is not used with chi routing but is kept for API compatibility.
 func (rt *Route) Name(_ string) *Route {
 	return rt
 }
 
-// Router wraps http.ServeMux with path prefix support and additional features
+// Router wraps chi.Mux with path prefix support and additional features
 type Router struct {
-	mux                     *http.ServeMux
-	prefix                  string
-	notFoundHandler         http.Handler
-	methodNotAllowedHandler http.Handler
-	registeredOptions       map[string]bool // tracks OPTIONS patterns to avoid duplicates
+	mux    chi.Router
+	prefix string
 }
 
 // NewRouter creates a new Router with the given path prefix
 func NewRouter(prefix string) *Router {
+	mux := chi.NewRouter()
+	mux.NotFound(notFoundHandler)
+	mux.MethodNotAllowed(methodNotAllowedHandler)
 	return &Router{
-		mux:                     http.NewServeMux(),
-		prefix:                  strings.TrimSuffix(prefix, "/"),
-		notFoundHandler:         NotFoundCORSHandler,
-		methodNotAllowedHandler: NotAllowedHandler,
-		registeredOptions:       make(map[string]bool),
+		mux:    mux,
+		prefix: strings.TrimSuffix(prefix, "/"),
 	}
 }
 
-// normalisePattern converts gorilla/mux style patterns to Go 1.22 stdlib patterns.
-// It removes regex patterns from path variables, e.g., {var:regex} becomes {var}
+// normalisePattern converts gorilla/mux style patterns to chi patterns.
+// It converts {var:regex} to {var} and {var...} to {var:*}
 func normalisePattern(pattern string) string {
+	// Remove regex patterns from path variables, e.g., {var:regex} becomes {var}
 	re := regexp.MustCompile(`\{([^:}]+):[^}]+\}`)
-	return re.ReplaceAllString(pattern, "{$1}")
+	pattern = re.ReplaceAllString(pattern, "{$1}")
+	// Convert {var...} wildcard to chi's {var:*} syntax
+	pattern = strings.Replace(pattern, "...}", ":*}", -1)
+	return pattern
 }
 
-// expandPattern converts gorilla/mux style patterns to Go 1.22 stdlib patterns.
+// expandPattern converts gorilla/mux style patterns to chi patterns.
 // It handles regex alternatives like {var:(?:a|b)} by returning multiple patterns.
 // Simple regex patterns like {var:[^/]+} are simplified to {var}.
 func expandPattern(pattern string) []string {
@@ -211,31 +154,22 @@ type SubrouterBuilder struct {
 	prefix string
 }
 
-// Subrouter creates a new Router that inherits the parent's prefix plus this prefix
+// Subrouter creates a new Router that shares the parent's mux but with added prefix
 func (sb *SubrouterBuilder) Subrouter() *Router {
 	return &Router{
-		mux:                     sb.parent.mux,
-		prefix:                  sb.parent.prefix + strings.TrimSuffix(sb.prefix, "/"),
-		notFoundHandler:         sb.parent.notFoundHandler,
-		methodNotAllowedHandler: sb.parent.methodNotAllowedHandler,
-		registeredOptions:       sb.parent.registeredOptions,
+		mux:    sb.parent.mux,
+		prefix: sb.parent.prefix + strings.TrimSuffix(sb.prefix, "/"),
 	}
 }
 
-// Handler registers a handler for this path prefix for common HTTP methods
+// Handler registers a handler for this path prefix (catch-all)
 func (sb *SubrouterBuilder) Handler(handler http.Handler) {
-	pattern := sb.parent.prefix + sb.prefix
-	// Use wildcard pattern for prefix matching
+	pattern := sb.prefix
 	if !strings.HasSuffix(pattern, "/") {
 		pattern += "/"
 	}
-	// The {path...} wildcard matches empty string too, so it handles both
-	// /prefix/ and /prefix/anything cases
-	pattern += "{path...}"
-	// Register for common HTTP methods to avoid conflicts with method-specific routes
-	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
-		sb.parent.tryRegisterHandler(method+" "+pattern, handler)
-	}
+	pattern += "*"
+	sb.parent.mux.Handle(pattern, handler)
 }
 
 // HandlerFunc registers a handler function for this path prefix
@@ -245,69 +179,17 @@ func (sb *SubrouterBuilder) HandlerFunc(f func(http.ResponseWriter, *http.Reques
 
 // ServeHTTP implements http.Handler
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Wrap response to detect 404s and use custom handler
-	wrapped := &responseWriter404{ResponseWriter: w, router: r}
-	r.mux.ServeHTTP(wrapped, req)
-	// If we intercepted a 404 from stdlib mux (nothing else was written),
-	// use our custom not found handler instead
-	if wrapped.is404FromMux && !wrapped.written {
-		r.notFoundHandler.ServeHTTP(w, req)
-	}
+	r.mux.ServeHTTP(w, req)
 }
 
-// responseWriter404 wraps http.ResponseWriter to intercept stdlib's default 404 responses
-type responseWriter404 struct {
-	http.ResponseWriter
-	router        *Router
-	written       bool
-	status        int
-	is404FromMux  bool
-	bufferedWrite []byte
-}
-
-func (w *responseWriter404) WriteHeader(code int) {
-	w.status = code
-	// If this is a 404, it might be from stdlib mux's default handler
-	// Buffer it instead of forwarding immediately
-	if code == http.StatusNotFound && !w.written {
-		w.is404FromMux = true
-		return
-	}
-	w.written = true
-	w.ResponseWriter.WriteHeader(code)
-}
-
-func (w *responseWriter404) Write(b []byte) (int, error) {
-	// If we're buffering a potential stdlib 404, buffer the write too
-	if w.is404FromMux && !w.written {
-		w.bufferedWrite = append(w.bufferedWrite, b...)
-		return len(b), nil
-	}
-	w.written = true
-	return w.ResponseWriter.Write(b)
-}
-
-// SetNotFoundHandler sets the handler for 404 responses (for compatibility with gorilla/mux)
+// SetNotFoundHandler sets the handler for 404 responses
 func (r *Router) SetNotFoundHandler(handler http.Handler) {
-	r.notFoundHandler = handler
-	// Register a catch-all handler for the prefix with wildcard
-	pattern := r.prefix
-	if pattern == "" {
-		pattern = "/"
-	}
-	if !strings.HasSuffix(pattern, "/") {
-		pattern += "/"
-	}
-	// Register for all common methods with a wildcard to catch unmatched paths
-	wildcardPattern := pattern + "{notfound...}"
-	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions} {
-		r.tryRegisterHandler(method+" "+wildcardPattern, handler)
-	}
+	r.mux.NotFound(handler.ServeHTTP)
 }
 
-// SetMethodNotAllowedHandler sets the handler for 405 responses (for compatibility with gorilla/mux)
+// SetMethodNotAllowedHandler sets the handler for 405 responses
 func (r *Router) SetMethodNotAllowedHandler(handler http.Handler) {
-	r.methodNotAllowedHandler = handler
+	r.mux.MethodNotAllowed(handler.ServeHTTP)
 }
 
 // Routers holds all the routers for different API paths
@@ -336,16 +218,28 @@ func NewRouters() Routers {
 	}
 }
 
-var NotAllowedHandler = WrapHandlerInCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusMethodNotAllowed)
-	unrecognizedErr, _ := json.Marshal(spec.Unrecognized("Unrecognized request")) // nolint:misspell
-	_, _ = w.Write(unrecognizedErr)                                               // nolint:misspell
-}))
-
-var NotFoundCORSHandler = WrapHandlerInCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization")
 	w.WriteHeader(http.StatusNotFound)
 	unrecognizedErr, _ := json.Marshal(spec.Unrecognized("Unrecognized request")) // nolint:misspell
-	_, _ = w.Write(unrecognizedErr)                                               // nolint:misspell
-}))
+	_, _ = w.Write(unrecognizedErr)
+}
+
+func methodNotAllowedHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization")
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	unrecognizedErr, _ := json.Marshal(spec.Unrecognized("Unrecognized request")) // nolint:misspell
+	_, _ = w.Write(unrecognizedErr)
+}
+
+// NotAllowedHandler is the handler for method not allowed responses (for backwards compatibility)
+var NotAllowedHandler = http.HandlerFunc(methodNotAllowedHandler)
+
+// NotFoundCORSHandler is the handler for not found responses (for backwards compatibility)
+var NotFoundCORSHandler = http.HandlerFunc(notFoundHandler)

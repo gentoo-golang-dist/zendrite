@@ -11,6 +11,7 @@ require (
 	github.com/eyedeekay/goSam v0.32.54
 	github.com/eyedeekay/onramp v0.33.8
 	github.com/getsentry/sentry-go v0.42.0
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/gologme/log v1.3.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
