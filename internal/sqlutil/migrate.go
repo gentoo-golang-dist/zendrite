@@ -81,7 +81,7 @@ func (m *Migrator) Up(ctx context.Context) error {
 		return fmt.Errorf("unable to create/get migrations: %w", err)
 	}
 	// ensure we close the insert statement, as it's not needed anymore
-	defer m.close()
+	defer m.close() //nolint:contextcheck
 	return WithTransaction(m.db, func(txn *sql.Tx) error {
 		for i := range m.migrations {
 			migration := m.migrations[i]
@@ -117,6 +117,7 @@ func (m *Migrator) insertMigration(ctx context.Context, txn *sql.Tx, migrationNa
 		m.insertStmt = stmt
 	}
 	stmt := TxStmtContext(ctx, txn, m.insertStmt)
+	defer stmt.Close()
 	_, err := stmt.ExecContext(ctx,
 		migrationName,
 		time.Now().Format(time.RFC3339),
@@ -154,7 +155,7 @@ func (m *Migrator) ExecutedMigrations(ctx context.Context) (map[string]struct{},
 // This should only be used when manually inserting migrations.
 func InsertMigration(ctx context.Context, db *sql.DB, migrationName string) error {
 	m := NewMigrator(db)
-	defer m.close()
+	defer m.close() //nolint:contextcheck
 	existingMigrations, err := m.ExecutedMigrations(ctx)
 	if err != nil {
 		return err

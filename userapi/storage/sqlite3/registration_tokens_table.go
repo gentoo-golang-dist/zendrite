@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"time"
 
+	"golang.org/x/exp/constraints"
+
 	"codefloe.com/pat-s/dendrite/clientapi/api"
 	internal "codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
-	"golang.org/x/exp/constraints"
 )
 
 const registrationTokensSchema = `
@@ -131,13 +132,14 @@ func (s *registrationTokenStatements) ListRegistrationTokens(ctx context.Context
 	var expiryTime *int64
 	var rows *sql.Rows
 	var err error
-	if returnAll {
+	switch {
+	case returnAll:
 		stmt = sqlutil.TxStmt(tx, s.listAllTokensStatement)
 		rows, err = stmt.QueryContext(ctx)
-	} else if valid {
+	case valid:
 		stmt = sqlutil.TxStmt(tx, s.listValidTokensStatement)
 		rows, err = stmt.QueryContext(ctx, time.Now().UnixNano()/int64(time.Millisecond))
-	} else {
+	default:
 		stmt = sqlutil.TxStmt(tx, s.listInvalidTokenStatement)
 		rows, err = stmt.QueryContext(ctx, time.Now().UnixNano()/int64(time.Millisecond))
 	}
@@ -195,23 +197,24 @@ func (s *registrationTokenStatements) DeleteRegistrationToken(ctx context.Contex
 	return nil
 }
 
-func (s *registrationTokenStatements) UpdateRegistrationToken(ctx context.Context, tx *sql.Tx, tokenString string, newAttributes map[string]interface{}) (*api.RegistrationToken, error) {
+func (s *registrationTokenStatements) UpdateRegistrationToken(ctx context.Context, tx *sql.Tx, tokenString string, newAttributes map[string]any) (*api.RegistrationToken, error) {
 	var stmt *sql.Stmt
 	usesAllowed, usesAllowedPresent := newAttributes["usesAllowed"]
 	expiryTime, expiryTimePresent := newAttributes["expiryTime"]
-	if usesAllowedPresent && expiryTimePresent {
+	switch {
+	case usesAllowedPresent && expiryTimePresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenUsesAllowedAndExpiryTimeStatement)
 		_, err := stmt.ExecContext(ctx, tokenString, usesAllowed, expiryTime)
 		if err != nil {
 			return nil, err
 		}
-	} else if usesAllowedPresent {
+	case usesAllowedPresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenUsesAllowedStatement)
 		_, err := stmt.ExecContext(ctx, tokenString, usesAllowed)
 		if err != nil {
 			return nil, err
 		}
-	} else if expiryTimePresent {
+	case expiryTimePresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenExpiryTimeStatement)
 		_, err := stmt.ExecContext(ctx, tokenString, expiryTime)
 		if err != nil {

@@ -55,7 +55,8 @@ func (s *ignoresStatements) SelectIgnores(
 	ctx context.Context, txn *sql.Tx, userID string,
 ) (*types.IgnoredUsers, error) {
 	var ignoresData []byte
-	err := sqlutil.TxStmt(txn, s.selectIgnoresStmt).QueryRowContext(ctx, userID).Scan(&ignoresData)
+	selectStmt := sqlutil.TxStmt(txn, s.selectIgnoresStmt)
+	err := selectStmt.QueryRowContext(ctx, userID).Scan(&ignoresData)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +74,7 @@ func (s *ignoresStatements) UpsertIgnores(
 	if err != nil {
 		return err
 	}
-	_, err = sqlutil.TxStmt(txn, s.upsertIgnoresStmt).ExecContext(ctx, userID, ignoresJSON)
+	upsertIgnoresStmt := sqlutil.TxStmt(txn, s.upsertIgnoresStmt)
+	_, err = upsertIgnoresStmt.ExecContext(ctx, userID, ignoresJSON)
 	return err
 }

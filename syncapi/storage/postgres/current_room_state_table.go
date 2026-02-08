@@ -13,6 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/matrix-org/gomatrixserverlib"
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	rstypes "codefloe.com/pat-s/dendrite/roomserver/types"
@@ -20,8 +23,6 @@ import (
 	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
 	"codefloe.com/pat-s/dendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/dendrite/syncapi/types"
-	"github.com/matrix-org/gomatrixserverlib"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const currentRoomStateSchema = `
@@ -77,7 +78,7 @@ const selectRoomIDsWithMembershipSQL = "" +
 	"SELECT DISTINCT room_id FROM syncapi_current_room_state WHERE type = 'm.room.member' AND state_key = $1 AND membership = $2"
 
 // selectKickedRoomIDsSQL returns rooms where the user was kicked (leave membership where sender != user).
-// Per MSC4186/Synapse behaviour, kicked rooms should be included in the sliding sync room list.
+// Per MSC4186/Synapse behavior, kicked rooms should be included in the sliding sync room list.
 const selectKickedRoomIDsSQL = "" +
 	"SELECT DISTINCT room_id FROM syncapi_current_room_state WHERE type = 'm.room.member' AND state_key = $1 AND membership = 'leave' AND sender != $1"
 
@@ -175,7 +176,8 @@ func NewPostgresCurrentRoomStateTable(db *sql.DB) (tables.CurrentRoomState, erro
 func (s *currentRoomStateStatements) SelectJoinedUsers(
 	ctx context.Context, txn *sql.Tx,
 ) (map[string][]string, error) {
-	rows, err := sqlutil.TxStmt(txn, s.selectJoinedUsersStmt).QueryContext(ctx)
+	selectStmt := sqlutil.TxStmt(txn, s.selectJoinedUsersStmt)
+	rows, err := selectStmt.QueryContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +201,8 @@ func (s *currentRoomStateStatements) SelectJoinedUsers(
 func (s *currentRoomStateStatements) SelectJoinedUsersInRoom(
 	ctx context.Context, txn *sql.Tx, roomIDs []string,
 ) (map[string][]string, error) {
-	rows, err := sqlutil.TxStmt(txn, s.selectJoinedUsersInRoomStmt).QueryContext(ctx, roomIDs)
+	selectStmt := sqlutil.TxStmt(txn, s.selectJoinedUsersInRoomStmt)
+	rows, err := selectStmt.QueryContext(ctx, roomIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +226,7 @@ func (s *currentRoomStateStatements) SelectRoomIDsWithMembership(
 	ctx context.Context,
 	txn *sql.Tx,
 	userID string,
-	membership string, // nolint: unparam
+	membership string,
 ) ([]string, error) {
 	stmt := sqlutil.TxStmt(txn, s.selectRoomIDsWithMembershipStmt)
 	rows, err := stmt.QueryContext(ctx, userID, membership)
@@ -244,7 +247,7 @@ func (s *currentRoomStateStatements) SelectRoomIDsWithMembership(
 }
 
 // SelectKickedRoomIDs returns rooms where the user was kicked (leave membership where sender != user).
-// Per MSC4186/Synapse behaviour, kicked rooms should be included in the sliding sync room list.
+// Per MSC4186/Synapse behavior, kicked rooms should be included in the sliding sync room list.
 func (s *currentRoomStateStatements) SelectKickedRoomIDs(
 	ctx context.Context,
 	txn *sql.Tx,
@@ -348,7 +351,7 @@ func (s *currentRoomStateStatements) UpsertRoomState(
 ) error {
 	// Parse content as JSON and search for an "url" key
 	containsURL := false
-	var content map[string]interface{}
+	var content map[string]any
 	if json.Unmarshal(event.Content(), &content) != nil {
 		// Set containsURL to true if url is present
 		_, containsURL = content["url"]
@@ -442,7 +445,7 @@ func (s *currentRoomStateStatements) SelectStateEvent(
 	stmt := sqlutil.TxStmt(txn, s.selectStateEventStmt)
 	var res []byte
 	err := stmt.QueryRowContext(ctx, roomID, evType, stateKey).Scan(&res)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

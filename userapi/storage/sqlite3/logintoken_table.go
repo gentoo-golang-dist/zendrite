@@ -11,10 +11,11 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/matrix-org/util"
+
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/userapi/api"
 	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
-	"github.com/matrix-org/util"
 )
 
 type loginTokenStatements struct {

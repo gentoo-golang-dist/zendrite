@@ -21,7 +21,7 @@ import (
 // Schema for tracking rooms with partial state from MSC3706 faster joins.
 // Two tables are used:
 // - roomserver_partial_state_rooms: tracks which rooms have partial state
-// - roomserver_partial_state_rooms_servers: tracks servers known to be in the room
+// - roomserver_partial_state_rooms_servers: tracks servers known to be in the room.
 const partialStateSchema = `
 -- Track rooms where we've done a partial-state join (MSC3706)
 CREATE TABLE IF NOT EXISTS roomserver_partial_state_rooms (

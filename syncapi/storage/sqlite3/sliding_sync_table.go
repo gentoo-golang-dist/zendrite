@@ -15,7 +15,7 @@ import (
 	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
 )
 
-// SQL statements for connection management (SQLite3 uses INTEGER instead of BIGINT)
+// SQL statements for connection management (SQLite3 uses INTEGER instead of BIGINT).
 const insertConnectionSQL = `
 	INSERT INTO syncapi_sliding_sync_connections (user_id, device_id, conn_id, created_ts)
 	VALUES ($1, $2, $3, $4)
@@ -44,7 +44,7 @@ const deleteOldConnectionsSQL = `
 	WHERE created_ts < $1
 `
 
-// SQL statements for position management
+// SQL statements for position management.
 const insertConnectionPositionSQL = `
 	INSERT INTO syncapi_sliding_sync_connection_positions (connection_key, created_ts)
 	VALUES ($1, $2)
@@ -65,7 +65,7 @@ const selectLatestConnectionPositionSQL = `
 	LIMIT 1
 `
 
-// SQL statements for required state management
+// SQL statements for required state management.
 const insertRequiredStateSQL = `
 	INSERT INTO syncapi_sliding_sync_connection_required_state (connection_key, required_state)
 	VALUES ($1, $2)
@@ -85,7 +85,7 @@ const selectRequiredStateByContentSQL = `
 	LIMIT 1
 `
 
-// SQL statements for room config management
+// SQL statements for room config management.
 const upsertRoomConfigSQL = `
 	INSERT INTO syncapi_sliding_sync_connection_room_configs
 		(connection_position, room_id, timeline_limit, required_state_id)
@@ -110,14 +110,14 @@ const selectLatestRoomConfigSQL = `
 `
 
 // selectRoomConfigsByPositionSQL retrieves all room configs for a specific position
-// Used to load previous room configs for copy-forward during sync
+// Used to load previous room configs for copy-forward during sync.
 const selectRoomConfigsByPositionSQL = `
 	SELECT connection_position, room_id, timeline_limit, required_state_id
 	FROM syncapi_sliding_sync_connection_room_configs
 	WHERE connection_position = $1
 `
 
-// SQL statements for stream management
+// SQL statements for stream management.
 const upsertConnectionStreamSQL = `
 	INSERT INTO syncapi_sliding_sync_connection_streams
 		(connection_position, room_id, stream, room_status, last_token)
@@ -148,7 +148,7 @@ const selectAllLatestConnectionStreamsSQL = `
 `
 
 // selectConnectionStreamsByPositionSQL retrieves all streams for a specific position
-// This is used for incremental syncs to get the state as it was at that position
+// This is used for incremental syncs to get the state as it was at that position.
 const selectConnectionStreamsByPositionSQL = `
 	SELECT room_id, stream, room_status, last_token, connection_position
 	FROM syncapi_sliding_sync_connection_streams
@@ -156,13 +156,13 @@ const selectConnectionStreamsByPositionSQL = `
 `
 
 // deleteOtherConnectionPositionsSQL removes all positions except the specified one
-// This is called when a client uses a position, to clean up old state (like Synapse)
+// This is called when a client uses a position, to clean up old state (like Synapse).
 const deleteOtherConnectionPositionsSQL = `
 	DELETE FROM syncapi_sliding_sync_connection_positions
 	WHERE connection_key = $1 AND connection_position != $2
 `
 
-// SQL statements for list management
+// SQL statements for list management.
 const upsertConnectionListSQL = `
 	INSERT INTO syncapi_sliding_sync_connection_lists (connection_key, list_name, room_ids)
 	VALUES ($1, $2, $3)
@@ -232,7 +232,7 @@ func NewSqliteSlidingSyncTable(db *sql.DB) (tables.SlidingSync, error) {
 	}.Prepare(db)
 }
 
-// ===== Connection Management =====
+// ===== Connection Management =====.
 
 func (s *slidingSyncStatements) InsertConnection(
 	ctx context.Context, txn *sql.Tx, userID, deviceID, connID string, createdTS int64,
@@ -287,7 +287,7 @@ func (s *slidingSyncStatements) DeleteOldConnections(
 	return err
 }
 
-// ===== Position Management =====
+// ===== Position Management =====.
 
 func (s *slidingSyncStatements) InsertConnectionPosition(
 	ctx context.Context, txn *sql.Tx, connectionKey int64, createdTS int64,
@@ -326,7 +326,7 @@ func (s *slidingSyncStatements) SelectLatestConnectionPosition(
 	return &pos, err
 }
 
-// ===== Required State Management =====
+// ===== Required State Management =====.
 
 func (s *slidingSyncStatements) InsertRequiredState(
 	ctx context.Context, txn *sql.Tx, connectionKey int64, requiredState string,
@@ -364,7 +364,7 @@ func (s *slidingSyncStatements) SelectRequiredStateByContent(
 	return requiredStateID, true, nil
 }
 
-// ===== Room Config Management =====
+// ===== Room Config Management =====.
 
 func (s *slidingSyncStatements) UpsertRoomConfig(
 	ctx context.Context, txn *sql.Tx, connectionPosition int64, roomID string, timelineLimit int, requiredStateID int64,
@@ -404,7 +404,7 @@ func (s *slidingSyncStatements) SelectLatestRoomConfig(
 
 // SelectLatestRoomConfigsBatch retrieves the most recent room configs for multiple rooms
 // For SQLite, we iterate through each room since SQLite doesn't support DISTINCT ON
-// This is acceptable for SQLite deployments which are typically smaller scale
+// This is acceptable for SQLite deployments which are typically smaller scale.
 func (s *slidingSyncStatements) SelectLatestRoomConfigsBatch(
 	ctx context.Context, txn *sql.Tx, connectionKey int64, roomIDs []string,
 ) (map[string]*tables.SlidingSyncRoomConfig, error) {
@@ -426,7 +426,7 @@ func (s *slidingSyncStatements) SelectLatestRoomConfigsBatch(
 }
 
 // SelectRoomConfigsByPosition retrieves all room configs for a specific position
-// Used to load previous room configs for copy-forward during sync
+// Used to load previous room configs for copy-forward during sync.
 func (s *slidingSyncStatements) SelectRoomConfigsByPosition(
 	ctx context.Context, txn *sql.Tx, connectionPosition int64,
 ) (map[string]*tables.SlidingSyncRoomConfig, error) {
@@ -450,7 +450,7 @@ func (s *slidingSyncStatements) SelectRoomConfigsByPosition(
 	return result, rows.Err()
 }
 
-// ===== Stream Management =====
+// ===== Stream Management =====.
 
 func (s *slidingSyncStatements) UpsertConnectionStream(
 	ctx context.Context, txn *sql.Tx, connectionPosition int64, roomID, stream, roomStatus, lastToken string,
@@ -519,7 +519,7 @@ func (s *slidingSyncStatements) SelectAllLatestConnectionStreams(
 }
 
 // SelectConnectionStreamsByPosition retrieves all streams for a specific position
-// This is used for incremental syncs to get the state as it was at that exact position
+// This is used for incremental syncs to get the state as it was at that exact position.
 func (s *slidingSyncStatements) SelectConnectionStreamsByPosition(
 	ctx context.Context, txn *sql.Tx, connectionPosition int64,
 ) (map[string]map[string]*tables.SlidingSyncConnectionStream, error) {
@@ -549,7 +549,7 @@ func (s *slidingSyncStatements) SelectConnectionStreamsByPosition(
 }
 
 // DeleteOtherConnectionPositions removes all positions for a connection except the specified one
-// This is called when a client uses a position token, to clean up old state (like Synapse does)
+// This is called when a client uses a position token, to clean up old state (like Synapse does).
 func (s *slidingSyncStatements) DeleteOtherConnectionPositions(
 	ctx context.Context, txn *sql.Tx, connectionKey int64, keepPosition int64,
 ) error {
@@ -558,7 +558,7 @@ func (s *slidingSyncStatements) DeleteOtherConnectionPositions(
 	return err
 }
 
-// ===== List Management =====
+// ===== List Management =====.
 
 func (s *slidingSyncStatements) UpsertConnectionList(
 	ctx context.Context, txn *sql.Tx, connectionKey int64, listName string, roomIDsJSON string,
@@ -583,5 +583,5 @@ func (s *slidingSyncStatements) SelectConnectionList(
 	return roomIDsJSON, true, nil
 }
 
-// Ensure we implement the interface
+// Ensure we implement the interface.
 var _ tables.SlidingSync = &slidingSyncStatements{}

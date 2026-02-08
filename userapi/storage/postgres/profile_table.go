@@ -11,11 +11,12 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const profilesSchema = `
@@ -86,7 +87,8 @@ func (s *profilesStatements) InsertProfile(
 	ctx context.Context, txn *sql.Tx,
 	localpart string, serverName spec.ServerName,
 ) (err error) {
-	_, err = sqlutil.TxStmt(txn, s.insertProfileStmt).ExecContext(ctx, localpart, serverName, "", "")
+	insertProfileStmt := sqlutil.TxStmt(txn, s.insertProfileStmt)
+	_, err = insertProfileStmt.ExecContext(ctx, localpart, serverName, "", "")
 	return
 }
 

@@ -13,10 +13,11 @@ import (
 	"fmt"
 	"strings"
 
-	"codefloe.com/pat-s/dendrite/internal"
-	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
+
+	"codefloe.com/pat-s/dendrite/internal"
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 )
 
 const queuePDUsSchema = `
@@ -117,7 +118,7 @@ func (s *queuePDUsStatements) DeleteQueuePDUs(
 		return fmt.Errorf("s.deleteQueueJSON s.db.Prepare: %w", err)
 	}
 
-	params := make([]interface{}, len(jsonNIDs)+1)
+	params := make([]any, len(jsonNIDs)+1)
 	params[0] = serverName
 	for k, v := range jsonNIDs {
 		params[k+1] = v

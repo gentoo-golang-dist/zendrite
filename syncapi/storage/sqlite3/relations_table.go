@@ -89,7 +89,8 @@ func (s *relationsStatements) InsertRelation(
 	if streamPos, err = s.streamIDStatements.nextRelationID(ctx, txn); err != nil {
 		return
 	}
-	_, err = sqlutil.TxStmt(txn, s.insertRelationStmt).ExecContext(
+	insertRelationStmt := sqlutil.TxStmt(txn, s.insertRelationStmt)
+	_, err = insertRelationStmt.ExecContext(
 		ctx, streamPos, roomID, eventID, childEventID, childEventType, relType,
 	)
 	return
@@ -105,7 +106,7 @@ func (s *relationsStatements) DeleteRelation(
 	return err
 }
 
-// SelectRelationsInRange returns a map rel_type -> []child_event_id
+// SelectRelationsInRange returns a map rel_type -> []child_event_id.
 func (s *relationsStatements) SelectRelationsInRange(
 	ctx context.Context, txn *sql.Tx, roomID, eventID, relType, eventType string,
 	r types.Range, limit int,

@@ -10,9 +10,10 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/federationapi/types"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const retryStateSchema = `
@@ -94,7 +95,7 @@ func (s *retryStateStatements) SelectAllRetryStates(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() // nolint:errcheck
+	defer rows.Close()
 
 	result := make(map[spec.ServerName]types.RetryState)
 	for rows.Next() {

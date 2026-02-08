@@ -12,11 +12,12 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/matrix-org/util"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
 	"codefloe.com/pat-s/dendrite/roomserver/types"
-	"github.com/matrix-org/util"
 )
 
 const stateDataSchema = `
@@ -34,7 +35,7 @@ CREATE TABLE IF NOT EXISTS roomserver_state_block (
 	-- The state snapshot NID that identifies this snapshot.
 	state_block_nid bigint PRIMARY KEY DEFAULT nextval('roomserver_state_block_nid_seq'),
 	-- The hash of the state block, which is used to enforce uniqueness. The hash is
-	-- generated in Dendrite and passed through to the database, as a btree index over 
+	-- generated in Dendrite and passed through to the database, as a btree index over
 	-- this column is cheap and fits within the maximum index size.
 	state_block_hash BYTEA UNIQUE,
 	-- The event NIDs contained within the state block.

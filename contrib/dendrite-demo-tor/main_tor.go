@@ -18,8 +18,8 @@ import (
 	"text/template"
 
 	"github.com/cretz/bine/tor"
-	"github.com/eyedeekay/onramp"
 	sentryhttp "github.com/getsentry/sentry-go/http"
+	"github.com/go-i2p/onramp"
 	"github.com/kardianos/minwinsvc"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
@@ -95,12 +95,12 @@ func SetupAndServeHTTPS(
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to create onion")
 	}
-	defer onion.Close() // nolint: errcheck
+	defer onion.Close()
 	listener, err := onion.ListenTLS()
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to serve HTTPS")
 	}
-	defer listener.Close() // nolint: errcheck
+	defer listener.Close()
 
 	externalHTTPSAddr := config.ServerAddress{}
 	https, err := config.HTTPAddress("https://" + listener.Addr().String())

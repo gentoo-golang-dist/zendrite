@@ -183,7 +183,7 @@ func (s *inviteEventsStatements) SelectMaxInviteID(
 	return
 }
 
-// SelectRoomsWithInvitesSince returns a list of room IDs that have invite events with stream position > since
+// SelectRoomsWithInvitesSince returns a list of room IDs that have invite events with stream position > since.
 func (s *inviteEventsStatements) SelectRoomsWithInvitesSince(
 	ctx context.Context, txn *sql.Tx,
 	targetUserID string, roomIDs []string, since types.StreamPosition,
@@ -222,6 +222,7 @@ func (s *inviteEventsStatements) SelectRoomsWithInvitesSince(
 func (s *inviteEventsStatements) PurgeInvites(
 	ctx context.Context, txn *sql.Tx, roomID string,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.purgeInvitesStmt).ExecContext(ctx, roomID)
+	purgeInvitesStmt := sqlutil.TxStmt(txn, s.purgeInvitesStmt)
+	_, err := purgeInvitesStmt.ExecContext(ctx, roomID)
 	return err
 }

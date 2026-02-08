@@ -12,10 +12,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/federationapi/storage/sqlite3/deltas"
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const queueEDUsSchema = `
@@ -138,7 +139,7 @@ func (s *queueEDUsStatements) DeleteQueueEDUs(
 		return fmt.Errorf("s.deleteQueueJSON s.db.Prepare: %w", err)
 	}
 
-	params := make([]interface{}, len(jsonNIDs)+1)
+	params := make([]any, len(jsonNIDs)+1)
 	params[0] = serverName
 	for k, v := range jsonNIDs {
 		params[k+1] = v

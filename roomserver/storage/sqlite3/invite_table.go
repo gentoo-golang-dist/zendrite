@@ -128,7 +128,7 @@ func (s *inviteStatements) UpdateInviteRetired(
 	return
 }
 
-// selectInviteActiveForUserInRoom returns a list of sender state key NIDs
+// selectInviteActiveForUserInRoom returns a list of sender state key NIDs.
 func (s *inviteStatements) SelectInviteActiveForUserInRoom(
 	ctx context.Context, txn *sql.Tx,
 	targetUserNID types.EventStateKeyNID, roomNID types.RoomNID,

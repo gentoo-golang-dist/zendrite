@@ -12,10 +12,11 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/mediaapi/storage/tables"
 	"codefloe.com/pat-s/dendrite/mediaapi/types"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const mediaSchema = `
@@ -84,7 +85,8 @@ func (s *mediaStatements) InsertMedia(
 	ctx context.Context, txn *sql.Tx, mediaMetadata *types.MediaMetadata,
 ) error {
 	mediaMetadata.CreationTimestamp = spec.AsTimestamp(time.Now())
-	_, err := sqlutil.TxStmtContext(ctx, txn, s.insertMediaStmt).ExecContext(
+	insertStmt := sqlutil.TxStmtContext(ctx, txn, s.insertMediaStmt)
+	_, err := insertStmt.ExecContext(
 		ctx,
 		mediaMetadata.MediaID,
 		mediaMetadata.Origin,
@@ -105,7 +107,8 @@ func (s *mediaStatements) SelectMedia(
 		MediaID: mediaID,
 		Origin:  mediaOrigin,
 	}
-	err := sqlutil.TxStmtContext(ctx, txn, s.selectMediaStmt).QueryRowContext(
+	selectStmt := sqlutil.TxStmtContext(ctx, txn, s.selectMediaStmt)
+	err := selectStmt.QueryRowContext(
 		ctx, mediaMetadata.MediaID, mediaMetadata.Origin,
 	).Scan(
 		&mediaMetadata.ContentType,
@@ -125,7 +128,8 @@ func (s *mediaStatements) SelectMediaByHash(
 		Base64Hash: mediaHash,
 		Origin:     mediaOrigin,
 	}
-	err := sqlutil.TxStmtContext(ctx, txn, s.selectMediaByHashStmt).QueryRowContext(
+	selectByHashStmt := sqlutil.TxStmtContext(ctx, txn, s.selectMediaByHashStmt)
+	err := selectByHashStmt.QueryRowContext(
 		ctx, mediaMetadata.Base64Hash, mediaMetadata.Origin,
 	).Scan(
 		&mediaMetadata.ContentType,

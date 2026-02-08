@@ -10,8 +10,9 @@ import (
 	"context"
 	"database/sql"
 
-	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"github.com/matrix-org/gomatrixserverlib/spec"
+
+	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 )
 
 const blacklistSchema = `
@@ -76,11 +77,15 @@ func (s *blacklistStatements) SelectBlacklist(
 	if err != nil {
 		return false, err
 	}
-	defer res.Close() // nolint:errcheck
+	defer res.Close()
 	// The query will return the server name if the server is blacklisted, and
 	// will return no rows if not. By calling Next, we find out if a row was
 	// returned or not - we don't care about the value itself.
-	return res.Next(), nil
+	found := res.Next()
+	if err := res.Err(); err != nil {
+		return false, err
+	}
+	return found, nil
 }
 
 func (s *blacklistStatements) DeleteBlacklist(

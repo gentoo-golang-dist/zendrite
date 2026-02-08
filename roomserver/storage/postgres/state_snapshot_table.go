@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS roomserver_state_snapshots (
 	-- The state snapshot NID that identifies this snapshot.
 	state_snapshot_nid bigint PRIMARY KEY DEFAULT nextval('roomserver_state_snapshot_nid_seq'),
 	-- The hash of the state snapshot, which is used to enforce uniqueness. The hash is
-	-- generated in Dendrite and passed through to the database, as a btree index over 
+	-- generated in Dendrite and passed through to the database, as a btree index over
 	-- this column is cheap and fits within the maximum index size.
 	state_snapshot_hash BYTEA UNIQUE,
 	-- The room NID that the snapshot belongs to.
@@ -65,7 +65,7 @@ const bulkSelectStateBlockNIDsSQL = "" +
 	" WHERE state_snapshot_nid = ANY($1) ORDER BY state_snapshot_nid ASC"
 
 // Looks up both the history visibility event and relevant membership events from
-// a given domain name from a given state snapshot. This is used to optimise the
+// a given domain name from a given state snapshot. This is used to optimize the
 // helpers.CheckServerAllowedToSeeEvent function.
 // TODO: There's a sequence scan here because of the hash join strategy, which is
 // probably O(n) on state key entries, so there must be a way to avoid that somehow.
@@ -151,7 +151,7 @@ func (s *stateSnapshotStatements) BulkSelectStateBlockNIDs(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() // nolint: errcheck
+	defer rows.Close()
 	results := make([]types.StateBlockNIDList, len(stateNIDs))
 	i := 0
 	var stateBlockNIDs sqlutil.Int64Array
@@ -182,7 +182,7 @@ func (s *stateSnapshotStatements) BulkSelectStateForHistoryVisibility(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() // nolint: errcheck
+	defer rows.Close()
 	results := make([]types.EventNID, 0, 16)
 	for rows.Next() {
 		var eventNID types.EventNID
@@ -202,7 +202,7 @@ func (s *stateSnapshotStatements) BulkSelectMembershipForHistoryVisibility(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() // nolint: errcheck
+	defer rows.Close()
 	result := make(map[string]*types.HeaderedEvent, len(eventIDs))
 	var evJson []byte
 	var eventID string

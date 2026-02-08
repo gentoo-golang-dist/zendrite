@@ -18,7 +18,7 @@ import (
 
 const relayQueueJSONSchema = `
 -- The relayapi_queue_json table contains event contents that
--- we are storing for future forwarding. 
+-- we are storing for future forwarding.
 CREATE TABLE IF NOT EXISTS relayapi_queue_json (
 	-- The JSON NID. This allows cross-referencing to find the JSON blob.
 	json_nid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,7 +86,7 @@ func (s *relayQueueJSONStatements) DeleteQueueJSON(
 		return fmt.Errorf("s.deleteQueueJSON s.db.Prepare: %w", err)
 	}
 
-	iNIDs := make([]interface{}, len(nids))
+	iNIDs := make([]any, len(nids))
 	for k, v := range nids {
 		iNIDs[k] = v
 	}
@@ -105,7 +105,7 @@ func (s *relayQueueJSONStatements) SelectQueueJSON(
 		return nil, fmt.Errorf("s.selectQueueJSON s.db.Prepare: %w", err)
 	}
 
-	iNIDs := make([]interface{}, len(jsonNIDs))
+	iNIDs := make([]any, len(jsonNIDs))
 	for k, v := range jsonNIDs {
 		iNIDs[k] = v
 	}
