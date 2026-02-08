@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/goccy/go-yaml"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"go.opentelemetry.io/otel"
@@ -25,7 +26,6 @@ import (
 	"golang.org/x/crypto/ed25519"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"gopkg.in/yaml.v3"
 
 	"codefloe.com/pat-s/dendrite/clientapi/auth/authtypes"
 )
