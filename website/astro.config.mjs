@@ -65,7 +65,6 @@ export default defineConfig({
             { label: 'Contributing', slug: 'development/contributing' },
             { label: 'Profiling', slug: 'development/profiling' },
             { label: 'Coverage', slug: 'development/coverage' },
-            { label: 'SyTest', slug: 'development/sytest' },
           ],
         },
       ],

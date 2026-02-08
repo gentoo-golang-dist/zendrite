@@ -133,6 +133,4 @@ To run the full test suite locally:
 go test -race ./...
 ```
 
-Once the code builds and tests pass, run [SyTest](https://github.com/matrix-org/sytest) according to the guide in [SyTest](/development/sytest) so you can see whether something is being broken and whether there are newly passing tests.
-
 If these steps report no problems, the code should be able to pass the CI tests.
