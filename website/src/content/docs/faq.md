@@ -92,7 +92,7 @@ Configure them in the usual way in your Matrix client.
 Possibly - Dendrite does have some application service support but it is not well tested.
 Please let us know by raising a issue if you try it and run into problems.
 
-Bridges known to work (as of v0.5.1):
+Bridges known to work:
 
 - [Telegram](https://docs.mau.fi/bridges/python/telegram/index.html)
 - [WhatsApp](https://docs.mau.fi/bridges/go/whatsapp/index.html)
@@ -122,14 +122,14 @@ Please use PostgreSQL wherever possible, especially if you are planning to run a
 
 The list of files that need to be stored is:
 
-- matrix-key.pem
-- dendrite.yaml
+- `matrix-key.pem`
+- `dendrite.yaml`
 - the postgres or sqlite DB
 - the jetstream directory
 - the media store
 - the search index (although this can be regenerated)
 
-Note that this list may change / be out of date.
+Note that this list may be out of date.
 We don't officially maintain instructions for migrations like this.
 
 ## How can I prepare enough storage for media caches?
@@ -137,27 +137,16 @@ We don't officially maintain instructions for migrations like this.
 This might be what you want: [matrix-media-repo](https://github.com/turt2live/matrix-media-repo)
 We don't officially support this or any other dedicated media storage solutions.
 
-## Is there an upgrade guide for Dendrite?
-
-Run a newer docker image.
-We don't officially support deployments other than Docker.
-Most of the time you should be able to just
-
-- stop
-- replace binary
-- start
-
 ## Dendrite is using a lot of CPU
 
 Generally speaking, you should expect to see some CPU spikes, particularly if you are joining or participating in large rooms.
-However, constant/sustained high CPU usage is not expected - if you are experiencing that, please join `#dendrite-dev:matrix.org` and let us know what you were doing when the CPU usage shot up, or file a GitHub issue.
+However, constant/sustained high CPU usage is not expected - if you are experiencing that, please open an issue and let us know what you were doing when the CPU usage shot up.
 If you can take a [CPU profile](/development/profiling) then that would be a huge help too, as that will help us to understand where the CPU time is going.
 
 ## Dendrite is using a lot of RAM
 
-As above with CPU usage, some memory spikes are expected if Dendrite is doing particularly heavy work at a given instant.
+As above with CPU usage, some memory spikes are expected if Dendrite is doing particularly heavy work at a given instance.
 However, if it is using more RAM than you expect for a long time, that's probably not expected.
-Join `#dendrite-dev:matrix.org` and let us know what you were doing when the memory usage ballooned, or file a GitHub issue if you can.
 If you can take a [memory profile](/development/profiling) then that would be a huge help too, as that will help us to understand where the memory usage is happening.
 
 ## Do I need to generate the self-signed certificate if I'm going to use a reverse proxy?
