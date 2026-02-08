@@ -15,6 +15,7 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/nats-io/nats.go"
 	"github.com/sirupsen/logrus"
+
 	clientapi "codefloe.com/pat-s/dendrite/clientapi/api"
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/eventutil"
