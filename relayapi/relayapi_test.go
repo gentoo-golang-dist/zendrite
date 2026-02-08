@@ -15,17 +15,17 @@ import (
 	"testing"
 	"time"
 
-	"codefloe.com/pat-s/dendrite/cmd/dendrite-demo-yggdrasil/signing"
+	"github.com/matrix-org/gomatrixserverlib"
+	"github.com/matrix-org/gomatrixserverlib/fclient"
+	"github.com/matrix-org/gomatrixserverlib/spec"
+	"github.com/stretchr/testify/assert"
+
 	"codefloe.com/pat-s/dendrite/internal/caching"
 	"codefloe.com/pat-s/dendrite/internal/httputil"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/relayapi"
 	"codefloe.com/pat-s/dendrite/test"
 	"codefloe.com/pat-s/dendrite/test/testrig"
-	"github.com/matrix-org/gomatrixserverlib"
-	"github.com/matrix-org/gomatrixserverlib/fclient"
-	"github.com/matrix-org/gomatrixserverlib/spec"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateNewRelayInternalAPI(t *testing.T) {
@@ -68,13 +68,16 @@ func TestCreateInvalidRelayPublicRoutesPanics(t *testing.T) {
 
 func createGetRelayTxnHTTPRequest(serverName spec.ServerName, userID string) *http.Request {
 	_, sk, _ := ed25519.GenerateKey(nil)
-	keyID := signing.KeyID
-	pk := sk.Public().(ed25519.PublicKey)
+	keyID := testKeyID
+	pk, ok := sk.Public().(ed25519.PublicKey)
+	if !ok {
+		panic("sk.Public() is not ed25519.PublicKey")
+	}
 	origin := spec.ServerName(hex.EncodeToString(pk))
 	req := fclient.NewFederationRequest("GET", origin, serverName, "/_matrix/federation/v1/relay_txn/"+userID)
 	content := fclient.RelayEntry{EntryID: 0}
-	req.SetContent(content)
-	req.Sign(origin, gomatrixserverlib.KeyID(keyID), sk)
+	_ = req.SetContent(content)
+	_ = req.Sign(origin, gomatrixserverlib.KeyID(keyID), sk)
 	httpreq, _ := req.HTTPRequest()
 	httpreq.SetPathValue("userID", userID)
 	return httpreq
@@ -87,13 +90,16 @@ type sendRelayContent struct {
 
 func createSendRelayTxnHTTPRequest(serverName spec.ServerName, txnID string, userID string) *http.Request {
 	_, sk, _ := ed25519.GenerateKey(nil)
-	keyID := signing.KeyID
-	pk := sk.Public().(ed25519.PublicKey)
+	keyID := testKeyID
+	pk, ok := sk.Public().(ed25519.PublicKey)
+	if !ok {
+		panic("sk.Public() is not ed25519.PublicKey")
+	}
 	origin := spec.ServerName(hex.EncodeToString(pk))
 	req := fclient.NewFederationRequest("PUT", origin, serverName, "/_matrix/federation/v1/send_relay/"+txnID+"/"+userID)
 	content := sendRelayContent{}
-	req.SetContent(content)
-	req.Sign(origin, gomatrixserverlib.KeyID(keyID), sk)
+	_ = req.SetContent(content)
+	_ = req.Sign(origin, gomatrixserverlib.KeyID(keyID), sk)
 	httpreq, _ := req.HTTPRequest()
 	httpreq.SetPathValue("userID", userID)
 	httpreq.SetPathValue("txnID", txnID)
@@ -112,7 +118,7 @@ func TestCreateRelayPublicRoutes(t *testing.T) {
 		relayAPI := relayapi.NewRelayInternalAPI(cfg, cm, nil, nil, nil, nil, true, caches)
 		assert.NotNil(t, relayAPI)
 
-		serverKeyAPI := &signing.YggdrasilKeys{}
+		serverKeyAPI := &testKeys{}
 		keyRing := serverKeyAPI.KeyRing()
 		relayapi.AddPublicRoutes(routers, cfg, keyRing, relayAPI)
 
@@ -165,7 +171,7 @@ func TestDisableRelayPublicRoutes(t *testing.T) {
 		relayAPI := relayapi.NewRelayInternalAPI(cfg, cm, nil, nil, nil, nil, false, caches)
 		assert.NotNil(t, relayAPI)
 
-		serverKeyAPI := &signing.YggdrasilKeys{}
+		serverKeyAPI := &testKeys{}
 		keyRing := serverKeyAPI.KeyRing()
 		relayapi.AddPublicRoutes(routers, cfg, keyRing, relayAPI)
 

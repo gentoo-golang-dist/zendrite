@@ -118,7 +118,8 @@ func (s *peekStatements) DeletePeeks(
 func (s *peekStatements) SelectPeeksInRange(
 	ctx context.Context, txn *sql.Tx, userID, deviceID string, r types.Range,
 ) (peeks []types.Peek, err error) {
-	rows, err := sqlutil.TxStmt(txn, s.selectPeeksInRangeStmt).QueryContext(ctx, userID, deviceID, r.Low(), r.High())
+	selectPeeksInRangeStmt := sqlutil.TxStmt(txn, s.selectPeeksInRangeStmt)
+	rows, err := selectPeeksInRangeStmt.QueryContext(ctx, userID, deviceID, r.Low(), r.High())
 	if err != nil {
 		return
 	}
@@ -140,7 +141,8 @@ func (s *peekStatements) SelectPeeksInRange(
 func (s *peekStatements) SelectPeekingDevices(
 	ctx context.Context, txn *sql.Tx,
 ) (peekingDevices map[string][]types.PeekingDevice, err error) {
-	rows, err := sqlutil.TxStmt(txn, s.selectPeekingDevicesStmt).QueryContext(ctx)
+	selectPeekingDevicesStmt := sqlutil.TxStmt(txn, s.selectPeekingDevicesStmt)
+	rows, err := selectPeekingDevicesStmt.QueryContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +176,7 @@ func (s *peekStatements) SelectMaxPeekID(
 func (s *peekStatements) PurgePeeks(
 	ctx context.Context, txn *sql.Tx, roomID string,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.purgePeeksStmt).ExecContext(ctx, roomID)
+	purgePeeksStmt := sqlutil.TxStmt(txn, s.purgePeeksStmt)
+	_, err := purgePeeksStmt.ExecContext(ctx, roomID)
 	return err
 }

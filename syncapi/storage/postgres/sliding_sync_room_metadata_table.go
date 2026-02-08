@@ -15,7 +15,7 @@ import (
 	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
 )
 
-// SQL statements for rooms to recalculate
+// SQL statements for rooms to recalculate.
 const insertRoomToRecalculateSQL = `
 	INSERT INTO syncapi_sliding_sync_rooms_to_recalculate (room_id)
 	VALUES ($1)
@@ -32,7 +32,7 @@ const deleteRoomToRecalculateSQL = `
 	WHERE room_id = $1
 `
 
-// SQL statements for joined rooms
+// SQL statements for joined rooms.
 const upsertJoinedRoomSQL = `
 	INSERT INTO syncapi_sliding_sync_joined_rooms
 		(room_id, event_stream_ordering, bump_stamp, room_type, room_name, is_encrypted, tombstone_successor_room_id)
@@ -64,7 +64,7 @@ const deleteJoinedRoomSQL = `
 	WHERE room_id = $1
 `
 
-// SQL statements for membership snapshots
+// SQL statements for membership snapshots.
 const upsertMembershipSnapshotSQL = `
 	INSERT INTO syncapi_sliding_sync_membership_snapshots
 		(room_id, user_id, sender, membership_event_id, membership, forgotten, event_stream_ordering,
@@ -152,7 +152,7 @@ func NewPostgresSlidingSyncRoomMetadataTable(db *sql.DB) (tables.SlidingSyncRoom
 	}.Prepare(db)
 }
 
-// ===== Rooms To Recalculate =====
+// ===== Rooms To Recalculate =====.
 
 func (s *slidingSyncRoomMetadataStatements) InsertRoomToRecalculate(
 	ctx context.Context, txn *sql.Tx, roomID string,
@@ -191,7 +191,7 @@ func (s *slidingSyncRoomMetadataStatements) DeleteRoomToRecalculate(
 	return err
 }
 
-// ===== Joined Rooms =====
+// ===== Joined Rooms =====.
 
 func (s *slidingSyncRoomMetadataStatements) UpsertJoinedRoom(
 	ctx context.Context, txn *sql.Tx, room *tables.SlidingSyncJoinedRoom,
@@ -290,7 +290,7 @@ func (s *slidingSyncRoomMetadataStatements) SelectJoinedRoomsByFilters(
 		FROM syncapi_sliding_sync_joined_rooms
 		WHERE 1=1
 	`
-	args := []interface{}{}
+	args := []any{}
 	argNum := 1
 
 	if isEncrypted != nil {
@@ -351,7 +351,7 @@ func (s *slidingSyncRoomMetadataStatements) SelectJoinedRoomsByFilters(
 	return rooms, rows.Err()
 }
 
-// ===== Membership Snapshots =====
+// ===== Membership Snapshots =====.
 
 func (s *slidingSyncRoomMetadataStatements) UpsertMembershipSnapshot(
 	ctx context.Context, txn *sql.Tx, snapshot *tables.SlidingSyncMembershipSnapshot,
@@ -480,13 +480,13 @@ func (s *slidingSyncRoomMetadataStatements) DeleteMembershipSnapshot(
 	return err
 }
 
-// Helper function to convert empty strings to NULL
-func nullIfEmpty(s string) interface{} {
+// Helper function to convert empty strings to NULL.
+func nullIfEmpty(s string) any {
 	if s == "" {
 		return nil
 	}
 	return s
 }
 
-// Ensure we implement the interface
+// Ensure we implement the interface.
 var _ tables.SlidingSyncRoomMetadata = &slidingSyncRoomMetadataStatements{}

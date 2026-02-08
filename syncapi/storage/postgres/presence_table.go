@@ -144,7 +144,7 @@ func (p *presenceStatements) GetMaxPresenceID(ctx context.Context, txn *sql.Tx) 
 	return
 }
 
-// GetPresenceAfter returns the changes presences after a given stream id
+// GetPresenceAfter returns the changes presences after a given stream id.
 func (p *presenceStatements) GetPresenceAfter(
 	ctx context.Context, txn *sql.Tx,
 	after types.StreamPosition,

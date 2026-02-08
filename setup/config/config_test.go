@@ -11,10 +11,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v3"
 )
 
 func TestLoadConfigRelative(t *testing.T) {
@@ -167,16 +167,8 @@ mscs:
     connection_string: file:mscs.db
 tracing:
   enabled: false
-  jaeger:
-    serviceName: ""
-    disabled: false
-    rpc_metrics: false
-    tags: []
-    sampler: null
-    reporter: null
-    headers: null
-    baggage_restrictions: null
-    throttler: null
+  endpoint: ""
+  insecure: false
 logging:
 - type: file
   level: info

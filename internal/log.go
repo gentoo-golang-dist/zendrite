@@ -18,9 +18,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/DeRuina/timberjack"
 	"github.com/matrix-org/util"
-
-	"github.com/matrix-org/dugong"
 	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/dendrite/setup/config"
@@ -51,6 +50,25 @@ type logLevelHook struct {
 	logrus.Hook
 }
 
+// writerHook is a logrus hook that writes formatted log entries to an io.Writer.
+type writerHook struct {
+	writer    io.Writer
+	formatter logrus.Formatter
+}
+
+func (h *writerHook) Fire(entry *logrus.Entry) error {
+	data, err := h.formatter.Format(entry)
+	if err != nil {
+		return err
+	}
+	_, err = h.writer.Write(data)
+	return err
+}
+
+func (h *writerHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
 // Levels returns all the levels supported by this hook.
 func (h *logLevelHook) Levels() []logrus.Level {
 	levels := make([]logrus.Level, 0)
@@ -66,7 +84,7 @@ func (h *logLevelHook) Levels() []logrus.Level {
 
 // callerPrettyfier is a function that given a runtime.Frame object, will
 // extract the calling function's name and file, and return them in a nicely
-// formatted way
+// formatted way.
 func callerPrettyfier(f *runtime.Frame) (string, string) {
 	// Retrieve just the function name
 	s := strings.Split(f.Function, ".")
@@ -84,9 +102,13 @@ func callerPrettyfier(f *runtime.Frame) (string, string) {
 
 // SetupPprof starts a pprof listener. We use the DefaultServeMux here because it is
 // simplest, and it gives us the freedom to run pprof on a separate port.
+//
+// WARNING: The pprof endpoint has no authentication and serves over plain HTTP.
+// It exposes sensitive runtime information (goroutine stacks, heap dumps, CPU
+// profiles). Only bind to localhost or a trusted network interface.
 func SetupPprof() {
 	if hostPort := os.Getenv("PPROFLISTEN"); hostPort != "" {
-		logrus.Warn("Starting pprof on ", hostPort)
+		logrus.Warnf("Starting pprof listener on %s — this endpoint has NO authentication, do not expose to untrusted networks", hostPort)
 		go func() {
 			logrus.WithError(http.ListenAndServe(hostPort, nil)).Error("Failed to setup pprof listener")
 		}()
@@ -110,8 +132,8 @@ func SetupStdLogging() {
 	})
 }
 
-// File type hooks should be provided a path to a directory to store log files
-func checkFileHookParams(params map[string]interface{}) {
+// File type hooks should be provided a path to a directory to store log files.
+func checkFileHookParams(params map[string]any) {
 	path, ok := params["path"]
 	if !ok {
 		logrus.Fatalf("Expecting a parameter \"path\" for logging hook of type \"file\"")
@@ -122,20 +144,31 @@ func checkFileHookParams(params map[string]interface{}) {
 	}
 }
 
-// Add a new FSHook to the logger. Each component will log in its own file
+// Add a new FSHook to the logger. Each component will log in its own file.
 func setupFileHook(hook config.LogrusHook, level logrus.Level) {
-	dirPath := (hook.Params["path"]).(string)
+	dirPath, ok := (hook.Params["path"]).(string)
+	if !ok {
+		logrus.Fatal("log hook 'path' param is not a string")
+	}
 	fullPath := filepath.Join(dirPath, "dendrite.log")
 
 	if err := os.MkdirAll(path.Dir(fullPath), os.ModePerm); err != nil {
 		logrus.Fatalf("Couldn't create directory %s: %q", path.Dir(fullPath), err)
 	}
 
+	// Create timberjack logger with daily rotation and gzip compression
+	writer := &timberjack.Logger{
+		Filename:    fullPath,
+		MaxBackups:  7,                 //nolint:mnd                 // keep 7 days of backups
+		Compression: "gzip",            // compress rotated files
+		RotateAt:    []string{"00:00"}, // rotate daily at midnight
+	}
+
 	logrus.AddHook(&logLevelHook{
 		level,
-		dugong.NewFSHook(
-			fullPath,
-			&utcFormatter{
+		&writerHook{
+			writer: writer,
+			formatter: &utcFormatter{
 				&logrus.TextFormatter{
 					TimestampFormat:  "2006-01-02T15:04:05.000000000Z07:00",
 					DisableColors:    true,
@@ -144,13 +177,12 @@ func setupFileHook(hook config.LogrusHook, level logrus.Level) {
 					QuoteEmptyFields: true,
 				},
 			},
-			&dugong.DailyRotationSchedule{GZip: true},
-		),
+		},
 	})
 }
 
-// CloseAndLogIfError Closes io.Closer and logs the error if any
-func CloseAndLogIfError(ctx context.Context, closer io.Closer, message string) {
+// CloseAndLogIfError Closes io.Closer and logs the error if any.
+func CloseAndLogIfError(ctx context.Context, closer io.Closer, message string) { //nolint:contextcheck
 	if closer == nil {
 		return
 	}

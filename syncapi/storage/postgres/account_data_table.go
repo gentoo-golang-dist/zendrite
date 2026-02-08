@@ -93,7 +93,8 @@ func (s *accountDataStatements) SelectAccountDataInRange(
 	data = make(map[string][]string)
 	pos = r.Low()
 
-	rows, err := sqlutil.TxStmt(txn, s.selectAccountDataInRangeStmt).QueryContext(
+	stmt := sqlutil.TxStmt(txn, s.selectAccountDataInRangeStmt)
+	rows, err := stmt.QueryContext(
 		ctx, userID, r.Low(), r.High(),
 		filterConvertTypeWildcardToSQL(accountDataEventFilter.Types),
 		filterConvertTypeWildcardToSQL(accountDataEventFilter.NotTypes),

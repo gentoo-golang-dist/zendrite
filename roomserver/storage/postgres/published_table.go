@@ -111,7 +111,6 @@ func (s *publishedStatements) SelectAllPublishedRooms(
 	} else {
 		stmt := sqlutil.TxStmt(txn, s.selectAllPublishedStmt)
 		rows, err = stmt.QueryContext(ctx, published, includeAllNetworks)
-
 	}
 	if err != nil {
 		return nil, err

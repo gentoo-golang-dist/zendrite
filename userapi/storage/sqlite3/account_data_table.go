@@ -11,10 +11,11 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/userapi/storage/tables"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const accountDataSchema = `
@@ -72,7 +73,8 @@ func (s *accountDataStatements) InsertAccountData(
 	localpart string, serverName spec.ServerName,
 	roomID, dataType string, content json.RawMessage,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.insertAccountDataStmt).ExecContext(ctx, localpart, serverName, roomID, dataType, content)
+	stmt := sqlutil.TxStmt(txn, s.insertAccountDataStmt)
+	_, err := stmt.ExecContext(ctx, localpart, serverName, roomID, dataType, content)
 	return err
 }
 

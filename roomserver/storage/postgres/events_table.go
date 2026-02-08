@@ -244,7 +244,6 @@ func (s *eventStatements) BulkSelectSnapshotsFromEventIDs(
 	ctx context.Context, txn *sql.Tx, eventIDs []string,
 ) (map[types.StateSnapshotNID][]string, error) {
 	stmt := sqlutil.TxStmt(txn, s.bulkSelectSnapshotsForEventIDsStmt)
-
 	rows, err := stmt.QueryContext(ctx, eventIDs)
 	if err != nil {
 		return nil, err
@@ -316,7 +315,7 @@ func (s *eventStatements) BulkSelectStateEventByID(
 }
 
 // bulkSelectStateEventByNID lookups a list of state events by event NID.
-// If any of the requested events are missing from the database it returns a types.MissingEventError
+// If any of the requested events are missing from the database it returns a types.MissingEventError.
 func (s *eventStatements) BulkSelectStateEventByNID(
 	ctx context.Context, txn *sql.Tx, eventNIDs []types.EventNID,
 	stateKeyTuples []types.StateKeyTuple,

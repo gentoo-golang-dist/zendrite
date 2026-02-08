@@ -12,12 +12,13 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/roomserver/storage/postgres/deltas"
 	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
 	"codefloe.com/pat-s/dendrite/roomserver/types"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const membershipSchema = `
@@ -74,7 +75,7 @@ var selectJoinedUsersSetForRoomsSQL = "" +
 	" GROUP BY target_nid"
 
 // Insert a row in to membership table so that it can be locked by the
-// SELECT FOR UPDATE
+// SELECT FOR UPDATE.
 const insertMembershipSQL = "" +
 	"INSERT INTO roomserver_membership (room_nid, target_nid, target_local)" +
 	" VALUES ($1, $2, $3)" +
@@ -130,7 +131,7 @@ var selectKnownUsersSQL = "" +
 	"  SELECT DISTINCT room_nid FROM roomserver_membership WHERE target_nid=$1 AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateJoin) +
 	") AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateJoin) + " AND event_state_key LIKE $2 LIMIT $3"
 
-// selectLocalServerInRoomSQL is an optimised case for checking if we, the local server,
+// selectLocalServerInRoomSQL is an optimized case for checking if we, the local server,
 // are in the room by using the target_local column of the membership table. Normally when
 // we want to know if a server is in a room, we have to unmarshal the entire room state which
 // is expensive. The presence of a single row from this query suggests we're still in the
@@ -138,7 +139,7 @@ var selectKnownUsersSQL = "" +
 const selectLocalServerInRoomSQL = "" +
 	"SELECT room_nid FROM roomserver_membership WHERE target_local = true AND membership_nid = $1 AND room_nid = $2 LIMIT 1"
 
-// selectServerMembersInRoomSQL is an optimised case for checking for server members in a room.
+// selectServerMembersInRoomSQL is an optimized case for checking for server members in a room.
 // The JOIN is significantly leaner than the previous case of looking up event NIDs and reading the
 // membership events from the database, as the JOIN query amounts to little more than two index
 // scans which are very fast. The presence of a single row from this query suggests the server is
@@ -325,7 +326,8 @@ func (s *membershipStatements) UpdateMembership(
 	roomNID types.RoomNID, targetUserNID types.EventStateKeyNID, senderUserNID types.EventStateKeyNID, membership tables.MembershipState,
 	eventNID types.EventNID, forgotten bool,
 ) (bool, error) {
-	res, err := sqlutil.TxStmt(txn, s.updateMembershipStmt).ExecContext(
+	updateMembershipStmt := sqlutil.TxStmt(txn, s.updateMembershipStmt)
+	res, err := updateMembershipStmt.ExecContext(
 		ctx, roomNID, targetUserNID, senderUserNID, membership, eventNID, forgotten,
 	)
 	if err != nil {
@@ -415,7 +417,8 @@ func (s *membershipStatements) UpdateForgetMembership(
 	ctx context.Context, txn *sql.Tx,
 	roomNID types.RoomNID, targetUserNID types.EventStateKeyNID, forget bool,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.updateMembershipForgetRoomStmt).ExecContext(
+	updateMembershipForgetRoomStmt := sqlutil.TxStmt(txn, s.updateMembershipForgetRoomStmt)
+	_, err := updateMembershipForgetRoomStmt.ExecContext(
 		ctx, roomNID, targetUserNID, forget,
 	)
 	return err
@@ -458,7 +461,8 @@ func (s *membershipStatements) DeleteMembership(
 	ctx context.Context, txn *sql.Tx,
 	roomNID types.RoomNID, targetUserNID types.EventStateKeyNID,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.deleteMembershipStmt).ExecContext(
+	deleteMembershipStmt := sqlutil.TxStmt(txn, s.deleteMembershipStmt)
+	_, err := deleteMembershipStmt.ExecContext(
 		ctx, roomNID, targetUserNID,
 	)
 	return err

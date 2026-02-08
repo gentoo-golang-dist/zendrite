@@ -12,11 +12,12 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/matrix-org/util"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
 	"codefloe.com/pat-s/dendrite/roomserver/types"
-	"github.com/matrix-org/util"
 )
 
 const stateDataSchema = `

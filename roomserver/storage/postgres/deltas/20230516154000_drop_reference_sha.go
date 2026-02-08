@@ -11,9 +11,10 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/matrix-org/util"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
-	"github.com/matrix-org/util"
 )
 
 func UpDropEventReferenceSHAEvents(ctx context.Context, tx *sql.Tx) error {

@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"codefloe.com/pat-s/dendrite/internal"
@@ -135,16 +136,18 @@ func (s *oneTimeKeysStatements) InsertOneTimeKeys(ctx context.Context, txn *sql.
 		UserID:   keys.UserID,
 		KeyCount: make(map[string]int),
 	}
+	upsertKeysStmt := sqlutil.TxStmt(txn, s.upsertKeysStmt)
 	for keyIDWithAlgo, keyJSON := range keys.KeyJSON {
 		algo, keyID := keys.Split(keyIDWithAlgo)
-		_, err := sqlutil.TxStmt(txn, s.upsertKeysStmt).ExecContext(
+		_, err := upsertKeysStmt.ExecContext(
 			ctx, keys.UserID, keys.DeviceID, keyID, algo, now, string(keyJSON),
 		)
 		if err != nil {
 			return nil, err
 		}
 	}
-	rows, err := sqlutil.TxStmt(txn, s.selectKeysCountStmt).QueryContext(ctx, keys.UserID, keys.DeviceID)
+	selectKeysCountStmt := sqlutil.TxStmt(txn, s.selectKeysCountStmt)
+	rows, err := selectKeysCountStmt.QueryContext(ctx, keys.UserID, keys.DeviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -166,20 +169,23 @@ func (s *oneTimeKeysStatements) SelectAndDeleteOneTimeKey(
 ) (map[string]json.RawMessage, error) {
 	var keyID string
 	var keyJSON string
-	err := sqlutil.TxStmtContext(ctx, txn, s.selectKeyByAlgorithmStmt).QueryRowContext(ctx, userID, deviceID, algorithm).Scan(&keyID, &keyJSON)
+	selectStmt := sqlutil.TxStmtContext(ctx, txn, s.selectKeyByAlgorithmStmt)
+	err := selectStmt.QueryRowContext(ctx, userID, deviceID, algorithm).Scan(&keyID, &keyJSON)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	_, err = sqlutil.TxStmtContext(ctx, txn, s.deleteOneTimeKeyStmt).ExecContext(ctx, userID, deviceID, algorithm, keyID)
+	deleteOneTimeKeyStmt := sqlutil.TxStmtContext(ctx, txn, s.deleteOneTimeKeyStmt)
+	_, err = deleteOneTimeKeyStmt.ExecContext(ctx, userID, deviceID, algorithm, keyID)
 	return map[string]json.RawMessage{
 		algorithm + ":" + keyID: json.RawMessage(keyJSON),
 	}, err
 }
 
 func (s *oneTimeKeysStatements) DeleteOneTimeKeys(ctx context.Context, txn *sql.Tx, userID, deviceID string) error {
-	_, err := sqlutil.TxStmt(txn, s.deleteOneTimeKeysStmt).ExecContext(ctx, userID, deviceID)
+	deleteOneTimeKeysStmt := sqlutil.TxStmt(txn, s.deleteOneTimeKeysStmt)
+	_, err := deleteOneTimeKeysStmt.ExecContext(ctx, userID, deviceID)
 	return err
 }

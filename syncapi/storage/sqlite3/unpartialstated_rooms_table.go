@@ -91,7 +91,8 @@ func (s *unPartialStatedRoomsStatements) SelectUnPartialStatedRoomsInRange(
 	ctx context.Context, txn *sql.Tx, userID string, r types.Range,
 ) ([]string, types.StreamPosition, error) {
 	var lastPos types.StreamPosition
-	rows, err := sqlutil.TxStmt(txn, s.selectUnPartialStatedRoomsInRange).QueryContext(ctx, userID, r.Low(), r.High())
+	selectUnPartialStatedRoomsInRange := sqlutil.TxStmt(txn, s.selectUnPartialStatedRoomsInRange)
+	rows, err := selectUnPartialStatedRoomsInRange.QueryContext(ctx, userID, r.Low(), r.High())
 	if err != nil {
 		return nil, 0, fmt.Errorf("unable to query un-partial-stated rooms: %w", err)
 	}
@@ -127,6 +128,7 @@ func (s *unPartialStatedRoomsStatements) SelectMaxUnPartialStatedRoomID(
 func (s *unPartialStatedRoomsStatements) PurgeUnPartialStatedRooms(
 	ctx context.Context, txn *sql.Tx, roomID string,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.purgeUnPartialStatedRoomsStmt).ExecContext(ctx, roomID)
+	purgeUnPartialStatedRoomsStmt := sqlutil.TxStmt(txn, s.purgeUnPartialStatedRoomsStmt)
+	_, err := purgeUnPartialStatedRoomsStmt.ExecContext(ctx, roomID)
 	return err
 }

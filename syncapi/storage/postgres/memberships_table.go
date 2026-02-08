@@ -99,7 +99,8 @@ func (s *membershipsStatements) UpsertMembership(
 	if err != nil {
 		return fmt.Errorf("event.Membership: %w", err)
 	}
-	_, err = sqlutil.TxStmt(txn, s.upsertMembershipStmt).ExecContext(
+	upsertMembershipStmt := sqlutil.TxStmt(txn, s.upsertMembershipStmt)
+	_, err = upsertMembershipStmt.ExecContext(
 		ctx,
 		event.RoomID().String(),
 		event.StateKeyResolved,
@@ -139,7 +140,8 @@ func (s *membershipsStatements) SelectMembershipForUser(
 func (s *membershipsStatements) PurgeMemberships(
 	ctx context.Context, txn *sql.Tx, roomID string,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.purgeMembershipsStmt).ExecContext(ctx, roomID)
+	purgeMembershipsStmt := sqlutil.TxStmt(txn, s.purgeMembershipsStmt)
+	_, err := purgeMembershipsStmt.ExecContext(ctx, roomID)
 	return err
 }
 

@@ -13,11 +13,12 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/matrix-org/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
 	"codefloe.com/pat-s/dendrite/roomserver/types"
-	"github.com/matrix-org/gomatrixserverlib/spec"
 )
 
 const userRoomKeysSchema = `
@@ -73,7 +74,7 @@ func PrepareUserRoomKeysTable(db *sql.DB) (tables.UserRoomKeys, error) {
 		{&s.selectUserRoomKeyStmt, selectUserRoomKeySQL},
 		{&s.selectUserRoomPublicKeyStmt, selectUserRoomPublicKeySQL},
 		{&s.selectAllUserRoomPublicKeysForUser, selectAllUserRoomPublicKeyForUserSQL},
-		//{&s.selectUserNIDsStmt, selectUserNIDsSQL}, //prepared at runtime
+		// {&s.selectUserNIDsStmt, selectUserNIDsSQL}, // prepared at runtime
 	}.Prepare(db)
 }
 
@@ -138,7 +139,9 @@ func (s *userRoomKeysStatements) BulkSelectUserNIDs(ctx context.Context, txn *sq
 		return nil, err
 	}
 
-	params := append(roomNIDs, senders...)
+	params := make([]any, 0, len(roomNIDs)+len(senders))
+	params = append(params, roomNIDs...)
+	params = append(params, senders...)
 
 	stmt := sqlutil.TxStmt(txn, selectStmt)
 	defer internal.CloseAndLogIfError(ctx, stmt, "failed to close statement")

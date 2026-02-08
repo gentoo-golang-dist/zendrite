@@ -16,7 +16,7 @@ import (
 	"codefloe.com/pat-s/dendrite/syncapi/storage/tables"
 )
 
-// SQL statements for rooms to recalculate
+// SQL statements for rooms to recalculate.
 const insertRoomToRecalculateSQLite = `
 	INSERT OR IGNORE INTO syncapi_sliding_sync_rooms_to_recalculate (room_id)
 	VALUES ($1)
@@ -32,7 +32,7 @@ const deleteRoomToRecalculateSQLite = `
 	WHERE room_id = $1
 `
 
-// SQL statements for joined rooms
+// SQL statements for joined rooms.
 const upsertJoinedRoomSQLite = `
 	INSERT INTO syncapi_sliding_sync_joined_rooms
 		(room_id, event_stream_ordering, bump_stamp, room_type, room_name, is_encrypted, tombstone_successor_room_id)
@@ -58,7 +58,7 @@ const deleteJoinedRoomSQLite = `
 	WHERE room_id = $1
 `
 
-// SQL statements for membership snapshots
+// SQL statements for membership snapshots.
 const upsertMembershipSnapshotSQLite = `
 	INSERT INTO syncapi_sliding_sync_membership_snapshots
 		(room_id, user_id, sender, membership_event_id, membership, forgotten, event_stream_ordering,
@@ -135,7 +135,7 @@ func NewSqliteSlidingSyncRoomMetadataTable(db *sql.DB) (tables.SlidingSyncRoomMe
 	}.Prepare(db)
 }
 
-// ===== Rooms To Recalculate =====
+// ===== Rooms To Recalculate =====.
 
 func (s *slidingSyncRoomMetadataStatementsSQLite) InsertRoomToRecalculate(
 	ctx context.Context, txn *sql.Tx, roomID string,
@@ -174,7 +174,7 @@ func (s *slidingSyncRoomMetadataStatementsSQLite) DeleteRoomToRecalculate(
 	return err
 }
 
-// ===== Joined Rooms =====
+// ===== Joined Rooms =====.
 
 func (s *slidingSyncRoomMetadataStatementsSQLite) UpsertJoinedRoom(
 	ctx context.Context, txn *sql.Tx, room *tables.SlidingSyncJoinedRoom,
@@ -234,7 +234,7 @@ func (s *slidingSyncRoomMetadataStatementsSQLite) SelectJoinedRooms(
 
 	// SQLite doesn't support array parameters, so we build the query dynamically
 	placeholders := make([]string, len(roomIDs))
-	args := make([]interface{}, len(roomIDs))
+	args := make([]any, len(roomIDs))
 	for i, roomID := range roomIDs {
 		placeholders[i] = "?"
 		args[i] = roomID
@@ -294,7 +294,7 @@ func (s *slidingSyncRoomMetadataStatementsSQLite) SelectJoinedRoomsByFilters(
 		FROM syncapi_sliding_sync_joined_rooms
 		WHERE 1=1
 	`
-	args := []interface{}{}
+	args := []any{}
 
 	if isEncrypted != nil {
 		encVal := 0
@@ -362,7 +362,7 @@ func (s *slidingSyncRoomMetadataStatementsSQLite) SelectJoinedRoomsByFilters(
 	return rooms, rows.Err()
 }
 
-// ===== Membership Snapshots =====
+// ===== Membership Snapshots =====.
 
 func (s *slidingSyncRoomMetadataStatementsSQLite) UpsertMembershipSnapshot(
 	ctx context.Context, txn *sql.Tx, snapshot *tables.SlidingSyncMembershipSnapshot,
@@ -445,7 +445,7 @@ func (s *slidingSyncRoomMetadataStatementsSQLite) SelectMembershipSnapshotsForUs
 	} else {
 		// Build dynamic query for memberships
 		placeholders := make([]string, len(memberships))
-		args := make([]interface{}, len(memberships)+1)
+		args := make([]any, len(memberships)+1)
 		args[0] = userID
 		for i, m := range memberships {
 			placeholders[i] = "?"
@@ -515,13 +515,13 @@ func (s *slidingSyncRoomMetadataStatementsSQLite) DeleteMembershipSnapshot(
 	return err
 }
 
-// Helper function to convert empty strings to NULL
-func nullIfEmptySQLite(s string) interface{} {
+// Helper function to convert empty strings to NULL.
+func nullIfEmptySQLite(s string) any {
 	if s == "" {
 		return nil
 	}
 	return s
 }
 
-// Ensure we implement the interface
+// Ensure we implement the interface.
 var _ tables.SlidingSyncRoomMetadata = &slidingSyncRoomMetadataStatementsSQLite{}

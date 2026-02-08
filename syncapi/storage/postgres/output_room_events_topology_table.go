@@ -8,6 +8,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/depth"
@@ -126,7 +127,7 @@ func (s *outputRoomEventsTopologyStatements) SelectEventIDsInRange(
 
 	// Query the event IDs.
 	rows, err := stmt.QueryContext(ctx, roomID, minDepth, maxDepth, maxDepth, maxStreamPos, limit)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		// If no event matched the request, return an empty slice.
 		return []string{}, start, end, nil
 	} else if err != nil {
@@ -180,6 +181,7 @@ func (s *outputRoomEventsTopologyStatements) SelectStreamToTopologicalPosition(
 func (s *outputRoomEventsTopologyStatements) PurgeEventsTopology(
 	ctx context.Context, txn *sql.Tx, roomID string,
 ) error {
-	_, err := sqlutil.TxStmt(txn, s.purgeEventsTopologyStmt).ExecContext(ctx, roomID)
+	purgeEventsTopologyStmt := sqlutil.TxStmt(txn, s.purgeEventsTopologyStmt)
+	_, err := purgeEventsTopologyStmt.ExecContext(ctx, roomID)
 	return err
 }

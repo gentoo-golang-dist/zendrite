@@ -86,7 +86,7 @@ func (s *relayQueueJSONStatements) DeleteQueueJSON(
 		return fmt.Errorf("s.deleteQueueJSON s.db.Prepare: %w", err)
 	}
 
-	iNIDs := make([]interface{}, len(nids))
+	iNIDs := make([]any, len(nids))
 	for k, v := range nids {
 		iNIDs[k] = v
 	}
@@ -105,7 +105,7 @@ func (s *relayQueueJSONStatements) SelectQueueJSON(
 		return nil, fmt.Errorf("s.selectQueueJSON s.db.Prepare: %w", err)
 	}
 
-	iNIDs := make([]interface{}, len(jsonNIDs))
+	iNIDs := make([]any, len(jsonNIDs))
 	for k, v := range jsonNIDs {
 		iNIDs[k] = v
 	}

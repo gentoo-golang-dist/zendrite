@@ -14,10 +14,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/matrix-org/util"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/roomserver/types"
-	"github.com/matrix-org/util"
 )
 
 const stateDataSchema = `
@@ -93,7 +94,7 @@ func (s *stateBlockStatements) BulkInsertStateData(
 func (s *stateBlockStatements) BulkSelectStateBlockEntries(
 	ctx context.Context, txn *sql.Tx, stateBlockNIDs types.StateBlockNIDs,
 ) ([][]types.EventNID, error) {
-	intfs := make([]interface{}, len(stateBlockNIDs))
+	intfs := make([]any, len(stateBlockNIDs))
 	for i := range stateBlockNIDs {
 		intfs[i] = int64(stateBlockNIDs[i])
 	}
@@ -102,7 +103,7 @@ func (s *stateBlockStatements) BulkSelectStateBlockEntries(
 	if err != nil {
 		return nil, err
 	}
-	defer selectPrep.Close() // nolint:errcheck
+	defer selectPrep.Close()
 	selectStmt := sqlutil.TxStmt(txn, selectPrep)
 	rows, err := selectStmt.QueryContext(ctx, intfs...)
 	if err != nil {

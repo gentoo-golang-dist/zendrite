@@ -11,12 +11,13 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/matrix-org/gomatrixserverlib"
+
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/sqlutil"
 	"codefloe.com/pat-s/dendrite/roomserver/storage/postgres/deltas"
 	"codefloe.com/pat-s/dendrite/roomserver/storage/tables"
 	"codefloe.com/pat-s/dendrite/roomserver/types"
-	"github.com/matrix-org/gomatrixserverlib"
 )
 
 const roomsSchema = `
@@ -41,7 +42,7 @@ CREATE TABLE IF NOT EXISTS roomserver_rooms (
 );
 `
 
-// Same as insertEventTypeNIDSQL
+// Same as insertEventTypeNIDSQL.
 const insertRoomNIDSQL = "" +
 	"INSERT INTO roomserver_rooms (room_id, room_version) VALUES ($1, $2)" +
 	" ON CONFLICT ON CONSTRAINT roomserver_room_id_unique" +

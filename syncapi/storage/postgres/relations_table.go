@@ -84,7 +84,8 @@ func NewPostgresRelationsTable(db *sql.DB) (tables.Relations, error) {
 func (s *relationsStatements) InsertRelation(
 	ctx context.Context, txn *sql.Tx, roomID, eventID, childEventID, childEventType, relType string,
 ) (err error) {
-	_, err = sqlutil.TxStmt(txn, s.insertRelationStmt).ExecContext(
+	insertRelationStmt := sqlutil.TxStmt(txn, s.insertRelationStmt)
+	_, err = insertRelationStmt.ExecContext(
 		ctx, roomID, eventID, childEventID, childEventType, relType,
 	)
 	return
@@ -100,7 +101,7 @@ func (s *relationsStatements) DeleteRelation(
 	return err
 }
 
-// SelectRelationsInRange returns a map rel_type -> []child_event_id
+// SelectRelationsInRange returns a map rel_type -> []child_event_id.
 func (s *relationsStatements) SelectRelationsInRange(
 	ctx context.Context, txn *sql.Tx, roomID, eventID, relType, eventType string,
 	r types.Range, limit int,

@@ -111,7 +111,7 @@ func (s *eventTypeStatements) BulkSelectEventTypeNID(
 	ctx context.Context, txn *sql.Tx, eventTypes []string,
 ) (map[string]types.EventTypeNID, error) {
 	///////////////
-	iEventTypes := make([]interface{}, len(eventTypes))
+	iEventTypes := make([]any, len(eventTypes))
 	for k, v := range eventTypes {
 		iEventTypes[k] = v
 	}
