@@ -10,10 +10,6 @@ We aim to make it as easy as possible to get started.
 
 We are a small team maintaining a large project.
 As a result, we cannot merge every feature, even if it is bug-free and useful, because we then commit to maintaining it indefinitely.
-We will always accept:
-
-- bug fixes
-- security fixes (please responsibly disclose via <security@matrix.org> _before_ creating pull requests)
 
 We will accept the following with caveats:
 
@@ -26,58 +22,6 @@ We will accept the following with caveats:
 The following items are at risk of not being accepted:
 
 - Configuration or CLI changes, particularly ones which increase the overall configuration surface.
-
-The following items are unlikely to be accepted into a main Dendrite release for now:
-
-- New MSC implementations.
-- New features which are not in the specification.
-
-## Sign off
-
-We ask that everybody who contributes to this project signs off their contributions, as explained below.
-
-We follow a simple 'inbound=outbound' model for contributions: the act of submitting an 'inbound' contribution means that the contributor agrees to license their contribution under the same terms as the project's overall 'outbound' license - in our case, this is Apache Software License v2.
-
-In order to have a concrete record that your contribution is intentional and you agree to license it under the same terms as the project's license, we've adopted the same lightweight approach used by the [Linux Kernel](https://www.kernel.org/doc/html/latest/process/submitting-patches.html), [Docker](https://github.com/docker/docker/blob/master/CONTRIBUTING.md), and many other projects: the [Developer Certificate of Origin](https://developercertificate.org/) (DCO).
-This is a simple declaration that you wrote the contribution or otherwise have the right to contribute it to Matrix:
-
-```text
-Developer Certificate of Origin
-Version 1.1
-Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
-660 York Street, Suite 102,
-San Francisco, CA 94110 USA
-Everyone is permitted to copy and distribute verbatim copies of this
-license document, but changing it is not allowed.
-Developer's Certificate of Origin 1.1
-By making a contribution to this project, I certify that:
-(a) The contribution was created in whole or in part by me and I
-    have the right to submit it under the open source license
-    indicated in the file; or
-(b) The contribution is based upon previous work that, to the best
-    of my knowledge, is covered under an appropriate open source
-    license and I have the right under that license to submit that
-    work with modifications, whether created in whole or in part
-    by me, under the same open source license (unless I am
-    permitted to submit under a different license), as indicated
-    in the file; or
-(c) The contribution was provided directly to me by some other
-    person who certified (a), (b) or (c) and I have not modified
-    it.
-(d) I understand and agree that this project and the contribution
-    are public and that a record of the contribution (including all
-    personal information I submit with it, including my sign-off) is
-    maintained indefinitely and may be redistributed consistent with
-    this project or the open source license(s) involved.
-```
-
-If you agree to this for your contribution, then all that's needed is to include the line in your commit or pull request comment:
-
-```text
-Signed-off-by: Your Name <your@email.example.org>
-```
-
-Git allows you to add this signoff automatically when using the `-s` flag to `git commit`, which uses the name and email set in your `user.name` and `user.email` git configs.
 
 ## Getting up and running
 
@@ -192,18 +136,3 @@ go test -race ./...
 Once the code builds and tests pass, run [SyTest](https://github.com/matrix-org/sytest) according to the guide in [SyTest](/development/sytest) so you can see whether something is being broken and whether there are newly passing tests.
 
 If these steps report no problems, the code should be able to pass the CI tests.
-
-## Picking things to do
-
-If you're new then feel free to pick up an issue labelled "good first issue".
-These should be well-contained, small pieces of work that can be picked up to help you get familiar with the code base.
-
-Once you're comfortable with hacking on Dendrite there are issues labelled as "help wanted", these are often slightly larger or more complicated pieces of work but are hopefully nonetheless fairly well-contained.
-
-We ask people who are familiar with Dendrite to leave the "good first issue" issues so that there is always a way for new people to come and get involved.
-
-## Getting help
-
-For questions related to developing on Dendrite we have a dedicated room on Matrix [#dendrite-dev:matrix.org](https://matrix.to/#/#dendrite-dev:matrix.org) where we're happy to help.
-
-For more general questions please use [#dendrite:matrix.org](https://matrix.to/#/#dendrite:matrix.org).
