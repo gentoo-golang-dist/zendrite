@@ -15,8 +15,6 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/nats-io/nats.go"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/exp/constraints"
-
 	clientapi "codefloe.com/pat-s/dendrite/clientapi/api"
 	"codefloe.com/pat-s/dendrite/internal"
 	"codefloe.com/pat-s/dendrite/internal/eventutil"
@@ -127,19 +125,12 @@ func AdminCreateNewRegistrationToken(req *http.Request, cfg *config.ClientAPI, u
 		Code: 200, //nolint:mnd
 		JSON: map[string]any{
 			"token":        token,
-			"uses_allowed": getReturnValue(usesAllowed),
+			"uses_allowed": internal.PtrOrNil(usesAllowed),
 			"pending":      pending,
 			"completed":    completed,
-			"expiry_time":  getReturnValue(expiryTime),
+			"expiry_time":  internal.PtrOrNil(expiryTime),
 		},
 	}
-}
-
-func getReturnValue[t constraints.Integer](in *t) any {
-	if in == nil {
-		return nil
-	}
-	return *in
 }
 
 func AdminListRegistrationTokens(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
