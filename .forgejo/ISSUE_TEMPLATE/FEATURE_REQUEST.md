@@ -6,7 +6,7 @@ about: Suggest an idea for this project
 
 <!--
 Please do not open feature requests for missing parts of the Matrix specification.
-We are tracking those features under https://github.com/element-hq/dendrite/issues?q=is%3Aissue+is%3Aopen+label%3Aare-we-synapse-yet
+We are tracking those features under https://codefloe.com/pat-s/dendrite/issues?q=&type=comment&labels=are-we-synapse-yet&state=open
 -->
 
 **Description:**
