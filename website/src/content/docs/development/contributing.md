@@ -20,7 +20,7 @@ We will accept the following with caveats:
 - documentation fixes, provided they do not add additional instructions which can end up going out-of-date, e.g example configs, shell commands.
 - performance fixes, provided they do not add significantly more maintenance burden.
 - additional functionality on existing features, provided the functionality is small and maintainable.
-- additional functionality that, in its absence, would impact the ecosystem e.g spam and abuse mitigations
+- additional functionality that, in its absence, would impact the ecosystem e.g spam and abuse mitigations.
 - test-only changes, provided they help improve coverage or test tricky code.
 
 The following items are at risk of not being accepted:
@@ -84,25 +84,50 @@ Git allows you to add this signoff automatically when using the `-s` flag to `gi
 See the [Installation](/installation/planning) section for information on how to build an instance of Dendrite.
 You will likely need this in order to test your changes.
 
+## Pre-commit hooks
+
+This project uses [pre-commit](https://pre-commit.com/) to run checks before each commit.
+Install the hooks with:
+
+```bash
+pre-commit install
+```
+
+The hooks run automatically on `git commit` and include:
+
+- **golangci-lint** — Go linting and formatting (see below)
+- **markdownlint** — Markdown style enforcement
+- **prettier** — Code formatting for non-Go files (YAML, JS, CSS, etc.)
+- **yamllint** — YAML validation
+- **hadolint** — Dockerfile linting
+- **editorconfig-checker** — Consistent editor settings
+
 ## Code style
 
-On the whole, the format as prescribed by `gofmt`, `goimports` etc. is exactly what we use and expect.
-Please make sure that you run one of these formatters before submitting your contribution.
+Go formatting is handled automatically by `golangci-lint`, which runs `gofmt`, `gofumpt`, and `gci` (import ordering).
+You do not need to run these manually — pre-commit will apply them on each commit.
+
+Import ordering follows the `gci` convention configured in `.golangci.yaml`:
+
+1. Standard library
+2. Third-party packages
+3. `codefloe.com/pat-s/dendrite` (local packages)
 
 ## Comments
 
 Please make sure that the comments adequately explain _why_ your code does what it does.
 If there are statements that are not obvious, please comment what they do.
 
-We also have some special tags which we use for searchability. These are:
+We also have some special tags which we use for searchability:
 
-- `// TODO:` for places where a future review, rewrite or refactor is likely required;
-- `// FIXME:` for places where we know there is an outstanding bug that needs a fix;
+- `// TODO:` for places where a future review, rewrite or refactor is likely required.
+- `// FIXME:` for places where we know there is an outstanding bug that needs a fix.
 - `// NOTSPEC:` for places where the behaviour specifically does not match what the [Matrix Specification](https://spec.matrix.org/) prescribes, along with a description of _why_ that is the case.
 
 ## Linting
 
-We use [golangci-lint](https://github.com/golangci/golangci-lint) to lint Dendrite which can be executed via:
+Linting is configured in `.golangci.yaml` and runs via [golangci-lint](https://github.com/golangci/golangci-lint).
+It runs automatically as a pre-commit hook, but you can also run it manually:
 
 ```bash
 golangci-lint run
@@ -116,13 +141,13 @@ Please avoid doing this if you can.
 We also have unit tests which we run via:
 
 ```bash
-DENDRITE_TEST_SKIP_NODB=1 go test --race ./...
+go test -race ./...
 ```
 
-This only runs SQLite database tests.
-If you wish to execute Postgres tests as well, you'll either need to have Postgres installed locally (`createdb` will be used) or have a remote/containerized Postgres instance available.
+This runs both SQLite and PostgreSQL tests.
+If you wish to execute Postgres tests, you'll either need to have Postgres installed locally (`createdb` will be used) or have a remote/containerized Postgres instance available.
 
-To configure the connection to a remote Postgres, you can use the following enviroment variables:
+To configure the connection to a remote Postgres, you can use the following environment variables:
 
 ```bash
 POSTGRES_USER=postgres
@@ -138,26 +163,35 @@ We use the standard [Go testing package](https://gobyexample.com/testing) for th
 
 ## Continuous integration
 
-When a Pull Request is submitted, continuous integration jobs are run automatically by GitHub actions to ensure that the code builds and works in a number of configurations, such as different Go versions, using full HTTP APIs and both database engines.
-CI will automatically run the unit tests (as above) as well as both of our integration test suites ([Complement](https://github.com/matrix-org/complement) and [SyTest](https://github.com/matrix-org/sytest)).
+When a Pull Request is submitted, continuous integration jobs are run automatically by Forgejo Actions to ensure that the code builds and works.
+CI will run `golangci-lint` and then execute unit tests split by package group (syncapi, clientapi, roomserver, userapi, federationapi, and other) with both SQLite and PostgreSQL.
 
 You can see the progress of any CI jobs at the bottom of the Pull Request page, or by looking at the Actions tab of the repository.
 
 We generally won't accept a submission unless all of the CI jobs are passing.
 We do understand though that sometimes the tests get things wrong — if that's the case, please also raise a pull request to fix the relevant tests!
 
-### Running CI tests locally
+### Running checks locally
 
 To save waiting for CI to finish after every commit, it is ideal to run the checks locally before pushing, fixing errors first.
 This also saves other people time as only so many PRs can be tested at a given time.
 
-To execute what CI tests, first run `./build/scripts/build-test-lint.sh`; this script will build the code, lint it, and run `go test ./...` with race condition checking enabled.
-If something needs to be changed, fix it and then run the script again until it no longer complains.
-Be warned that the linting can take a significant amount of CPU and RAM.
+The simplest way is to rely on the pre-commit hooks, which run `golangci-lint` and other checks on each commit.
+You can also run them manually against all files:
 
-Once the code builds, run [Sytest](https://github.com/matrix-org/sytest) according to the guide in [SyTest](/development/sytest) so you can see whether something is being broken and whether there are newly passing tests.
+```bash
+pre-commit run --all-files
+```
 
-If these two steps report no problems, the code should be able to pass the CI tests.
+To run the full test suite locally:
+
+```bash
+go test -race ./...
+```
+
+Once the code builds and tests pass, run [SyTest](https://github.com/matrix-org/sytest) according to the guide in [SyTest](/development/sytest) so you can see whether something is being broken and whether there are newly passing tests.
+
+If these steps report no problems, the code should be able to pass the CI tests.
 
 ## Picking things to do
 
