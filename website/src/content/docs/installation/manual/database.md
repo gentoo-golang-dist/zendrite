@@ -20,11 +20,9 @@ All components will be sharing the same database resources (CPU, RAM, storage).
 
 You will most likely want to:
 
-1. Configure a role (with a username and password) which Dendrite can use to connect to the
-   database;
+1. Configure a role (with a username and password) which Dendrite can use to connect to the database;
 2. Create the database itself, ensuring that the Dendrite role has privileges over them.
-   As Dendrite will create and manage the database tables, indexes and sequences by itself, the
-   Dendrite role must have suitable privileges over the database.
+   As Dendrite will create and manage the database tables, indexes and sequences by itself, the Dendrite role must have suitable privileges over the database.
 
 ### Connection strings
 

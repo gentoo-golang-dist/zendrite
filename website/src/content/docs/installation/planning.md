@@ -8,15 +8,12 @@ description: Database choices, system requirements, and dependencies for Dendrit
 Dendrite can run with either a PostgreSQL or a SQLite backend.
 There are considerable tradeoffs to consider:
 
-- **PostgreSQL**: Needs to run separately to Dendrite, needs to be installed and configured separately
-  and will use more resources over all, but will be **considerably faster** than SQLite. PostgreSQL
-  has much better write concurrency which will allow Dendrite to process more tasks in parallel. This
-  will be necessary for federated deployments to perform adequately.
+- **PostgreSQL**: Needs to run separately to Dendrite, needs to be installed and configured separately and will use more resources over all, but will be **considerably faster** than SQLite.
+  PostgreSQL has much better write concurrency which will allow Dendrite to process more tasks in parallel.
+  This will be necessary for federated deployments to perform adequately.
 
-- **SQLite**: Built into Dendrite, therefore no separate database engine is necessary and is quite
-  a bit easier to set up, but will be much slower than PostgreSQL in most cases. SQLite only allows a
-  single writer on a database at a given time, which will significantly restrict Dendrite's ability
-  to process multiple tasks in parallel.
+- **SQLite**: Built into Dendrite, therefore no separate database engine is necessary and is quite a bit easier to set up, but will be much slower than PostgreSQL in most cases.
+  SQLite only allows a single writer on a database at a given time, which will significantly restrict Dendrite's ability to process multiple tasks in parallel.
 
 At this time, we **recommend the PostgreSQL database engine** for all production deployments.
 
@@ -30,10 +27,8 @@ It is difficult to state explicitly the amount of CPU, RAM or disk space that a 
 In particular:
 
 - The number of users using the server;
-- The number of rooms that the server is joined to — federated rooms in particular will typically
-  use more resources than rooms with only local users;
-- The complexity of rooms that the server is joined to — rooms with more members coming and
-  going will typically be of a much higher complexity.
+- The number of rooms that the server is joined to — federated rooms in particular will typically use more resources than rooms with only local users;
+- The complexity of rooms that the server is joined to — rooms with more members coming and going will typically be of a much higher complexity.
 
 Some tasks are more expensive than others, such as joining rooms over federation, running state resolution or sending messages into very large federated rooms with lots of remote users.
 Therefore you should plan accordingly and ensure that you have enough resources available to endure spikes in CPU or RAM usage, as these may be considerably higher than the idle resource usage.

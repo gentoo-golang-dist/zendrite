@@ -10,12 +10,9 @@ For federation to work, the server name must be resolvable by other homeservers 
 
 Matrix servers usually discover each other when federating using the following methods:
 
-1. If a well-known delegation exists on `example.com`, use the domain and port from the
-   well-known file to connect to the remote homeserver;
-2. If a DNS SRV delegation exists on `example.com`, use the IP address and port from the DNS SRV
-   record to connect to the remote homeserver;
-3. If neither well-known nor DNS SRV delegation are configured, attempt to connect to the remote
-   homeserver by connecting to `example.com` port TCP/8448 using HTTPS.
+1. If a well-known delegation exists on `example.com`, use the domain and port from the well-known file to connect to the remote homeserver;
+2. If a DNS SRV delegation exists on `example.com`, use the IP address and port from the DNS SRV record to connect to the remote homeserver;
+3. If neither well-known nor DNS SRV delegation are configured, attempt to connect to the remote homeserver by connecting to `example.com` port TCP/8448 using HTTPS.
 
 The exact details of how server name resolution works can be found in [the spec](https://spec.matrix.org/v1.3/server-server-api/#resolving-server-names).
 
@@ -47,8 +44,7 @@ For example, if your Dendrite installation is actually reachable at `matrix.exam
 
 Delegation can be performed in one of two ways:
 
-- **Well-known delegation (preferred)**: A well-known text file is served over HTTPS on the domain
-  name that you want to use, pointing to your server on `matrix.example.com` port 8448;
+- **Well-known delegation (preferred)**: A well-known text file is served over HTTPS on the domain name that you want to use, pointing to your server on `matrix.example.com` port 8448;
 - **DNS SRV delegation (not recommended)**: See the SRV delegation section below for details.
 
 If you are using a reverse proxy to forward `/_matrix` to Dendrite, your well-known or delegation must refer to the hostname and port that the reverse proxy is listening on instead.

@@ -39,9 +39,11 @@ The output of the command should tell you if you need to add any tests to `sytes
 
 When debugging, the following Docker `run` options may also be useful:
 
-- `-v /path/to/sytest/:/sytest/`: Use your local SyTest repository at `/path/to/sytest` instead of pulling from GitHub. This is useful when you want to speed things up or make modifications to SyTest.
+- `-v /path/to/sytest/:/sytest/`: Use your local SyTest repository at `/path/to/sytest` instead of pulling from GitHub.
+  This is useful when you want to speed things up or make modifications to SyTest.
 - `-v "/path/to/gopath/:/gopath"`: Use your local `GOPATH` so you don't need to re-download packages on every run.
-- `--entrypoint bash`: Prevent the container from automatically starting the tests. When used, you need to manually run `/bootstrap.sh dendrite` inside the container to start them.
+- `--entrypoint bash`: Prevent the container from automatically starting the tests.
+  When used, you need to manually run `/bootstrap.sh dendrite` inside the container to start them.
 - `-e "DENDRITE_TRACE_HTTP=1"`: Adds HTTP tracing to server logs.
 - `-e "DENDRITE_TRACE_INTERNAL=1"`: Adds roomserver internal API tracing to server logs.
 - `-e "COVER=1"`: Run Sytest with an instrumented binary, producing a Go coverage file per server.
