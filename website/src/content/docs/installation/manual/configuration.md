@@ -3,18 +3,16 @@ title: Configuring Dendrite
 description: YAML configuration options for Dendrite
 ---
 
-A YAML configuration file is used to configure Dendrite. A sample configuration file
-(`dendrite-sample.yaml`) is present in the top level of the Dendrite repository.
+A YAML configuration file is used to configure Dendrite.
+A sample configuration file (`dendrite-sample.yaml`) is present in the top level of the Dendrite repository.
 
-You will need to duplicate the sample, calling it `dendrite.yaml` for example, and then
-tailor it to your installation. At a minimum, you will need to populate the following
-sections:
+You will need to duplicate the sample, calling it `dendrite.yaml` for example, and then tailor it to your installation.
+At a minimum, you will need to populate the following sections:
 
 ## Server name
 
 First of all, you will need to configure the server name of your Matrix homeserver.
-This must match the domain name that you have selected whilst [configuring the domain
-name delegation](/installation/domainname#delegation).
+This must match the domain name that you have selected whilst [configuring the domain name delegation](/installation/domainname#delegation).
 
 In the `global` section, set the `server_name` to your delegated domain name:
 
@@ -38,13 +36,12 @@ global:
 
 ## JetStream configuration
 
-Dendrite deployments can use the built-in NATS Server rather than running a standalone
-server. If you want to use a standalone NATS Server anyway, you can also configure that too.
+Dendrite deployments can use the built-in NATS Server rather than running a standalone server.
+If you want to use a standalone NATS Server anyway, you can also configure that too.
 
 ### Built-in NATS Server
 
-In the `global` section, under the `jetstream` key, ensure that no server addresses are
-configured and set a `storage_path` to a persistent folder on the filesystem:
+In the `global` section, under the `jetstream` key, ensure that no server addresses are configured and set a `storage_path` to a persistent folder on the filesystem:
 
 ```yaml
 global:
@@ -56,8 +53,7 @@ global:
 
 ### Standalone NATS Server
 
-To use a standalone NATS Server instance, you will need to configure `addresses` field
-to point to the port that your NATS Server is listening on:
+To use a standalone NATS Server instance, you will need to configure `addresses` field to point to the port that your NATS Server is listening on:
 
 ```yaml
 global:
@@ -69,13 +65,11 @@ global:
 ```
 
 You do not need to configure the `storage_path` when using a standalone NATS Server instance.
-In the case that you are connecting to a multi-node NATS cluster, you can configure more than
-one address in the `addresses` field.
+In the case that you are connecting to a multi-node NATS cluster, you can configure more than one address in the `addresses` field.
 
 ## Database connection using a global connection pool
 
-If you want to use a single connection pool to a single PostgreSQL database,
-then you must uncomment and configure the `database` section within the `global` section:
+If you want to use a single connection pool to a single PostgreSQL database, then you must uncomment and configure the `database` section within the `global` section:
 
 ```yaml
 global:
@@ -87,18 +81,15 @@ global:
     conn_max_lifetime: -1
 ```
 
-**You must then remove or comment out** the `database` sections from other areas of the
-configuration file, e.g. under the `app_service_api`, `federation_api`, `key_server`,
-`media_api`, `mscs`, `relay_api`, `room_server`, `sync_api` and `user_api` blocks, otherwise
-these will override the `global` database configuration.
+**You must then remove or comment out** the `database` sections from other areas of the configuration file, e.g. under the `app_service_api`, `federation_api`, `key_server`, `media_api`, `mscs`, `relay_api`, `room_server`, `sync_api` and `user_api` blocks, otherwise these will override the `global` database configuration.
 
 ## Full-text search
 
-Dendrite supports full-text indexing using [Bleve](https://github.com/blevesearch/bleve). It is configured in the `sync_api` section as follows.
+Dendrite supports full-text indexing using [Bleve](https://github.com/blevesearch/bleve).
+It is configured in the `sync_api` section as follows.
 
-Depending on the language most likely to be used on the server, it might make sense to change the `language` used when indexing,
-to ensure the returned results match the expectations. A full list of possible languages
-can be found in `internal/fulltext/bleve.go`.
+Depending on the language most likely to be used on the server, it might make sense to change the `language` used when indexing, to ensure the returned results match the expectations.
+A full list of possible languages can be found in `internal/fulltext/bleve.go`.
 
 ```yaml
 sync_api:
@@ -111,8 +102,5 @@ sync_api:
 
 ## Other sections
 
-There are other options which may be useful so review them all. In particular, if you are
-trying to federate from your Dendrite instance into public rooms then configuring the
-`key_perspectives` (like `matrix.org` in the sample) can help to improve reliability
-considerably by allowing your homeserver to fetch public keys for dead homeservers from
-another living server.
+There are other options which may be useful so review them all.
+In particular, if you are trying to federate from your Dendrite instance into public rooms then configuring the `key_perspectives` (like `matrix.org` in the sample) can help to improve reliability considerably by allowing your homeserver to fetch public keys for dead homeservers from another living server.

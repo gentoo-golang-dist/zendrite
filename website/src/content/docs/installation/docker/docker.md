@@ -3,10 +3,8 @@ title: Docker Setup
 description: Installing and running Dendrite with Docker
 ---
 
-Dendrite provides an example Docker compose file in `build/docker/docker-compose.yml`,
-which needs some preparation to start successfully.
-Please note that this compose file only has Postgres as a dependency, and you need to configure
-a [reverse proxy](/installation/planning#reverse-proxy).
+Dendrite provides an example Docker compose file in `build/docker/docker-compose.yml`, which needs some preparation to start successfully.
+Please note that this compose file only has Postgres as a dependency, and you need to configure a [reverse proxy](/installation/planning#reverse-proxy).
 
 ## Preparations
 
@@ -28,9 +26,8 @@ docker run --rm --entrypoint="/usr/bin/generate-keys" \
 
 ### Generate a config
 
-Similar to the command above, we can generate a config to be used, which will use the correct paths
-as specified in the example docker-compose file. Change `server` to your domain and `db` according to your changes
-to the docker-compose file (`services.postgres.environment` values):
+Similar to the command above, we can generate a config to be used, which will use the correct paths as specified in the example docker-compose file.
+Change `server` to your domain and `db` according to your changes to the docker-compose file (`services.postgres.environment` values):
 
 ```bash
 mkdir -p ./config

@@ -8,13 +8,13 @@ export default defineConfig({
   site: 'https://dendrite.pat-s.me',
   integrations: [
     starlight({
+      customCss: ['./src/styles/custom.css'],
       plugins: [starlightThemeNova()],
       title: 'Dendrite',
       description: 'A second-generation Matrix homeserver written in Go',
-      social: [
-        { icon: 'github', label: 'GitHub', href: 'https://codefloe.com/pat-s/dendrite' },
-        { icon: 'matrix', label: 'Matrix', href: 'https://matrix.to/#/#dendrite:matrix.org' },
-      ],
+      // social: [
+      //   { icon: 'matrix', label: 'Matrix', href: 'https://matrix.to/#/#dendrite:matrix.org' },
+      // ],
       sidebar: [
         {
           label: 'Getting Started',
@@ -69,6 +69,11 @@ export default defineConfig({
           ],
         },
       ],
+      components: {
+        // Override the `ThemeSelect` component from the Nova theme
+        ThemeSelect: './src/components/ThemeSelect.astro',
+        SocialIcons: './src/components/CodefloeIcon.astro',
+      },
     }),
   ],
 });

@@ -10,9 +10,8 @@ helm repo add dendrite https://matrix-org.github.io/dendrite/
 helm repo update
 ```
 
-Next you'll need to create a `values.yaml` file and configure it to your liking. All possible values can be found
-in `helm/dendrite/values.yaml`, but at least you need to configure
-a `server_name`, otherwise the chart will complain about it:
+Next you'll need to create a `values.yaml` file and configure it to your liking.
+All possible values can be found in `helm/dendrite/values.yaml`, but at least you need to configure a `server_name`, otherwise the chart will complain about it:
 
 ```yaml
 dendrite_config:
@@ -34,8 +33,7 @@ dendrite_config:
 
 ## Installing with PostgreSQL
 
-The chart comes with a dependency on Postgres, which can be installed alongside Dendrite, this needs to be enabled in
-the `values.yaml`:
+The chart comes with a dependency on Postgres, which can be installed alongside Dendrite, this needs to be enabled in the `values.yaml`:
 
 ```yaml
 postgresql:

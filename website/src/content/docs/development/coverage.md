@@ -31,8 +31,8 @@ docker run --rm --name sytest -v "/Users/kegan/github/sytest:/sytest" \
   matrixdotorg/sytest-dendrite:latest
 ```
 
-This will generate a folder `covdatafiles` in each server's directory, e.g `server-0/covdatafiles`. To parse them,
-ensure your working directory is under the Dendrite repository then run:
+This will generate a folder `covdatafiles` in each server's directory, e.g `server-0/covdatafiles`.
+To parse them, ensure your working directory is under the Dendrite repository then run:
 
 ```bash
 go tool covdata func -i="$(find -name 'covmeta*' -type f -exec dirname {} \; | uniq | paste -s -d ',' -)"
@@ -56,8 +56,9 @@ total                                    (statements)         64.0%
 
 (after running Sytest for Postgres _and_ SQLite)
 
-The total coverage for this run is the last line at the bottom. However, this value is misleading because Dendrite can run in different configurations,
-which will never be tested in a single test run (e.g sqlite or postgres). To get a more accurate value, you'll need run Sytest for Postgres and SQLite (see commands above).
+The total coverage for this run is the last line at the bottom.
+However, this value is misleading because Dendrite can run in different configurations, which will never be tested in a single test run (e.g sqlite or postgres).
+To get a more accurate value, you'll need run Sytest for Postgres and SQLite (see commands above).
 Additional processing is required also to remove packages which will never be tested and extension MSCs:
 
 ```bash
@@ -96,8 +97,7 @@ git clone https://github.com/matrix-org/complement.git
 cd complement
 ```
 
-Next we'll need a script to execute after a test finishes, create a new file `posttest.sh`, make the file executable (`chmod +x posttest.sh`)
-and add the following content:
+Next we'll need a script to execute after a test finishes, create a new file `posttest.sh`, make the file executable (`chmod +x posttest.sh`) and add the following content:
 
 ```bash
 #!/bin/bash
@@ -106,8 +106,8 @@ mkdir -p /tmp/Complement/logs/$2/$1/
 docker cp $1:/tmp/covdatafiles/. /tmp/Complement/logs/$2/$1/
 ```
 
-This will copy the `covdatafiles` files from each container to something like
-`/tmp/Complement/logs/TestLogin/94f9c428de95779d2b62a3ccd8eab9d5ddcf65cc259a40ece06bdc61687ffed3/`. (`$1` is the containerID, `$2` the test name)
+This will copy the `covdatafiles` files from each container to something like `/tmp/Complement/logs/TestLogin/94f9c428de95779d2b62a3ccd8eab9d5ddcf65cc259a40ece06bdc61687ffed3/`.
+(`$1` is the containerID, `$2` the test name)
 
 Now that we have set up everything we need, we can finally execute Complement:
 
@@ -133,8 +133,7 @@ go tool covdata func -i="$(find /tmp/Complement -name 'covmeta*' -type f -exec d
 
 ## Combining the results of (almost) all runs
 
-Now that we have all our `covdatafiles` files within the Dendrite repository, you can now execute the following command, to get the coverage
-overall (excluding unit tests):
+Now that we have all our `covdatafiles` files within the Dendrite repository, you can now execute the following command, to get the coverage overall (excluding unit tests):
 
 ```bash
 go tool covdata func -i="$(find -name 'covmeta*' -type f -exec dirname {} \; | uniq | paste -s -d ',' -)"

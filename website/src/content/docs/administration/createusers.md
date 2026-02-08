@@ -9,8 +9,7 @@ User accounts can be created on a Dendrite instance in a number of ways.
 
 The `create-account` tool is built in the `bin` folder when [building](/installation/manual/build) Dendrite.
 
-It uses the `dendrite.yaml` configuration file to connect to a **running** Dendrite instance and requires
-shared secret registration to be enabled as explained below.
+It uses the `dendrite.yaml` configuration file to connect to a **running** Dendrite instance and requires shared secret registration to be enabled as explained below.
 
 An example of using `create-account` to create a **normal account**:
 
@@ -26,8 +25,7 @@ To create a new **admin account**, add the `-admin` flag:
 ./bin/create-account -config /path/to/dendrite.yaml -username USERNAME -admin
 ```
 
-By default `create-account` uses `http://localhost:8008` to connect to Dendrite, this can be overwritten using
-the `-url` flag:
+By default `create-account` uses `http://localhost:8008` to connect to Dendrite, this can be overwritten using the `-url` flag:
 
 ```bash
 ./bin/create-account -config /path/to/dendrite.yaml -username USERNAME -url https://localhost:8448
@@ -47,9 +45,8 @@ docker exec -it CONTAINERNAME /usr/bin/create-account -config /path/to/dendrite.
 
 Dendrite supports the Synapse-compatible shared secret registration endpoint.
 
-To enable shared secret registration, you must first enable it in the `dendrite.yaml`
-configuration file by specifying a shared secret. In the `client_api` section of the config,
-enter a new secret into the `registration_shared_secret` field:
+To enable shared secret registration, you must first enable it in the `dendrite.yaml` configuration file by specifying a shared secret.
+In the `client_api` section of the config, enter a new secret into the `registration_shared_secret` field:
 
 ```yaml
 client_api:
@@ -57,8 +54,7 @@ client_api:
   registration_shared_secret: ""
 ```
 
-You can then use the `/_synapse/admin/v1/register` endpoint as per the
-[Synapse documentation](https://matrix-org.github.io/synapse/latest/admin_api/register_api.html).
+You can then use the `/_synapse/admin/v1/register` endpoint as per the [Synapse documentation](https://matrix-org.github.io/synapse/latest/admin_api/register_api.html).
 
-Shared secret registration is only enabled once a secret is configured. To disable shared
-secret registration again, remove the secret from the configuration file.
+Shared secret registration is only enabled once a secret is configured.
+To disable shared secret registration again, remove the secret from the configuration file.

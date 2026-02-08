@@ -9,7 +9,8 @@ Dendrite contains an embedded profiler called `pprof`, which is a part of the st
 
 ## Enable the profiler
 
-To enable the profiler, start Dendrite with the `PPROFLISTEN` environment variable. This variable specifies which address and port to listen on, e.g.
+To enable the profiler, start Dendrite with the `PPROFLISTEN` environment variable.
+This variable specifies which address and port to listen on, e.g.
 
 ```bash
 PPROFLISTEN=localhost:65432 ./bin/dendrite ...
@@ -36,13 +37,15 @@ The profile will run for the specified number of `seconds` and then will produce
 
 ### Examine a profile using the Go toolchain
 
-If you have Go installed and want to explore the profile, you can invoke `go tool pprof` to start the profile directly. The `-http=` parameter will instruct `go tool pprof` to start a web server providing a view of the captured profile:
+If you have Go installed and want to explore the profile, you can invoke `go tool pprof` to start the profile directly.
+The `-http=` parameter will instruct `go tool pprof` to start a web server providing a view of the captured profile:
 
 ```bash
 go tool pprof -http=localhost:23456 http://localhost:65432/debug/pprof/profile?seconds=30
 ```
 
-You can then visit `http://localhost:23456` in your web browser to see a visual representation of the profile. Particularly usefully, in the "View" menu, you can select "Flame Graph" to see a proportional interactive graph of CPU usage.
+You can then visit `http://localhost:23456` in your web browser to see a visual representation of the profile.
+Particularly usefully, in the "View" menu, you can select "Flame Graph" to see a proportional interactive graph of CPU usage.
 
 ### Download a profile to send to someone else
 
@@ -66,13 +69,15 @@ The profile will return almost instantly.
 
 ### Examine a profile using the Go toolchain
 
-If you have Go installed and want to explore the profile, you can invoke `go tool pprof` to start the profile directly. The `-http=` parameter will instruct `go tool pprof` to start a web server providing a view of the captured profile:
+If you have Go installed and want to explore the profile, you can invoke `go tool pprof` to start the profile directly.
+The `-http=` parameter will instruct `go tool pprof` to start a web server providing a view of the captured profile:
 
 ```bash
 go tool pprof -http=localhost:23456 http://localhost:65432/debug/pprof/heap
 ```
 
-You can then visit `http://localhost:23456` in your web browser to see a visual representation of the profile. The "Sample" menu lets you select between four different memory profiles:
+You can then visit `http://localhost:23456` in your web browser to see a visual representation of the profile.
+The "Sample" menu lets you select between four different memory profiles:
 
 - `inuse_space`: Shows how much actual heap memory is allocated per function (this is generally the most useful profile when diagnosing high memory usage)
 - `inuse_objects`: Shows how many heap objects are allocated per function
