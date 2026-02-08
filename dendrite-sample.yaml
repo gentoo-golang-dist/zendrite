@@ -354,8 +354,8 @@ user_api:
   # worker_count: 8
 
 # Configuration for OpenTelemetry tracing.
-# Traces are exported via OTLP gRPC to the configured endpoint (e.g. a Jaeger
-# instance with OTLP ingestion enabled).
+# Traces are exported via OTLP gRPC to the configured endpoint.
+# Any OTLP-compatible backend can be used (e.g. Grafana Tempo, Jaeger, SigNoz).
 tracing:
   enabled: false
   endpoint: localhost:4317
