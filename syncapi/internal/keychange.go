@@ -8,7 +8,7 @@ package internal
 
 import (
 	"context"
-	"strings"
+	"fmt"
 
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/spec"
@@ -27,10 +27,12 @@ import (
 // DeviceOTKCounts adds one-time key counts to the /sync response.
 func DeviceOTKCounts(ctx context.Context, keyAPI api.SyncKeyAPI, userID, deviceID string, res *types.Response) error {
 	var queryRes api.QueryOneTimeKeysResponse
-	_ = keyAPI.QueryOneTimeKeys(ctx, &api.QueryOneTimeKeysRequest{
+	if err := keyAPI.QueryOneTimeKeys(ctx, &api.QueryOneTimeKeysRequest{
 		UserID:   userID,
 		DeviceID: deviceID,
-	}, &queryRes)
+	}, &queryRes); err != nil {
+		return fmt.Errorf("keyAPI.QueryOneTimeKeys: %w", err)
+	}
 	if queryRes.Error != nil {
 		return queryRes.Error
 	}
@@ -69,10 +71,13 @@ func DeviceListCatchup(
 		offset = int64(from)
 	}
 	var queryRes api.QueryKeyChangesResponse
-	_ = userAPI.QueryKeyChanges(ctx, &api.QueryKeyChangesRequest{
+	if err := userAPI.QueryKeyChanges(ctx, &api.QueryKeyChangesRequest{
 		Offset:   offset,
 		ToOffset: toOffset,
-	}, &queryRes)
+	}, &queryRes); err != nil {
+		util.GetLogger(ctx).WithError(err).Error("userAPI.QueryKeyChanges failed")
+		return to, hasNew, nil
+	}
 	if queryRes.Error != nil {
 		// don't fail the catchup because we may have got useful information by tracking membership
 		util.GetLogger(ctx).WithError(queryRes.Error).Error("QueryKeyChanges failed")
@@ -312,15 +317,11 @@ func membershipEvents(res *types.Response) (joinUserIDs, leaveUserIDs []string) 
 	for _, room := range res.Rooms.Join {
 		for _, ev := range room.Timeline.Events {
 			if ev.Type == spec.MRoomMember && ev.StateKey != nil {
-				content := string(ev.Content)
-				switch {
-				case strings.Contains(content, `"join"`):
+				membership := gjson.GetBytes(ev.Content, "membership").Str
+				switch membership {
+				case spec.Join, spec.Invite:
 					joinUserIDs = append(joinUserIDs, *ev.StateKey)
-				case strings.Contains(content, `"invite"`):
-					joinUserIDs = append(joinUserIDs, *ev.StateKey)
-				case strings.Contains(content, `"leave"`):
-					leaveUserIDs = append(leaveUserIDs, *ev.StateKey)
-				case strings.Contains(content, `"ban"`):
+				case spec.Leave, spec.Ban:
 					leaveUserIDs = append(leaveUserIDs, *ev.StateKey)
 				}
 			}
