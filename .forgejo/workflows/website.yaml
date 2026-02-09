@@ -47,13 +47,13 @@ jobs:
     needs: build
     steps:
       - name: Download artifact
-        uses: actions/download-artifact@v4
+        uses: forgejo/download-artifact@v4
         with:
           name: website-dist
           path: dist
 
       - name: Check links
-        uses: https://github.com/glycheeverse/lychee-action@v2
+        uses: https://github.com/lycheeverse/lychee-action@v2
         with:
           args: >-
             --offline
@@ -69,7 +69,7 @@ jobs:
     needs: [build, links]
     steps:
       - name: Download artifact
-        uses: actions/download-artifact@v4
+        uses: forgejo/download-artifact@v4
         with:
           name: website-dist
           path: dist
