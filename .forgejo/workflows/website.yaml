@@ -57,10 +57,10 @@ jobs:
         with:
           args: >-
             --offline
-            --root-dir dist
-            --exclude-path dist/pagefind
+            --root-dir ${{ github.workspace }}/dist
+            --exclude-path ${{ github.workspace }}/dist/pagefind
             --no-progress
-            'dist/**/*.html'
+            '${{ github.workspace }}/dist/**/*.html'
           fail: true
 
   deploy:
