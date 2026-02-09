@@ -21,6 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install unzip
+        run: apt-get update && apt-get install -y unzip
+
       - uses: https://github.com/oven-sh/setup-bun@v2
 
       - name: Install dependencies
