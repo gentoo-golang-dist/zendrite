@@ -28,14 +28,14 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.40.0
 	go.opentelemetry.io/otel/sdk v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0
-	golang.org/x/crypto v0.47.0
-	golang.org/x/image v0.35.0
+	golang.org/x/crypto v0.48.0
+	golang.org/x/image v0.36.0
 	golang.org/x/sync v0.19.0
-	golang.org/x/term v0.39.0
+	golang.org/x/term v0.40.0
 	google.golang.org/grpc v1.78.0
 	gotest.tools/v3 v3.5.2
 	maunium.net/go/mautrix v0.26.2
-	modernc.org/sqlite v1.44.3
+	modernc.org/sqlite v1.45.0
 )
 
 require (
