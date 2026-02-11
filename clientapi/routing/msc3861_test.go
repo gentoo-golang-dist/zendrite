@@ -25,9 +25,13 @@ import (
 )
 
 // setupMSC3861Routers creates a full router stack with MSC3861 enabled for testing.
-func setupMSC3861Routers(t *testing.T, dbType test.DBType) (httputil.Routers, *config.Dendrite, func()) {
+// These tests only verify HTTP routing behavior (status codes, response bodies),
+// not database semantics, so we always use SQLite to avoid the shared-postgres
+// schema race that occurs when multiple parallel subtests DROP SCHEMA on the
+// same CI database.
+func setupMSC3861Routers(t *testing.T) (httputil.Routers, *config.Dendrite, func()) {
 	t.Helper()
-	cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
 	cfg.ClientAPI.RateLimiting.Enabled = false
 	cfg.MSCs.MSCs = []string{"msc3861"}
 	cfg.MSCs.MSC3861 = config.MSC3861Config{
@@ -75,125 +79,115 @@ func TestMSC3861_DisabledEndpoints(t *testing.T) {
 		{"login POST", http.MethodPost, "/_matrix/client/v3/login"},
 	}
 
-	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
-		routers, _, closeDB := setupMSC3861Routers(t, dbType)
-		defer closeDB()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
 
-		for _, ep := range endpoints {
-			t.Run(ep.name, func(t *testing.T) {
-				req := test.NewRequest(t, ep.method, ep.path)
-				rec := httptest.NewRecorder()
-				routers.Client.ServeHTTP(rec, req)
-				if rec.Code != http.StatusForbidden {
-					t.Errorf("%s %s: expected 403, got %d: %s", ep.method, ep.path, rec.Code, rec.Body.String())
-				}
+	for _, ep := range endpoints {
+		t.Run(ep.name, func(t *testing.T) {
+			req := test.NewRequest(t, ep.method, ep.path)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("%s %s: expected 403, got %d: %s", ep.method, ep.path, rec.Code, rec.Body.String())
+			}
 
-				var body map[string]any
-				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-					t.Fatalf("failed to parse response: %v", err)
-				}
-				if errcode, ok := body["errcode"].(string); !ok || errcode != string(spec.ErrorForbidden) {
-					t.Errorf("expected errcode %s, got %v", spec.ErrorForbidden, body["errcode"])
-				}
-			})
-		}
-	})
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+			if errcode, ok := body["errcode"].(string); !ok || errcode != string(spec.ErrorForbidden) {
+				t.Errorf("expected errcode %s, got %v", spec.ErrorForbidden, body["errcode"])
+			}
+		})
+	}
 }
 
 func TestMSC3861_LoginFlowsGET(t *testing.T) {
 	t.Parallel()
-	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
-		routers, _, closeDB := setupMSC3861Routers(t, dbType)
-		defer closeDB()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
 
-		req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login")
-		rec := httptest.NewRecorder()
-		routers.Client.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-		}
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
 
-		var resp struct {
-			Flows []map[string]string `json:"flows"`
-		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to parse response: %v", err)
-		}
-		if len(resp.Flows) != 1 {
-			t.Fatalf("expected 1 flow, got %d: %+v", len(resp.Flows), resp.Flows)
-		}
-		if resp.Flows[0]["type"] != "m.login.sso" {
-			t.Errorf("expected m.login.sso flow, got %s", resp.Flows[0]["type"])
-		}
-	})
+	var resp struct {
+		Flows []map[string]string `json:"flows"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(resp.Flows) != 1 {
+		t.Fatalf("expected 1 flow, got %d: %+v", len(resp.Flows), resp.Flows)
+	}
+	if resp.Flows[0]["type"] != "m.login.sso" {
+		t.Errorf("expected m.login.sso flow, got %s", resp.Flows[0]["type"])
+	}
 }
 
 func TestMSC3861_LoginPOST(t *testing.T) {
 	t.Parallel()
-	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
-		routers, _, closeDB := setupMSC3861Routers(t, dbType)
-		defer closeDB()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
 
-		req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/login")
-		rec := httptest.NewRecorder()
-		routers.Client.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
-		}
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/login")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
 
-		var body map[string]any
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-			t.Fatalf("failed to parse response: %v", err)
-		}
-		if errcode, ok := body["errcode"].(string); !ok || errcode != string(spec.ErrorForbidden) {
-			t.Errorf("expected errcode %s, got %v", spec.ErrorForbidden, body["errcode"])
-		}
-	})
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if errcode, ok := body["errcode"].(string); !ok || errcode != string(spec.ErrorForbidden) {
+		t.Errorf("expected errcode %s, got %v", spec.ErrorForbidden, body["errcode"])
+	}
 }
 
 func TestMSC3861_WellKnown(t *testing.T) {
 	t.Parallel()
-	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
-		routers, cfg, closeDB := setupMSC3861Routers(t, dbType)
-		defer closeDB()
+	routers, cfg, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
 
-		req := test.NewRequest(t, http.MethodGet, "/.well-known/matrix/client")
-		rec := httptest.NewRecorder()
-		routers.WellKnown.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-		}
+	req := test.NewRequest(t, http.MethodGet, "/.well-known/matrix/client")
+	rec := httptest.NewRecorder()
+	routers.WellKnown.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
 
-		var resp WellKnownClientResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to parse response: %v", err)
-		}
-		if resp.Authentication == nil {
-			t.Fatal("expected m.authentication in well-known response")
-		}
-		if resp.Authentication.Issuer != cfg.MSCs.MSC3861.Issuer {
-			t.Errorf("expected issuer %s, got %s", cfg.MSCs.MSC3861.Issuer, resp.Authentication.Issuer)
-		}
-		if resp.Authentication.Account != cfg.MSCs.MSC3861.AccountManagementURL {
-			t.Errorf("expected account %s, got %s", cfg.MSCs.MSC3861.AccountManagementURL, resp.Authentication.Account)
-		}
-	})
+	var resp WellKnownClientResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Authentication == nil {
+		t.Fatal("expected m.authentication in well-known response")
+	}
+	if resp.Authentication.Issuer != cfg.MSCs.MSC3861.Issuer {
+		t.Errorf("expected issuer %s, got %s", cfg.MSCs.MSC3861.Issuer, resp.Authentication.Issuer)
+	}
+	if resp.Authentication.Account != cfg.MSCs.MSC3861.AccountManagementURL {
+		t.Errorf("expected account %s, got %s", cfg.MSCs.MSC3861.AccountManagementURL, resp.Authentication.Account)
+	}
 }
 
 func TestMSC3861_DevicesGETStillWorks(t *testing.T) {
 	t.Parallel()
-	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
-		routers, _, closeDB := setupMSC3861Routers(t, dbType)
-		defer closeDB()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
 
-		// GET /devices should NOT be blocked by MSC3861 (only PUT/DELETE are blocked).
-		// Without auth it returns 401, not 403 — that proves the endpoint is still
-		// routed to the real handler rather than the forbidden handler.
-		req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/devices")
-		rec := httptest.NewRecorder()
-		routers.Client.ServeHTTP(rec, req)
-		if rec.Code == http.StatusForbidden {
-			t.Error("GET /devices should not be forbidden when MSC3861 is enabled")
-		}
-	})
+	// GET /devices should NOT be blocked by MSC3861 (only PUT/DELETE are blocked).
+	// Without auth it returns 401, not 403 — that proves the endpoint is still
+	// routed to the real handler rather than the forbidden handler.
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/devices")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code == http.StatusForbidden {
+		t.Error("GET /devices should not be forbidden when MSC3861 is enabled")
+	}
 }
