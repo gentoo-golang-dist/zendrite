@@ -143,28 +143,29 @@ jobs:
   bump-helm:
     name: Bump Helm chart appVersion
     runs-on: ubuntu-latest
+    container: cr.codefloe.com/docker.io/alpine:3
     needs: release
     steps:
-      - name: Bump appVersion in helm-dendrite
-        uses: docker://ghcr.io/appleboy/drone-ssh
+      - name: Clone helm-dendrite and update appVersion
         env:
-          PLUGIN_HOST: ${{ secrets.SSH_HOST }}
-          PLUGIN_USERNAME: ${{ secrets.SSH_USERNAME }}
-          PLUGIN_KEY: ${{ secrets.SSH_KEY }}
-          PLUGIN_PORT: ${{ secrets.SSH_PORT }}
-          PLUGIN_ENVS: 'APP_VERSION,FORGEJO_TOKEN'
-          APP_VERSION: ${{ github.ref_name }}
           FORGEJO_TOKEN: ${{ secrets.ISSUE_TOKEN }}
-          PLUGIN_SCRIPT: |
-            set -e
-            APP_VERSION="${APP_VERSION#v}"
-            REPO_DIR=$(mktemp -d)
-            git clone "https://pat-s:${FORGEJO_TOKEN}@codefloe.com/devxy/helm-dendrite.git" "$REPO_DIR"
-            cd "$REPO_DIR"
-            sed -i "s/^appVersion: .*/appVersion: ${APP_VERSION}/" charts/dendrite/Chart.yaml
-            git config user.name "pat-s"
-            git config user.email "patrick.schratz@gmail.com"
-            git add charts/dendrite/Chart.yaml
-            git commit -m "chore(deps): bump dendrite appVersion to ${APP_VERSION}"
-            git push
-            rm -rf "$REPO_DIR"
+        run: |
+          set -e
+          apk add --no-cache git sed
+          APP_VERSION="${GITHUB_REF_NAME#v}"
+          git clone "https://pat-s:${FORGEJO_TOKEN}@codefloe.com/devxy/helm-dendrite.git" helm-dendrite
+          cd helm-dendrite
+          sed -i "s/^appVersion: .*/appVersion: ${APP_VERSION}/" charts/dendrite/Chart.yaml
+          git config user.name "pat-s"
+          git config user.email "patrick.schratz@gmail.com"
+          git add charts/dendrite/Chart.yaml
+          git commit -m "chore(deps): bump dendrite appVersion to ${APP_VERSION}"
+
+      - name: Push changes
+        uses: docker://ghcr.io/appleboy/drone-git-push
+        env:
+          PLUGIN_BRANCH: main
+          PLUGIN_REMOTE: https://pat-s:${{ secrets.ISSUE_TOKEN }}@codefloe.com/devxy/helm-dendrite.git
+          PLUGIN_PATH: helm-dendrite
+          PLUGIN_COMMIT: false
+          PLUGIN_FORCE: false
