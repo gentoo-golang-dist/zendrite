@@ -143,29 +143,20 @@ jobs:
   bump-helm:
     name: Bump Helm chart appVersion
     runs-on: ubuntu-latest
-    container: cr.codefloe.com/docker.io/alpine:3
     needs: release
     steps:
-      - name: Clone helm-dendrite and update appVersion
-        env:
-          FORGEJO_TOKEN: ${{ secrets.ISSUE_TOKEN }}
+      - name: Checkout helm-dendrite
+        uses: actions/checkout@v6
+        with:
+          repository: devxy/helm-dendrite
+          token: ${{ secrets.ISSUE_TOKEN }}
+
+      - name: Update appVersion and push
         run: |
-          set -e
-          apk add --no-cache git sed
-          APP_VERSION="${GITHUB_REF_NAME#v}"
-          git clone "https://pat-s:${FORGEJO_TOKEN}@codefloe.com/devxy/helm-dendrite.git" helm-dendrite
-          cd helm-dendrite
-          sed -i "s/^appVersion: .*/appVersion: ${APP_VERSION}/" charts/dendrite/Chart.yaml
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^appVersion: .*/appVersion: ${VERSION}/" charts/dendrite/Chart.yaml
           git config user.name "pat-s"
           git config user.email "patrick.schratz@gmail.com"
           git add charts/dendrite/Chart.yaml
-          git commit -m "chore(deps): bump dendrite appVersion to ${APP_VERSION}"
-
-      - name: Push changes
-        uses: docker://ghcr.io/appleboy/drone-git-push
-        env:
-          PLUGIN_BRANCH: main
-          PLUGIN_REMOTE: https://pat-s:${{ secrets.ISSUE_TOKEN }}@codefloe.com/devxy/helm-dendrite.git
-          PLUGIN_PATH: helm-dendrite
-          PLUGIN_COMMIT: false
-          PLUGIN_FORCE: false
+          git commit -m "chore(deps): bump dendrite appVersion to ${VERSION}"
+          git push
