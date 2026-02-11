@@ -139,3 +139,32 @@ jobs:
           done
 
           echo "Release created: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/$TAG"
+
+  bump-helm:
+    name: Bump Helm chart appVersion
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: Bump appVersion in helm-dendrite
+        uses: docker://ghcr.io/appleboy/drone-ssh
+        env:
+          PLUGIN_HOST: ${{ secrets.SSH_HOST }}
+          PLUGIN_USERNAME: ${{ secrets.SSH_USERNAME }}
+          PLUGIN_KEY: ${{ secrets.SSH_KEY }}
+          PLUGIN_PORT: ${{ secrets.SSH_PORT }}
+          PLUGIN_ENVS: 'APP_VERSION,FORGEJO_TOKEN'
+          APP_VERSION: ${{ github.ref_name }}
+          FORGEJO_TOKEN: ${{ secrets.ISSUE_TOKEN }}
+          PLUGIN_SCRIPT: |
+            set -e
+            APP_VERSION="${APP_VERSION#v}"
+            REPO_DIR=$(mktemp -d)
+            git clone "https://pat-s:${FORGEJO_TOKEN}@codefloe.com/devxy/helm-dendrite.git" "$REPO_DIR"
+            cd "$REPO_DIR"
+            sed -i "s/^appVersion: .*/appVersion: ${APP_VERSION}/" charts/dendrite/Chart.yaml
+            git config user.name "pat-s"
+            git config user.email "patrick.schratz@gmail.com"
+            git add charts/dendrite/Chart.yaml
+            git commit -m "chore(deps): bump dendrite appVersion to ${APP_VERSION}"
+            git push
+            rm -rf "$REPO_DIR"
