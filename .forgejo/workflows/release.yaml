@@ -149,7 +149,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: devxy/helm-dendrite
-          token: ${{ secrets.ISSUE_TOKEN }}
+          ssh-key: ${{ secrets.HELM_DEPLOY_KEY }}
 
       - name: Update appVersion and push
         run: |
