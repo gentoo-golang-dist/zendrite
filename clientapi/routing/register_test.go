@@ -649,10 +649,7 @@ func TestRegisterAdminUsingSharedSecret(t *testing.T) {
 		_, err = r.IsValidMacLogin(req.Nonce, req.User, req.Password, req.Admin, req.MacBytes)
 		assert.NoError(t, err)
 
-		body := &bytes.Buffer{}
-		err = json.NewEncoder(body).Encode(req)
-		assert.NoError(t, err)
-		ssrr := httptest.NewRequest(http.MethodPost, "/", body)
+		ssrr := httptest.NewRequest(http.MethodPost, "/", bytes.NewBuffer(jsonStr))
 
 		response := handleSharedSecretRegistration(
 			&cfg.ClientAPI,
@@ -663,7 +660,8 @@ func TestRegisterAdminUsingSharedSecret(t *testing.T) {
 		assert.Equal(t, http.StatusOK, response.Code)
 
 		profile, err := userAPI.QueryProfile(processCtx.Context(), "@alice:server")
-		assert.NoError(t, err)
-		assert.Equal(t, expectedDisplayName, profile.DisplayName)
+		if assert.NoError(t, err) {
+			assert.Equal(t, expectedDisplayName, profile.DisplayName)
+		}
 	})
 }
