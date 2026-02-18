@@ -2,8 +2,6 @@ package routing
 
 import (
 	"bytes"
-	"encoding/hex"
-	"fmt"
 	"io"
 	"testing"
 
@@ -11,19 +9,13 @@ import (
 )
 
 func TestSharedSecretRegister(t *testing.T) {
-	// these values have come from a local synapse instance to ensure compatibility
-	jsonStr := []byte(`{"admin":false,"mac":"f1ba8d37123866fd659b40de4bad9b0f8965c565","nonce":"759f047f312b99ff428b21d581256f8592b8976e58bc1b543972dc6147e529a79657605b52d7becd160ff5137f3de11975684319187e06901955f79e5a6c5a79","password":"wonderland","username":"alice","displayname":"rabbit"}`)
+	jsonStr := []byte(`{"admin":false,"mac":"7fdf82d4a424cd7aeee3d159a29a10c5b7410984","nonce":"759f047f312b99ff428b21d581256f8592b8976e58bc1b543972dc6147e529a79657605b52d7becd160ff5137f3de11975684319187e06901955f79e5a6c5a79","password":"wonderland","username":"alice","displayname":"rabbit"}`)
 	sharedSecret := "zendritetest"
 
 	req, err := NewSharedSecretRegistrationRequest(io.NopCloser(bytes.NewBuffer(jsonStr)))
 	if err != nil {
 		t.Fatalf("failed to read request: %s", err)
 	}
-
-	t.Logf("DEBUG parsed fields: User=%q Password=%q Admin=%v Nonce=%q MacStr=%q MacBytes=%s",
-		req.User, req.Password, req.Admin, req.Nonce, req.MacStr, hex.EncodeToString(req.MacBytes))
-	t.Logf("DEBUG json input: %s", jsonStr)
-	t.Logf("DEBUG Go version: %s", fmt.Sprintf("%v", req))
 
 	r := NewSharedSecretRegistration(sharedSecret)
 
