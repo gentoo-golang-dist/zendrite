@@ -120,6 +120,6 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-go 1.25.0
+go 1.26.0
 
-toolchain go1.25.7
+toolchain go1.26.0
