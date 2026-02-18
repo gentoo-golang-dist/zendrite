@@ -103,7 +103,14 @@ func TestNewInviteResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if string(j) != expected {
+	var gotJSON, expectedJSON any
+	if err := json.Unmarshal(j, &gotJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(expected), &expectedJSON); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotJSON, expectedJSON) {
 		t.Fatalf("Invite response didn't contain correct info, \nexpected: %s \ngot: %s", expected, string(j))
 	}
 }
