@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path"
 	"reflect"
 	"regexp"
@@ -213,8 +214,10 @@ func TestAppserviceInternalAPI_UnixSocket_Simple(t *testing.T) {
 		}
 	}))
 
-	tmpDir := t.TempDir()
-	socket := path.Join(tmpDir, "socket")
+	tmpDir, err := os.MkdirTemp("/tmp", "as-sock-") //nolint:usetesting // t.TempDir() path exceeds macOS Unix socket limit
+	assert.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	socket := path.Join(tmpDir, "s")
 	l, err := net.Listen("unix", socket)
 	assert.NoError(t, err)
 	_ = srv.Listener.Close()
