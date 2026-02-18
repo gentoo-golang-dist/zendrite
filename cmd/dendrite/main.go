@@ -15,20 +15,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
-	"codefloe.com/pat-s/dendrite/appservice"
-	"codefloe.com/pat-s/dendrite/federationapi"
-	"codefloe.com/pat-s/dendrite/internal"
-	"codefloe.com/pat-s/dendrite/internal/caching"
-	"codefloe.com/pat-s/dendrite/internal/httputil"
-	"codefloe.com/pat-s/dendrite/internal/sqlutil"
-	"codefloe.com/pat-s/dendrite/roomserver"
-	"codefloe.com/pat-s/dendrite/setup"
-	basepkg "codefloe.com/pat-s/dendrite/setup/base"
-	"codefloe.com/pat-s/dendrite/setup/config"
-	"codefloe.com/pat-s/dendrite/setup/jetstream"
-	"codefloe.com/pat-s/dendrite/setup/mscs"
-	"codefloe.com/pat-s/dendrite/setup/process"
-	"codefloe.com/pat-s/dendrite/userapi"
+	"codefloe.com/pat-s/zendrite/appservice"
+	"codefloe.com/pat-s/zendrite/federationapi"
+	"codefloe.com/pat-s/zendrite/internal"
+	"codefloe.com/pat-s/zendrite/internal/caching"
+	"codefloe.com/pat-s/zendrite/internal/httputil"
+	"codefloe.com/pat-s/zendrite/internal/sqlutil"
+	"codefloe.com/pat-s/zendrite/roomserver"
+	"codefloe.com/pat-s/zendrite/setup"
+	basepkg "codefloe.com/pat-s/zendrite/setup/base"
+	"codefloe.com/pat-s/zendrite/setup/config"
+	"codefloe.com/pat-s/zendrite/setup/jetstream"
+	"codefloe.com/pat-s/zendrite/setup/mscs"
+	"codefloe.com/pat-s/zendrite/setup/process"
+	"codefloe.com/pat-s/zendrite/userapi"
 )
 
 var (
@@ -83,7 +83,7 @@ func main() {
 
 	basepkg.PlatformSanityChecks()
 
-	logrus.Infof("Dendrite version %s", internal.VersionString())
+	logrus.Infof("Zendrite version %s", internal.VersionString())
 	if !cfg.ClientAPI.RegistrationDisabled && cfg.ClientAPI.OpenRegistrationWithoutVerificationEnabled {
 		logrus.Warn("Open registration is enabled")
 	}
