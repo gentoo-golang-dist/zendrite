@@ -2,6 +2,8 @@ package routing
 
 import (
 	"bytes"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"testing"
 
@@ -17,6 +19,11 @@ func TestSharedSecretRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read request: %s", err)
 	}
+
+	t.Logf("DEBUG parsed fields: User=%q Password=%q Admin=%v Nonce=%q MacStr=%q MacBytes=%s",
+		req.User, req.Password, req.Admin, req.Nonce, req.MacStr, hex.EncodeToString(req.MacBytes))
+	t.Logf("DEBUG json input: %s", jsonStr)
+	t.Logf("DEBUG Go version: %s", fmt.Sprintf("%v", req))
 
 	r := NewSharedSecretRegistration(sharedSecret)
 

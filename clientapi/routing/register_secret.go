@@ -100,5 +100,9 @@ func (r *SharedSecretRegistration) IsValidMacLogin(
 	}
 	expectedMAC := mac.Sum(nil)
 
+	// TODO: remove debug logging
+	fmt.Printf("DEBUG IsValidMacLogin: nonce=%q user=%q pass=%q admin=%v\n", nonce, username, password, isAdmin)
+	fmt.Printf("DEBUG IsValidMacLogin: givenMac=%x expectedMAC=%x equal=%v\n", givenMac, expectedMAC, hmac.Equal(givenMac, expectedMAC))
+
 	return hmac.Equal(givenMac, expectedMAC), nil
 }
