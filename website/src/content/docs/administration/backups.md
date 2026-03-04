@@ -1,16 +1,29 @@
 ---
 title: Backups
-description: Making backups in Zendrite
+description: What to back up for a Zendrite homeserver
 ---
 
-If you want to keep a backup of your server's data in Zendrite, then you will want to know which data and files to backup. This is also useful if you wanted to transfer to a new server running Zendrite.
+This page lists the persistent data that should be included in your backup strategy.
+The same list is useful when migrating Zendrite to a new server.
 
-## Data to backup
+## Configuration
 
-The following is a list of the data you will need to backup:
-- matrix-key.pem
-- zendrite.yaml
-- your server's postgres or sqlite DB
-- the jetstream directory
-- the media store
-- the search index (although this can be regenerated)
+- **Server signing key** (`matrix_key.pem` by default, controlled by the `global.private_key` setting).
+  Losing this key means other servers can no longer verify events your server has already signed. **This is the most critical item to preserve.**
+  If you have rotated keys, also back up any files listed under `global.old_private_keys`.
+- **Zendrite configuration file** (`zendrite.yaml` or equivalent).
+
+## Database
+
+- **PostgreSQL** or **SQLite** database(s) as configured in the `global.database` section (or the per-component `database` blocks when using SQLite).
+  For PostgreSQL, use `pg_dump` or a filesystem-level snapshot to get a consistent backup while the server is running.
+  For SQLite, stop Zendrite before copying the database files to avoid corruption.
+
+## Persistent directories
+
+- **JetStream storage** — the directory set by `global.jetstream.storage_path` (default `./`).
+  This contains NATS JetStream streams used for inter-component messaging. Without it, some in-flight events may be lost on restore.
+- **Media store** — the directory set by `media_api.base_path` (default `./media_store`).
+  Contains all uploaded and cached remote media.
+- **Search index** — the directory set by `search.index_path` (default `./searchindex`).
+  This can be regenerated from the database by doing a full re-index, so backing it up is optional but saves time on restore.
