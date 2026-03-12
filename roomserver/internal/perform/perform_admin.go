@@ -242,6 +242,14 @@ func (r *Admin) PerformAdminDownloadState(
 		return err
 	}
 
+	// Resolve forward extremities: replace any local-only
+	// org.matrix.zendrite.state_download events (from previous runs) with
+	// their prev events, which the remote server will actually know about.
+	fwdExtremities, err = r.resolveLocalExtremities(ctx, roomInfo, fwdExtremities)
+	if err != nil {
+		return fmt.Errorf("resolveLocalExtremities: %w", err)
+	}
+
 	authEventMap := map[string]gomatrixserverlib.PDU{}
 	stateEventMap := map[string]gomatrixserverlib.PDU{}
 
@@ -249,15 +257,7 @@ func (r *Admin) PerformAdminDownloadState(
 		var state gomatrixserverlib.StateResponse
 		state, err = r.Inputer.FSAPI.LookupState(ctx, r.Inputer.ServerName, serverName, roomID, fwdExtremity, roomInfo.RoomVersion)
 		if err != nil {
-			// The remote server may not know about local-only events (e.g.
-			// org.matrix.zendrite.state_download from a previous run). Skip
-			// unknown extremities and continue with the rest.
-			logrus.WithError(err).WithFields(logrus.Fields{
-				"room_id":       roomID,
-				"fwd_extremity": fwdExtremity,
-				"remote_server": serverName,
-			}).Warn("Failed to look up state at forward extremity, skipping")
-			continue
+			return fmt.Errorf("r.Inputer.FSAPI.LookupState (%q): %w", fwdExtremity, err)
 		}
 		for _, authEvent := range state.GetAuthEvents().UntrustedEvents(roomInfo.RoomVersion) {
 			if err = gomatrixserverlib.VerifyEventSignatures(ctx, authEvent, r.Inputer.KeyRing, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
@@ -275,10 +275,6 @@ func (r *Admin) PerformAdminDownloadState(
 			}
 			stateEventMap[stateEvent.EventID()] = stateEvent
 		}
-	}
-
-	if len(stateEventMap) == 0 {
-		return fmt.Errorf("failed to retrieve state from %s for any forward extremity in room %s", serverName, roomID)
 	}
 
 	authEvents := make([]*types.HeaderedEvent, 0, len(authEventMap))
@@ -366,6 +362,31 @@ func (r *Admin) PerformAdminDownloadState(
 	}
 
 	return nil
+}
+
+// resolveLocalExtremities replaces any org.matrix.zendrite.state_download
+// forward extremities with their prev events. These marker events are
+// local-only and unknown to remote servers, so we need to look through them
+// to find the real events that remote servers can provide state for.
+func (r *Admin) resolveLocalExtremities(ctx context.Context, roomInfo *types.RoomInfo, extremities []string) ([]string, error) {
+	events, err := r.DB.EventsFromIDs(ctx, roomInfo, extremities)
+	if err != nil {
+		return nil, err
+	}
+
+	resolved := make([]string, 0, len(extremities))
+	for _, ev := range events {
+		if ev.Type() == "org.matrix.zendrite.state_download" {
+			resolved = append(resolved, ev.PrevEventIDs()...)
+		} else {
+			resolved = append(resolved, ev.EventID())
+		}
+	}
+
+	if len(resolved) == 0 {
+		return nil, fmt.Errorf("no usable forward extremities found in room %d", roomInfo.RoomNID)
+	}
+	return resolved, nil
 }
 
 func (r *Admin) PerformAdminDeleteEventReport(ctx context.Context, reportID uint64) error {
