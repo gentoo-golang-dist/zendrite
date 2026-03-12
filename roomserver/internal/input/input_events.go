@@ -94,6 +94,12 @@ func (r *Inputer) processRoomEvent(
 		}).Observe(float64(timetaken.Milliseconds()))
 	}()
 
+	// SkipEventAuth is only safe for events that won't be federated, to avoid
+	// causing state divergence or breaking federation in a room.
+	if input.SkipEventAuth && input.SendAsServer != api.DoNotSendToOtherServers {
+		return fmt.Errorf("SkipEventAuth is only allowed for events that are not sent to other servers")
+	}
+
 	// Parse and validate the event JSON
 	headered := input.Event
 	event := headered.PDU
@@ -404,9 +410,9 @@ func (r *Inputer) processRoomEvent(
 	// Get the state before the event so that we can work out if the event was
 	// allowed at the time, and also to get the history visibility. We won't
 	// bother doing this if the event was already rejected as it just ends up
-	// burning CPU time.
+	// burning CPU time. Also skip for SkipEventAuth events (admin operations).
 	historyVisibility := gomatrixserverlib.HistoryVisibilityShared // Default to shared.
-	if input.Kind != api.KindOutlier && rejectionErr == nil && !isRejected && !isCreateEvent {
+	if input.Kind != api.KindOutlier && rejectionErr == nil && !isRejected && !isCreateEvent && !input.SkipEventAuth {
 		historyVisibility, rejectionErr, err = r.processStateBefore(ctx, roomInfo, input, missingPrev, isPartialState)
 		if err != nil {
 			return fmt.Errorf("r.processStateBefore: %w", err)
