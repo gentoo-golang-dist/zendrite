@@ -288,12 +288,16 @@ func (r *Admin) PerformAdminDownloadState(
 	senderID, err := r.Queryer.QuerySenderIDForUser(ctx, *validRoomID, *fullUserID)
 	if err != nil {
 		return err
-	} else if senderID == nil {
-		return fmt.Errorf("sender ID not found for %s in %s", *fullUserID, *validRoomID)
+	}
+	// Fall back to the user ID as sender if no sender ID mapping exists
+	// (e.g. admin is not a member of the room).
+	senderIDStr := userID
+	if senderID != nil {
+		senderIDStr = string(*senderID)
 	}
 	proto := &gomatrixserverlib.ProtoEvent{
 		Type:     "org.matrix.zendrite.state_download",
-		SenderID: string(*senderID),
+		SenderID: senderIDStr,
 		RoomID:   roomID,
 		Content:  spec.RawJSON("{}"),
 	}
@@ -339,7 +343,8 @@ func (r *Admin) PerformAdminDownloadState(
 		Origin:        r.Cfg.Matrix.ServerName,
 		HasState:      true,
 		StateEventIDs: stateIDs,
-		SendAsServer:  string(r.Cfg.Matrix.ServerName),
+		SendAsServer:  api.DoNotSendToOtherServers,
+		SkipEventAuth: true,
 	})
 
 	r.Inputer.InputRoomEvents(ctx, inputReq, inputRes)

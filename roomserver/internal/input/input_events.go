@@ -235,18 +235,21 @@ func (r *Inputer) processRoomEvent(
 
 	// Check if the event is allowed by its auth events. If it isn't then
 	// we consider the event to be "rejected" — it will still be persisted.
-	if err = gomatrixserverlib.Allowed(event, authEvents, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
-		return r.Queryer.QueryUserIDForSender(ctx, roomID, senderID)
-	}); err != nil {
-		// During partial state (MSC3706 faster joins), we may be missing member events
-		// that would authorize this event. In this case, we accept the event provisionally
-		// rather than rejecting it. The full state resync will validate events properly.
-		if hasPartialState {
-			logger.WithError(err).Debugf("Event %s failed auth during partial state, accepting provisionally", event.EventID())
-		} else {
-			isRejected = true
-			rejectionErr = err
-			logger.WithError(rejectionErr).Warnf("Event %s not allowed by auth events", event.EventID())
+	// Skip this check for admin operations that set SkipEventAuth.
+	if !input.SkipEventAuth {
+		if err = gomatrixserverlib.Allowed(event, authEvents, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
+			return r.Queryer.QueryUserIDForSender(ctx, roomID, senderID)
+		}); err != nil {
+			// During partial state (MSC3706 faster joins), we may be missing member events
+			// that would authorize this event. In this case, we accept the event provisionally
+			// rather than rejecting it. The full state resync will validate events properly.
+			if hasPartialState {
+				logger.WithError(err).Debugf("Event %s failed auth during partial state, accepting provisionally", event.EventID())
+			} else {
+				isRejected = true
+				rejectionErr = err
+				logger.WithError(rejectionErr).Warnf("Event %s not allowed by auth events", event.EventID())
+			}
 		}
 	}
 
@@ -389,7 +392,7 @@ func (r *Inputer) processRoomEvent(
 		isPartialState, _ = r.DB.IsRoomPartialState(ctx, roomInfo.RoomNID)
 	}
 
-	if input.Kind == api.KindNew && !isCreateEvent && !isPartialState {
+	if input.Kind == api.KindNew && !isCreateEvent && !isPartialState && !input.SkipEventAuth {
 		// Check that the event passes authentication checks based on the
 		// current room state. Skip this for partial state rooms per MSC3706.
 		softfail, err = helpers.CheckForSoftFail(ctx, r.DB, roomInfo, headered, input.StateEventIDs, r.Queryer)
