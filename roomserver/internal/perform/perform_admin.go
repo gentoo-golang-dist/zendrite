@@ -249,7 +249,15 @@ func (r *Admin) PerformAdminDownloadState(
 		var state gomatrixserverlib.StateResponse
 		state, err = r.Inputer.FSAPI.LookupState(ctx, r.Inputer.ServerName, serverName, roomID, fwdExtremity, roomInfo.RoomVersion)
 		if err != nil {
-			return fmt.Errorf("r.Inputer.FSAPI.LookupState (%q): %w", fwdExtremity, err)
+			// The remote server may not know about local-only events (e.g.
+			// org.matrix.zendrite.state_download from a previous run). Skip
+			// unknown extremities and continue with the rest.
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"room_id":       roomID,
+				"fwd_extremity": fwdExtremity,
+				"remote_server": serverName,
+			}).Warn("Failed to look up state at forward extremity, skipping")
+			continue
 		}
 		for _, authEvent := range state.GetAuthEvents().UntrustedEvents(roomInfo.RoomVersion) {
 			if err = gomatrixserverlib.VerifyEventSignatures(ctx, authEvent, r.Inputer.KeyRing, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
@@ -267,6 +275,10 @@ func (r *Admin) PerformAdminDownloadState(
 			}
 			stateEventMap[stateEvent.EventID()] = stateEvent
 		}
+	}
+
+	if len(stateEventMap) == 0 {
+		return fmt.Errorf("failed to retrieve state from %s for any forward extremity in room %s", serverName, roomID)
 	}
 
 	authEvents := make([]*types.HeaderedEvent, 0, len(authEventMap))
