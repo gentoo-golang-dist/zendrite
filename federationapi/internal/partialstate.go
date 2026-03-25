@@ -533,19 +533,21 @@ func (w *PartialStateWorker) fetchMissingEventsParallel(
 		}
 		wg.Wait()
 
-		// Store this batch as outliers.
+		// Store this batch as outliers in a single InputRoomEvents call.
+		outlierInputs := make([]roomserverAPI.InputRoomEvent, 0, len(batchEvents))
 		for _, ev := range batchEvents {
-			var ires roomserverAPI.InputRoomEventsResponse
-			w.rsAPI.InputRoomEvents(ctx, &roomserverAPI.InputRoomEventsRequest{
-				InputRoomEvents: []roomserverAPI.InputRoomEvent{{
-					Kind:   roomserverAPI.KindOutlier,
-					Event:  &types.HeaderedEvent{PDU: ev},
-					Origin: origin,
-				}},
-			}, &ires)
-			if ires.ErrMsg != "" {
-				logger.WithField("event_id", ev.EventID()).WithField("error", ires.ErrMsg).Warn("Failed to store outlier event")
-			}
+			outlierInputs = append(outlierInputs, roomserverAPI.InputRoomEvent{
+				Kind:   roomserverAPI.KindOutlier,
+				Event:  &types.HeaderedEvent{PDU: ev},
+				Origin: origin,
+			})
+		}
+		var ires roomserverAPI.InputRoomEventsResponse
+		w.rsAPI.InputRoomEvents(ctx, &roomserverAPI.InputRoomEventsRequest{
+			InputRoomEvents: outlierInputs,
+		}, &ires)
+		if ires.ErrMsg != "" {
+			logger.WithField("error", ires.ErrMsg).Warn("Failed to store outlier events batch")
 		}
 		batchEvents = nil // Release memory before next batch.
 	}
