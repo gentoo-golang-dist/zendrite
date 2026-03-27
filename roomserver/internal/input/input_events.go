@@ -258,9 +258,16 @@ func (r *Inputer) processRoomEvent(
 
 	// Check that the auth events of the event are known.
 	// If they aren't then we will ask the federation API for them.
+	// During partial state download (MSC3706), skip federation auth fetching for
+	// outlier events. The partial state worker fetches auth events as part of the
+	// /state_ids response and stores them alongside state events. Fetching auth
+	// per-event here causes rate-limiting storms against the origin server, leading
+	// to multi-minute stalls between batch processing.
 	authEvents, _ := gomatrixserverlib.NewAuthEvents(nil)
 	knownEvents := map[string]*types.Event{}
-	if err = r.fetchAuthEvents(ctx, logger, roomInfo, virtualHost, headered, authEvents, knownEvents, serverRes.ServerNames); err != nil {
+	if hasPartialState && input.Kind == api.KindOutlier {
+		logger.Debugf("Skipping federation auth fetch for outlier %s (partial state active)", event.EventID())
+	} else if err = r.fetchAuthEvents(ctx, logger, roomInfo, virtualHost, headered, authEvents, knownEvents, serverRes.ServerNames); err != nil {
 		return fmt.Errorf("r.fetchAuthEvents: %w", err)
 	}
 
