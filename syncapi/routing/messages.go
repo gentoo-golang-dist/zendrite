@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"path"
 	"sort"
 	"time"
 
@@ -539,6 +540,89 @@ func (e eventsByDepth) Swap(i, j int) {
 
 func (e eventsByDepth) Less(i, j int) bool {
 	return e[i].Depth() < e[j].Depth()
+}
+
+// matchesGlob reports whether name matches the glob pattern, where * matches
+// any sequence of characters. This implements Matrix filter wildcards per the
+// client-server API spec. Event types contain no '/' so path.Match's path
+// separator does not interfere with the match.
+func matchesGlob(pattern, name string) bool {
+	ok, _ := path.Match(pattern, name)
+	return ok
+}
+
+// filterHeaderedEvents filters events by the sender and type constraints in
+// filter, mirroring the SQL filtering applied to locally stored events.
+// Used to apply client-specified filters to backfilled events from federation,
+// which bypass the database query.
+func filterHeaderedEvents(events []*rstypes.HeaderedEvent, filter *synctypes.RoomEventFilter) []*rstypes.HeaderedEvent {
+	if filter == nil {
+		return events
+	}
+	if filter.Senders == nil && filter.NotSenders == nil && filter.Types == nil && filter.NotTypes == nil {
+		return events
+	}
+	filtered := make([]*rstypes.HeaderedEvent, 0, len(events))
+	for _, ev := range events {
+		sender := ev.UserID.String()
+
+		if filter.Senders != nil {
+			found := false
+			for _, s := range *filter.Senders {
+				if s == sender {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		if filter.NotSenders != nil {
+			excluded := false
+			for _, s := range *filter.NotSenders {
+				if s == sender {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
+				continue
+			}
+		}
+
+		eventType := ev.Type()
+
+		if filter.Types != nil {
+			matched := false
+			for _, pattern := range *filter.Types {
+				if matchesGlob(pattern, eventType) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+
+		if filter.NotTypes != nil {
+			excluded := false
+			for _, pattern := range *filter.NotTypes {
+				if matchesGlob(pattern, eventType) {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
+				continue
+			}
+		}
+
+		filtered = append(filtered, ev)
+	}
+	return filtered
 }
 
 // backfill performs a backfill request over the federation on another
