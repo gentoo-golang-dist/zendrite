@@ -481,6 +481,9 @@ func (r *messagesReq) handleEmptyEventsSlice() (
 			return
 		}
 		r.didBackfill = true
+		// Backfilled events come from federation and are not pre-filtered by the
+		// database query; apply the client's sender/type filter here.
+		events = filterHeaderedEvents(events, r.filter)
 	} else {
 		// If not, it means the slice was empty because we reached the room's
 		// creation, so return an empty slice.
@@ -531,6 +534,9 @@ func (r *messagesReq) handleNonEmptyEventsSlice(streamEvents []types.StreamEvent
 			return
 		}
 		r.didBackfill = true
+		// Backfilled events come from federation and are not pre-filtered by the
+		// database query; apply the client's sender/type filter here.
+		pdus = filterHeaderedEvents(pdus, r.filter)
 		// Append the PDUs to the list to send back to the client.
 		events = append(events, pdus...)
 	}
