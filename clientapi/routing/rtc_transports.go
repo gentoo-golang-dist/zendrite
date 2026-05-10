@@ -13,35 +13,19 @@ import (
 	"codefloe.com/pat-s/zendrite/setup/config"
 )
 
-// RTCTransport represents a transport in the response.
-type RTCTransport struct {
-	Type              string `json:"type"`
-	LiveKitServiceURL string `json:"livekit_service_url,omitempty"`
-}
-
 // RTCTransportsResponse represents the response for /rtc/transports.
 type RTCTransportsResponse struct {
-	RTCTransports []RTCTransport `json:"rtc_transports"`
+	RTCTransports []config.RTCFocus `json:"rtc_transports"`
 }
 
 // GetRTCTransports returns the list of MatrixRTC transports (MSC4143).
 func GetRTCTransports(rtcFoci []config.RTCFocus) util.JSONResponse {
-	transports := make([]RTCTransport, 0, len(rtcFoci))
-
-	for _, focus := range rtcFoci {
-		transport := RTCTransport{
-			Type: focus.Type,
-		}
-		if focus.LiveKit != nil {
-			transport.LiveKitServiceURL = focus.LiveKit.ServiceURL
-		}
-		transports = append(transports, transport)
+	transports := rtcFoci
+	if transports == nil {
+		transports = []config.RTCFocus{}
 	}
-
 	return util.JSONResponse{
 		Code: http.StatusOK,
-		JSON: RTCTransportsResponse{
-			RTCTransports: transports,
-		},
+		JSON: RTCTransportsResponse{RTCTransports: transports},
 	}
 }
