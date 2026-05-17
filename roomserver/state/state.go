@@ -59,7 +59,7 @@ func NewStateResolution(db StateResolutionStorage, roomInfo *types.RoomInfo, que
 type PowerLevelResolver interface {
 	Resolve(ctx context.Context, eventID string) (*gomatrixserverlib.PowerLevelContent, error)
 	// CreateEvent returns the m.room.create event from the state at eventID.
-	// Callers need this to evaluate privileged-creator power on v11+ rooms,
+	// Callers need this to evaluate privileged-creator power on v12+ rooms,
 	// where creators have implicit power but are not in m.room.power_levels.
 	CreateEvent(ctx context.Context, eventID string) (gomatrixserverlib.PDU, error)
 }

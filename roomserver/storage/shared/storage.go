@@ -1054,7 +1054,7 @@ func (d *EventDatabase) MaybeRedactEvent(
 			return err
 		}
 
-		// On v11+ rooms the room creator (and any additional_creators) has
+		// On v12+ rooms the room creator (and any additional_creators) has
 		// implicit infinite power and is not listed in m.room.power_levels.
 		isPrivilegedCreator := false
 		createEvent, createErr := plResolver.CreateEvent(ctx, redactionEvent.EventID())
@@ -1069,7 +1069,7 @@ func (d *EventDatabase) MaybeRedactEvent(
 		senderLevel := powerlevels.UserLevel(redactionEvent.SenderID())
 		switch {
 		case isPrivilegedCreator:
-			// The sender is a privileged creator (v11+); they have implicit power to redact.
+			// The sender is a privileged creator (v12+); they have implicit power to redact.
 		case senderLevel >= powerlevels.Redact:
 			// 1. The power level of the redaction event’s sender is greater than or equal to the redact level.
 		case sender1Domain != "" && sender2Domain != "" && sender1Domain == sender2Domain:
