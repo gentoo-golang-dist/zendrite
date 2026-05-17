@@ -107,7 +107,7 @@ func (p *StateResolution) Resolve(ctx context.Context, eventID string) (*gomatri
 			return nil, err
 		}
 		if len(createEvents) == 0 {
-			return nil, fmt.Errorf("no power_levels or create event in state at %s", eventID)
+			return nil, fmt.Errorf("create event NID %d not found in events table at %s", createNID, eventID)
 		}
 		createEvent := createEvents[0].PDU
 		auth, err := gomatrixserverlib.NewAuthEvents([]gomatrixserverlib.PDU{createEvent})

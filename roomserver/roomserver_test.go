@@ -640,7 +640,6 @@ func TestRedactionNoPowerLevels(t *testing.T) {
 					Redacts:    redactedEvent.EventID(),
 					Depth:      redactedEvent.Depth() + 1,
 					PrevEvents: []any{redactedEvent.EventID()},
-					Content:    map[string]any{"redacts": redactedEvent.EventID()},
 				})
 				room.InsertEvent(t, builderEv)
 			},
@@ -663,7 +662,6 @@ func TestRedactionNoPowerLevels(t *testing.T) {
 					Redacts:    redactedEvent.EventID(),
 					Depth:      redactedEvent.Depth() + 1,
 					PrevEvents: []any{redactedEvent.EventID()},
-					Content:    map[string]any{"redacts": redactedEvent.EventID()},
 				})
 				room.InsertEvent(t, builderEv)
 			},
