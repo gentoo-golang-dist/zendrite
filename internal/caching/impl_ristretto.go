@@ -73,10 +73,9 @@ func NewRistrettoCache(maxCost config.DataUnit, maxAge time.Duration, enableProm
 	}
 	return &Caches{
 		RoomVersions: &RistrettoCachePartition[string, gomatrixserverlib.RoomVersion]{ // room ID -> room version
-			cache:   cache,
-			Prefix:  roomVersionsCache,
-			Mutable: true, // must be unsettable on PurgeRoom so a rejoin doesn't see a stale version
-			MaxAge:  maxAge,
+			cache:  cache,
+			Prefix: roomVersionsCache,
+			MaxAge: maxAge,
 		},
 		ServerKeys: &RistrettoCachePartition[string, gomatrixserverlib.PublicKeyLookupResult]{ // server name -> server keys
 			cache:   cache,
@@ -91,10 +90,9 @@ func NewRistrettoCache(maxCost config.DataUnit, maxAge time.Duration, enableProm
 			MaxAge:  maxAge,
 		},
 		RoomServerRoomIDs: &RistrettoCachePartition[types.RoomNID, string]{ // room NID -> room ID
-			cache:   cache,
-			Prefix:  roomIDsCache,
-			Mutable: true, // must be unsettable on PurgeRoom; the old NID is gone forever
-			MaxAge:  maxAge,
+			cache:  cache,
+			Prefix: roomIDsCache,
+			MaxAge: maxAge,
 		},
 		RoomServerEvents: &RistrettoCostedCachePartition[int64, *types.HeaderedEvent]{ // event NID -> event
 			&RistrettoCachePartition[int64, *types.HeaderedEvent]{

@@ -337,16 +337,10 @@ func TestPurgeRoom(t *testing.T) {
 			t.Fatalf("expected invite event ID %s, got %s", inviteEvent.EventID(), inviteEventIDs[0])
 		}
 
-		// The earlier db.RoomInfo call should have warmed the room-keyed caches.
-		// Confirm so the post-purge assertions below are meaningful.
+		// The earlier db.RoomInfo call should have warmed the room ID -> NID
+		// cache; confirm so the post-purge assertion below is meaningful.
 		if nid, ok := caches.GetRoomServerRoomNID(room.ID); !ok || nid != existingRoomInfo.RoomNID {
 			t.Fatalf("expected RoomServerRoomNID cache to be warm before purge: got (%d, %v)", nid, ok)
-		}
-		if id, ok := caches.GetRoomServerRoomID(existingRoomInfo.RoomNID); !ok || id != room.ID {
-			t.Fatalf("expected RoomServerRoomID cache to be warm before purge: got (%q, %v)", id, ok)
-		}
-		if v, ok := caches.GetRoomVersion(room.ID); !ok || v != existingRoomInfo.RoomVersion {
-			t.Fatalf("expected RoomVersion cache to be warm before purge: got (%q, %v)", v, ok)
 		}
 
 		// purge the room from the database
@@ -383,16 +377,12 @@ func TestPurgeRoom(t *testing.T) {
 			t.Fatalf("expected room to not exist, but it does: %#v", roomInfo2)
 		}
 
-		// Room-keyed caches must be cleared so a rejoin of the same room ID
-		// does not see stale NID/version data.
+		// The room ID -> NID mapping must be cleared so a rejoin of the same
+		// room ID re-binds to a freshly-allocated NID instead of the dead one.
+		// Other room-keyed caches (RoomVersion, NID -> roomID) hold spec-
+		// immutable values, so they're left to expire via TTL.
 		if nid, ok := caches.GetRoomServerRoomNID(room.ID); ok {
 			t.Fatalf("RoomServerRoomNID cache should be cleared after purge, got %d", nid)
-		}
-		if id, ok := caches.GetRoomServerRoomID(existingRoomInfo.RoomNID); ok {
-			t.Fatalf("RoomServerRoomID cache should be cleared after purge, got %q", id)
-		}
-		if v, ok := caches.GetRoomVersion(room.ID); ok {
-			t.Fatalf("RoomVersion cache should be cleared after purge, got %q", v)
 		}
 
 		// validation below

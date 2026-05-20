@@ -23,7 +23,7 @@ type RoomServerNIDsCache interface {
 	// InvalidateRoom removes all room-keyed cache entries for the given room.
 	// Call this after the room has been purged from the database, so that
 	// subsequent lookups by roomID (e.g. after a rejoin) don't hit stale data.
-	InvalidateRoom(roomID string, roomNID types.RoomNID)
+	InvalidateRoom(roomID string)
 }
 
 func (c Caches) GetRoomServerRoomID(roomNID types.RoomNID) (string, bool) {
@@ -40,13 +40,15 @@ func (c Caches) GetRoomServerRoomNID(roomID string) (types.RoomNID, bool) {
 	return c.RoomServerRoomNIDs.Get(roomID)
 }
 
-// InvalidateRoom unsets the room-ID and roomNID keyed cache entries for a room.
-// NID-keyed event/state-key/event-type caches are left to expire via TTL: their
-// NIDs are unique per row and will not be referenced again after a purge.
-func (c Caches) InvalidateRoom(roomID string, roomNID types.RoomNID) {
+// InvalidateRoom drops the cache entries that would otherwise serve stale
+// values after a purge. RoomServerRoomNIDs (room ID -> room NID) is the only
+// room-ID-keyed mapping that genuinely re-binds across a purge, since a rejoin
+// allocates a fresh NID. Room version and roomNID -> room ID are immutable per
+// the Matrix spec (a room ID's version cannot change and NIDs are never reused),
+// so their entries remain correct and are left to expire via TTL alongside the
+// other NID-keyed caches.
+func (c Caches) InvalidateRoom(roomID string) {
 	c.RoomServerRoomNIDs.Unset(roomID)
-	c.RoomServerRoomIDs.Unset(roomNID)
-	c.RoomVersions.Unset(roomID)
 	c.RoomHierarchies.Unset(roomID)
 	c.RoomHierarchyFailures.Unset(roomID)
 	c.InvalidateRoomSummary(roomID)
