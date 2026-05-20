@@ -1780,8 +1780,10 @@ func (d *Database) ForgetRoom(ctx context.Context, userID, roomID string, forget
 // PurgeRoom removes all information about a given room from the roomserver.
 // For large rooms this operation may take a considerable amount of time.
 func (d *Database) PurgeRoom(ctx context.Context, roomID string) error {
-	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-		roomNID, err := d.RoomsTable.SelectRoomNIDForUpdate(ctx, txn, roomID)
+	var roomNID types.RoomNID
+	err := d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		var err error
+		roomNID, err = d.RoomsTable.SelectRoomNIDForUpdate(ctx, txn, roomID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("room %s does not exist", roomID)
@@ -1790,6 +1792,11 @@ func (d *Database) PurgeRoom(ctx context.Context, roomID string) error {
 		}
 		return d.Purge.PurgeRoom(ctx, txn, roomNID, roomID)
 	})
+	if err != nil {
+		return err
+	}
+	d.Cache.InvalidateRoom(roomID, roomNID)
+	return nil
 }
 
 func (d *Database) UpgradeRoom(ctx context.Context, oldRoomID, newRoomID, eventSender string) error {
