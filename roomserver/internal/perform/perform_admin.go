@@ -139,6 +139,10 @@ func (r *Admin) PerformAdminEvacuateRoom(
 	}
 	inputRes := &api.InputRoomEventsResponse{}
 	r.Inputer.InputRoomEvents(ctx, inputReq, inputRes)
+	if inputRes.ErrMsg != "" {
+		return nil, inputRes.Err()
+	}
+
 	return affected, nil
 }
 
