@@ -493,5 +493,14 @@ func (r *RoomserverInternalAPI) NotifyUnPartialStated(roomID string) {
 // It creates a new state snapshot from the stored events, calculates the state delta,
 // updates the membership table, and notifies downstream components (syncapi).
 func (r *RoomserverInternalAPI) UpdateCurrentStateAfterResync(ctx context.Context, roomID string, stateEventIDs []string) error {
-	return r.UpdateStateAfterResync(ctx, roomID, stateEventIDs)
+	localLeftJoin, roomInfo, err := r.UpdateStateAfterResync(ctx, roomID, stateEventIDs)
+	if err != nil {
+		return err
+	}
+	// ScheduleAutoPurgeIfEmpty is called here, after UpdateStateAfterResync's
+	// deferred EndTransactionWithCheck has committed the membership changes.
+	if localLeftJoin {
+		r.ScheduleAutoPurgeIfEmpty(ctx, roomInfo)
+	}
+	return nil
 }
