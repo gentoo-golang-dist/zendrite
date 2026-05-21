@@ -281,6 +281,13 @@ federation_api:
   allow_networks:
     - '0.0.0.0/0' # "Everything". The deny list will help limit this.
 
+# Configuration for the Room Server.
+room_server:
+  # Automatically purge a room as soon as its last local member leaves.
+  # Defaults to false. The startup sweep of already-empty rooms runs
+  # regardless of this setting.
+  auto_purge_empty_rooms: false
+
 # Configuration for the Media API.
 media_api:
   # Storage path for uploaded media. May be relative or absolute.

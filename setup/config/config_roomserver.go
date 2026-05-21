@@ -12,6 +12,11 @@ type RoomServer struct {
 
 	DefaultRoomVersion gomatrixserverlib.RoomVersion `yaml:"default_room_version,omitempty"`
 
+	// AutoPurgeEmptyRooms enables automatic purging of a room when its last
+	// local member leaves. The startup sweep of already-empty rooms runs
+	// regardless of this setting.
+	AutoPurgeEmptyRooms bool `yaml:"auto_purge_empty_rooms"`
+
 	Database DatabaseOptions `yaml:"database,omitempty"`
 }
 
