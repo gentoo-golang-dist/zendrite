@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/internal"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
@@ -20,13 +21,18 @@ import (
 	"codefloe.com/pat-s/zendrite/roomserver/types"
 )
 
-// updateMembership updates the current membership and the invites for each
+// updateMemberships updates the current membership and the invites for each
 // user affected by a change in the current state of the room.
 // Returns a list of output events to write to the kafka log to inform the
 // consumers about the invites added or retired by the change in current state.
+//
+// If AutoPurgeEmptyRooms is enabled and at least one local user transitioned
+// out of join, updateMemberships also asynchronously schedules a purge of the
+// room when no local users remain joined.
 func (r *Inputer) updateMemberships(
 	ctx context.Context,
 	updater *shared.RoomUpdater,
+	roomInfo *types.RoomInfo,
 	removed, added []types.StateEntry,
 ) ([]api.OutputEvent, error) {
 	trace, ctx := internal.StartRegion(ctx, "updateMemberships")
@@ -52,6 +58,7 @@ func (r *Inputer) updateMemberships(
 	}
 
 	var updates []api.OutputEvent
+	localLeftJoin := false
 
 	for _, change := range changes {
 		var ae *types.Event
@@ -66,8 +73,55 @@ func (r *Inputer) updateMemberships(
 		if updates, err = r.updateMembership(ctx, updater, targetUserNID, re, ae, updates); err != nil {
 			return nil, err
 		}
+		if !localLeftJoin && isLocalLeavingJoin(ctx, r, re, ae) {
+			localLeftJoin = true
+		}
 	}
+
+	if r.Cfg.AutoPurgeEmptyRooms && localLeftJoin && roomInfo != nil {
+		r.scheduleAutoPurgeIfEmpty(ctx, roomInfo.RoomNID)
+	}
+
 	return updates, nil
+}
+
+// isLocalLeavingJoin reports whether this membership change moved a local
+// user out of the `join` state. Used to decide whether to evaluate the room
+// for auto-purge.
+func isLocalLeavingJoin(ctx context.Context, r *Inputer, re, ae *types.Event) bool {
+	if re == nil || !r.isLocalTarget(ctx, re) {
+		return false
+	}
+	oldMembership, err := re.Membership()
+	if err != nil || oldMembership != spec.Join {
+		return false
+	}
+	newMembership := spec.Leave
+	if ae != nil {
+		if m, mErr := ae.Membership(); mErr == nil {
+			newMembership = m
+		}
+	}
+	return newMembership != spec.Join
+}
+
+// scheduleAutoPurgeIfEmpty checks whether the room has any local joined
+// users left; if not, it asks the API to start an async auto-purge.
+func (r *Inputer) scheduleAutoPurgeIfEmpty(ctx context.Context, roomNID types.RoomNID) {
+	members, err := r.DB.GetMembershipEventNIDsForRoom(ctx, roomNID, true, true)
+	if err != nil {
+		logrus.WithError(err).WithField("room_nid", roomNID).Warn("auto-purge: failed to query local members")
+		return
+	}
+	if len(members) != 0 {
+		return
+	}
+	roomID, err := r.RSAPI.RoomIDFromNID(ctx, roomNID)
+	if err != nil {
+		logrus.WithError(err).WithField("room_nid", roomNID).Warn("auto-purge: failed to resolve room ID")
+		return
+	}
+	r.RSAPI.AutoPurgeRoom(ctx, roomID, "event")
 }
 
 func (r *Inputer) updateMembership(

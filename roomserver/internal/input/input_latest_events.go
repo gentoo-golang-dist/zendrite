@@ -164,7 +164,7 @@ func (u *latestEventsUpdater) doUpdateLatestEvents() error {
 
 		// If we need to generate any output events then here's where we do it.
 		// TODO: Move this!
-		if updates, err = u.api.updateMemberships(u.ctx, u.updater, u.removed, u.added); err != nil {
+		if updates, err = u.api.updateMemberships(u.ctx, u.updater, u.roomInfo, u.removed, u.added); err != nil {
 			return fmt.Errorf("u.api.updateMemberships: %w", err)
 		}
 	} else {

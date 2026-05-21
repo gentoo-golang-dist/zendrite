@@ -210,7 +210,7 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 		}
 		logger.WithField("member_changes_to_process", memberChanges).Debug("About to update memberships")
 
-		outputEvents, err = r.updateMemberships(ctx, updater, removed, added)
+		outputEvents, err = r.updateMemberships(ctx, updater, roomInfo, removed, added)
 		if err != nil {
 			return fmt.Errorf("r.updateMemberships: %w", err)
 		}

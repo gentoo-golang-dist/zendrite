@@ -1539,3 +1539,84 @@ func TestEmptyRooms(t *testing.T) {
 		assert.Equal(t, []string{r2.ID}, emptyRooms)
 	})
 }
+
+// waitForRoomGone polls EmptyRooms() until the room is no longer listed
+// (a purged room is removed from the rooms table entirely so it stops
+// showing up). Fails the test if the room is still empty after timeout.
+func waitForRoomGone(t *testing.T, ctx context.Context, rsAPI api.RoomserverInternalAPI, roomID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		empty, err := rsAPI.EmptyRooms(ctx)
+		if err != nil {
+			t.Fatalf("EmptyRooms: %v", err)
+		}
+		stillThere := false
+		for _, r := range empty {
+			if r == roomID {
+				stillThere = true
+				break
+			}
+		}
+		if !stillThere {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("room %s was not purged within %s", roomID, timeout)
+}
+
+func TestAutoPurgeOnLastLocalLeave(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.RoomServer.AutoPurgeEmptyRooms = true
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		err := api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false)
+		assert.NoError(t, err)
+
+		// Room should be auto-purged. EmptyRooms transiently contains it before purge,
+		// then drops it after purge removes the row.
+		waitForRoomGone(t, ctx, rsAPI, room.ID, 5*time.Second)
+	})
+}
+
+func TestAutoPurgeDisabledKeepsEmptyRoom(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		// AutoPurgeEmptyRooms defaults to false.
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		err := api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false)
+		assert.NoError(t, err)
+
+		// Allow time for any (non-)purge to settle.
+		time.Sleep(200 * time.Millisecond)
+
+		empty, err := rsAPI.EmptyRooms(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{room.ID}, empty, "room should remain listed as empty when AutoPurgeEmptyRooms is off")
+	})
+}
