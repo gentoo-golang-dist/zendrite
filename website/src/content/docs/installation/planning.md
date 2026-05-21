@@ -39,6 +39,15 @@ For a comfortable day-to-day deployment which can participate in federated rooms
 If you are running PostgreSQL on the same machine, allow extra headroom for this too, as the database engine will also have CPU and RAM requirements of its own.
 Running too many heavy services on the same machine may result in resource starvation and processes may end up being killed by the operating system if they try to use too much memory.
 
+### Saving memory
+
+If necessary you can save some RAM at the cost of greater database load by disabling the cache in zendrite.yaml
+```yaml
+global:
+  cache:
+    max_age: -1s
+```
+
 ## Dependencies
 
 In order to install Zendrite, you will need to satisfy the following dependencies.
@@ -47,6 +56,7 @@ In order to install Zendrite, you will need to satisfy the following dependencie
 
 At this time, Zendrite supports being built with Go 1.26 or later.
 We do not support building Zendrite with older versions of Go than this.
+Go 1.21 and later supports downloading newer Go versions automatically as needed.
 If you are installing Go using a package manager, you should check (by running `go version`) that you are using a suitable version before you start.
 
 ### PostgreSQL
