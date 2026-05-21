@@ -223,7 +223,12 @@ func (r *Admin) PerformAdminPurgeRoom(
 // tracking it in the PurgeTracker so that concurrent rejoin attempts can
 // wait for the purge to complete. Coalesces concurrent calls for the same
 // roomID. The flag check is the caller's responsibility — see
-// updateMemberships and the startup sweep.
+// ScheduleAutoPurgeIfEmpty and the startup sweep.
+//
+// The ctx parameter exists for the api.RoomserverInternalAPI interface;
+// the spawned goroutine intentionally uses context.Background() so the
+// purge cannot be canceled by a short-lived caller (e.g. a NATS message
+// handler whose context is canceled when the handler returns).
 func (r *Admin) AutoPurgeRoom(ctx context.Context, roomID, reason string) {
 	_, owner := r.PurgeTracker.BeginPurge(roomID)
 	if !owner {
