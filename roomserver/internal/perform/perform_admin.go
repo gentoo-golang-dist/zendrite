@@ -29,11 +29,12 @@ import (
 )
 
 type Admin struct {
-	DB      storage.Database
-	Cfg     *config.RoomServer
-	Queryer *query.Queryer
-	Inputer *input.Inputer
-	Leaver  *Leaver
+	DB           storage.Database
+	Cfg          *config.RoomServer
+	Queryer      *query.Queryer
+	Inputer      *input.Inputer
+	Leaver       *Leaver
+	PurgeTracker *PurgeTracker
 }
 
 // PerformAdminEvacuateRoom will remove all local users from the given room.
@@ -216,6 +217,27 @@ func (r *Admin) PerformAdminPurgeRoom(
 			},
 		},
 	})
+}
+
+// AutoPurgeRoom asynchronously purges roomID via PerformAdminPurgeRoom,
+// tracking it in the PurgeTracker so that concurrent rejoin attempts can
+// wait for the purge to complete. Coalesces concurrent calls for the same
+// roomID. The flag check is the caller's responsibility — see
+// updateMemberships and the startup sweep.
+func (r *Admin) AutoPurgeRoom(ctx context.Context, roomID, reason string) {
+	_, owner := r.PurgeTracker.BeginPurge(roomID)
+	if !owner {
+		return
+	}
+	go func() {
+		defer r.PurgeTracker.FinishPurge(roomID)
+		fields := logrus.Fields{"room_id": roomID, "reason": reason}
+		if err := r.PerformAdminPurgeRoom(ctx, roomID); err != nil {
+			logrus.WithError(err).WithFields(fields).Warn("Auto-purge of empty room failed")
+			return
+		}
+		logrus.WithFields(fields).Info("Auto-purged empty room")
+	}()
 }
 
 func (r *Admin) PerformAdminDownloadState(

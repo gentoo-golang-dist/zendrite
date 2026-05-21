@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"crypto/ed25519"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
@@ -28,6 +29,10 @@ import (
 	"codefloe.com/pat-s/zendrite/setup/process"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
+
+// defaultPurgeWaitTimeout is the maximum time a rejoin attempt will wait for
+// an in-flight auto-purge to complete before proceeding.
+const defaultPurgeWaitTimeout = 30 * time.Second
 
 // RoomserverInternalAPI is an implementation of api.RoomserverInternalAPI.
 type RoomserverInternalAPI struct {
@@ -63,6 +68,7 @@ type RoomserverInternalAPI struct {
 	enableMetrics          bool
 	defaultRoomVersion     gomatrixserverlib.RoomVersion
 	PartialStateTracker    *PartialStateTracker
+	PurgeTracker           *perform.PurgeTracker
 }
 
 func NewRoomserverAPI(
@@ -96,6 +102,7 @@ func NewRoomserverAPI(
 		enableMetrics:          enableMetrics,
 		defaultRoomVersion:     zendriteCfg.RoomServer.DefaultRoomVersion,
 		PartialStateTracker:    NewPartialStateTracker(),
+		PurgeTracker:           perform.NewPurgeTracker(),
 		// perform-er structs + queryer struct get initialized when we have a federation sender to use
 	}
 	return a
@@ -143,12 +150,14 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 		Inputer: r.Inputer,
 	}
 	r.Joiner = &perform.Joiner{
-		Cfg:     &r.Cfg.RoomServer,
-		DB:      r.DB,
-		FSAPI:   r.fsAPI,
-		RSAPI:   r,
-		Inputer: r.Inputer,
-		Queryer: r.Queryer,
+		Cfg:              &r.Cfg.RoomServer,
+		DB:               r.DB,
+		FSAPI:            r.fsAPI,
+		RSAPI:            r,
+		Inputer:          r.Inputer,
+		Queryer:          r.Queryer,
+		PurgeTracker:     r.PurgeTracker,
+		PurgeWaitTimeout: defaultPurgeWaitTimeout,
 	}
 	r.Peeker = &perform.Peeker{
 		ServerName: r.ServerName,
@@ -196,11 +205,12 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 		URSAPI: r,
 	}
 	r.Admin = &perform.Admin{
-		DB:      r.DB,
-		Cfg:     &r.Cfg.RoomServer,
-		Inputer: r.Inputer,
-		Queryer: r.Queryer,
-		Leaver:  r.Leaver,
+		DB:           r.DB,
+		Cfg:          &r.Cfg.RoomServer,
+		Inputer:      r.Inputer,
+		Queryer:      r.Queryer,
+		Leaver:       r.Leaver,
+		PurgeTracker: r.PurgeTracker,
 	}
 	r.Creator = &perform.Creator{
 		DB:    r.DB,

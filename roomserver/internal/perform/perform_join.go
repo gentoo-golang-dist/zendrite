@@ -42,6 +42,9 @@ type Joiner struct {
 
 	Inputer *input.Inputer
 	Queryer *query.Queryer
+
+	PurgeTracker     *PurgeTracker
+	PurgeWaitTimeout time.Duration
 }
 
 // PerformJoin handles joining matrix rooms, including over federation by talking to the federationapi.
