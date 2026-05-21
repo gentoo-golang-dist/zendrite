@@ -221,6 +221,32 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 	if err := r.Start(); err != nil {
 		logrus.WithError(err).Panic("failed to start roomserver input API")
 	}
+
+	// Sweep any rooms that are empty of local members (e.g. left over from a
+	// previous run before the operator enabled auto_purge_empty_rooms, or from
+	// a crash mid-purge). Runs unconditionally.
+	go func() {
+		if _, err := r.RunEmptyRoomsSweep(r.ProcessContext.Context()); err != nil {
+			logrus.WithError(err).Warn("startup empty-rooms sweep failed")
+		}
+	}()
+}
+
+// RunEmptyRoomsSweep enumerates all rooms with no local server membership
+// and schedules an async auto-purge for each. Returns the number of rooms
+// scheduled. Safe to call multiple times; AutoPurgeRoom coalesces duplicates.
+func (r *RoomserverInternalAPI) RunEmptyRoomsSweep(ctx context.Context) (int, error) {
+	rooms, err := r.DB.EmptyRooms(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, roomID := range rooms {
+		r.AutoPurgeRoom(ctx, roomID, "startup_sweep")
+	}
+	if len(rooms) > 0 {
+		logrus.WithField("count", len(rooms)).Info("startup empty-rooms sweep scheduled purges")
+	}
+	return len(rooms), nil
 }
 
 func (r *RoomserverInternalAPI) SetUserAPI(userAPI userapi.RoomserverUserAPI) {

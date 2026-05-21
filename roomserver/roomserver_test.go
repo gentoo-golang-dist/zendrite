@@ -1667,3 +1667,47 @@ func TestPerformJoin_BlocksWhilePurgeInFlight(t *testing.T) {
 		}
 	})
 }
+
+func TestStartupSweepPurgesEmptyRooms(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		// AutoPurgeEmptyRooms left at default (false). The startup sweep
+		// runs regardless.
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		// Pre-seed: send events that create the room and leave it. This puts
+		// the room into the "empty" state, but since auto_purge_empty_rooms is
+		// off, the event-triggered hook will not fire.
+		err := api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false)
+		assert.NoError(t, err)
+
+		// Sanity check: the room is currently empty.
+		empty, err := rsAPI.EmptyRooms(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{room.ID}, empty)
+
+		// Invoke the sweep directly. (In production this is also kicked off
+		// from a goroutine in SetFederationAPI.)
+		concrete, ok := rsAPI.(*rsinternal.RoomserverInternalAPI)
+		if !ok {
+			t.Fatalf("expected *rsinternal.RoomserverInternalAPI, got %T", rsAPI)
+		}
+		n, err := concrete.RunEmptyRoomsSweep(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, n)
+
+		// The room should now be purged.
+		waitForRoomGone(t, ctx, rsAPI, room.ID, 5*time.Second)
+	})
+}
