@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"codefloe.com/pat-s/zendrite/roomserver"
 	"codefloe.com/pat-s/zendrite/roomserver/acls"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
+	rsinternal "codefloe.com/pat-s/zendrite/roomserver/internal"
 	"codefloe.com/pat-s/zendrite/roomserver/internal/input"
 	"codefloe.com/pat-s/zendrite/roomserver/state"
 	"codefloe.com/pat-s/zendrite/roomserver/storage"
@@ -1618,5 +1620,50 @@ func TestAutoPurgeDisabledKeepsEmptyRoom(t *testing.T) {
 		empty, err := rsAPI.EmptyRooms(ctx)
 		assert.NoError(t, err)
 		assert.Equal(t, []string{room.ID}, empty, "room should remain listed as empty when AutoPurgeEmptyRooms is off")
+	})
+}
+
+func TestPerformJoin_BlocksWhilePurgeInFlight(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		err := api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false)
+		assert.NoError(t, err)
+
+		// Reach in to the concrete impl to access PurgeTracker and override
+		// the wait timeout to keep the test fast.
+		concrete, ok := rsAPI.(*rsinternal.RoomserverInternalAPI)
+		if !ok {
+			t.Fatalf("expected concrete *rsinternal.RoomserverInternalAPI, got %T", rsAPI)
+		}
+		concrete.PurgeWaitTimeout = 100 * time.Millisecond
+
+		// Manually mark a purge as in-flight; never finish it.
+		concrete.PurgeTracker.BeginPurge(room.ID)
+		defer concrete.PurgeTracker.FinishPurge(room.ID)
+
+		req := &api.PerformJoinRequest{
+			RoomIDOrAlias: room.ID,
+			UserID:        alice.ID,
+			IsGuest:       false,
+		}
+		_, _, joinErr := rsAPI.PerformJoin(ctx, req)
+		if joinErr == nil {
+			t.Fatalf("expected PerformJoin to fail while a purge is in flight")
+		}
+		if !strings.Contains(joinErr.Error(), "purg") {
+			t.Fatalf("expected purge-related error, got %v", joinErr)
+		}
 	})
 }
