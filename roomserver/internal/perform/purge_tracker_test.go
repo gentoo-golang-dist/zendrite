@@ -7,6 +7,7 @@ package perform
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -74,8 +75,8 @@ func TestPurgeTracker_WaitFor_Timeout(t *testing.T) {
 	pt.BeginPurge("!room1")
 	defer pt.FinishPurge("!room1")
 	err := pt.WaitFor(context.Background(), "!room1", 20*time.Millisecond)
-	if err == nil {
-		t.Fatalf("WaitFor should return an error on timeout")
+	if !errors.Is(err, ErrPurgeInProgress) {
+		t.Fatalf("WaitFor should return ErrPurgeInProgress on timeout; got %v", err)
 	}
 }
 
@@ -89,7 +90,7 @@ func TestPurgeTracker_WaitFor_ContextCanceled(t *testing.T) {
 		cancel(nil)
 	}()
 	err := pt.WaitFor(ctx, "!room1", time.Second)
-	if err == nil {
-		t.Fatalf("WaitFor should return an error on context cancellation")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitFor should return context.Canceled on context cancellation; got %v", err)
 	}
 }
