@@ -71,13 +71,11 @@ RestrictSUIDSGID=true
 RemoveIPC=true
 UMask=0077
 
-# --- Hardening: network & syscalls ---
+# --- Hardening: network & namespaces ---
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
 
 [Install]
 WantedBy=multi-user.target
@@ -85,7 +83,8 @@ WantedBy=multi-user.target
 
 Notes on the hardening block:
 
-- `ProtectHome=read-only` plus `ReadWritePaths=/home/zendrite` is the trade-off for keeping state under `/home/zendrite`. If you move state to `/var/lib/zendrite` (e.g. via `StateDirectory=zendrite`), switch to `ProtectHome=true`.
+- `ProtectHome=read-only` plus `ReadWritePaths=/home/zendrite` is the trade-off for keeping state under `/home/zendrite`. Debian-style packaging would instead use `/var/lib/zendrite` as the user's home _and_ `WorkingDirectory=`; in that layout you can drop `ReadWritePaths=` and tighten to `ProtectHome=true` (which only covers `/home`, `/root`, `/run/user`, so `/var/lib/zendrite` is unaffected).
+- `SystemCallFilter` is intentionally not set — `@system-service` is broad but failures surface as silent `EPERM` / `SIGSYS`, which is exactly the "hard to debug" category. Add it if you want and have tested your build.
 - `CapabilityBoundingSet=` (empty) is safe because the example binds to `127.0.0.1:8008`. If you bind to a port below 1024 you'll need `CAP_NET_BIND_SERVICE` set on both `CapabilityBoundingSet` and `AmbientCapabilities`.
 - `RestrictAddressFamilies` includes `AF_UNIX` for Postgres-over-socket setups and `AF_INET6` for outgoing IPv6 federation.
 - `MemoryDenyWriteExecute=true` is deliberately omitted: Go's runtime and cgo can need W+X pages in some configurations. Test before enabling.
