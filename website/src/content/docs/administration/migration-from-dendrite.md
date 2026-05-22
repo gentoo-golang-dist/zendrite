@@ -66,10 +66,8 @@ The old name is still accepted for backwards compatibility.
 The database schema is automatically migrated on first startup.
 Zendrite renames the internal `dendrite_version` column in the `db_migrations` table to `zendrite_version` — no manual intervention is required.
 
-## Empty rooms are purged on startup
+## Optional: auto-purge empty rooms
 
-Zendrite runs a one-shot sweep at every startup that purges any rooms which currently have no local members.
-This runs regardless of configuration — see [Auto-purging empty rooms](/administration/auto-purge-empty-rooms/) for the full picture.
-
-Expect any pre-existing empty rooms in your database to be purged on the first restart after upgrading from Dendrite.
-Use [`GET /_zendrite/admin/emptyRooms`](/administration/adminapi/#get-_zendriteadminemptyrooms) before restart if you want to inspect them first.
+Zendrite can automatically purge rooms which have no local members.
+The feature is **disabled by default**, so existing deployments are unaffected on upgrade.
+If you want to enable it, see [Auto-purging empty rooms](/administration/auto-purge-empty-rooms/).

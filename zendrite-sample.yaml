@@ -283,16 +283,13 @@ federation_api:
 
 # Configuration for the Room Server.
 room_server:
-  # Automatically purge a room as soon as its last local member leaves.
-  # Defaults to false.
-  #
-  # Independent of this setting, the roomserver also runs a one-shot
-  # startup sweep that purges any rooms which currently have no local
-  # members. After upgrading from a version that did not include this
-  # feature, expect rooms left empty by previous administrative actions
-  # (e.g. all local users kicked, or migration leftovers) to be purged
-  # on the first restart. The /admin/emptyRooms endpoint can be used
-  # to inspect candidates before restart if desired.
+  # Automatically purge empty rooms. When enabled, two behaviours fire
+  # together:
+  #   - at startup, a one-shot sweep purges any rooms which currently have
+  #     no local members; and
+  #   - at runtime, whenever the last local member leaves a room, the room
+  #     is scheduled for an asynchronous purge.
+  # Defaults to false (no automatic purging).
   auto_purge_empty_rooms: false
 
 # Configuration for the Media API.
