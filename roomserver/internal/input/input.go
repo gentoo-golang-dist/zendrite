@@ -129,6 +129,7 @@ func (w *worker) notify() {
 }
 
 // start launches the worker goroutine that processes events serially.
+// The caller should take a lock before calling start.
 func (w *worker) start() {
 	// Worker is already running
 	if w.ctx != nil {
@@ -142,7 +143,11 @@ func (w *worker) start() {
 		for {
 			select {
 			case <-w.ctx.Done():
+				// Cleanup after the context is canceled, so we still can log the reason for cancellation.
 				logrus.WithError(w.ctx.Err()).Debugf("worker for room %q stopped", w.roomID)
+				w.Lock()
+				w.ctx = nil
+				w.Unlock()
 				return
 			case <-w.ch:
 				w._next()
@@ -351,7 +356,6 @@ func (w *worker) _next() {
 			logrus.WithError(err).Errorf("Failed to unsubscribe to stream for room %q", w.roomID)
 		}
 		w.cancel(errors.New("inactivity timeout"))
-		w.ctx = nil
 		w.subscription = nil
 		w.Unlock()
 		return
@@ -366,7 +370,6 @@ func (w *worker) _next() {
 			logrus.WithError(err).Errorf("Failed to unsubscribe to stream for room %q", w.roomID)
 		}
 		w.cancel(errors.New("consumer deleted by NATS due to inactivity"))
-		w.ctx = nil
 		w.subscription = nil
 		return
 	default:
@@ -382,7 +385,6 @@ func (w *worker) _next() {
 			logrus.WithError(err).Errorf("Failed to unsubscribe to stream for room %q", w.roomID)
 		}
 		w.cancel(fmt.Errorf("fetch failed: %w, restarting subscriber on new activity", err))
-		w.ctx = nil
 		w.subscription = nil
 		w.Unlock()
 		return
