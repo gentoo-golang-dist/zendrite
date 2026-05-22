@@ -33,7 +33,6 @@ jobs:
               - '.pre-commit-config.yaml'
               - '.forgejo/workflows/**'
               - 'Dockerfile'
-              - 'website/bun.lock'
 
   # Run golangci-lint
   lint:
