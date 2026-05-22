@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1553,14 +1554,7 @@ func waitForRoomGone(t *testing.T, ctx context.Context, rsAPI api.RoomserverInte
 		if err != nil {
 			t.Fatalf("EmptyRooms: %v", err)
 		}
-		stillThere := false
-		for _, r := range empty {
-			if r == roomID {
-				stillThere = true
-				break
-			}
-		}
-		if !stillThere {
+		if !slices.Contains(empty, roomID) {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -1760,7 +1754,7 @@ func TestAutoPurgeConcurrentRooms(t *testing.T) {
 	alice := test.NewUser(t)
 	const numRooms = 5
 	rooms := make([]*test.Room, 0, numRooms)
-	for i := 0; i < numRooms; i++ {
+	for range numRooms {
 		r := test.NewRoom(t, alice)
 		r.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
 		rooms = append(rooms, r)
