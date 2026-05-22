@@ -113,6 +113,7 @@ type worker struct {
 	subscription *nats.Subscription
 	sentryHub    *sentry.Hub
 	ch           chan struct{}
+	running      bool
 	ephemeralSeq uint64
 	// last seq we fully processed
 	durableSeq uint64
@@ -128,11 +129,18 @@ func (w *worker) notify() {
 
 // start launches the worker goroutine that processes events serially.
 func (w *worker) start() {
+	if w.running {
+		return
+	}
 	go func() {
+		logrus.Debugf("worker for room %q started", w.roomID)
 		for range w.ch {
 			w._next()
 		}
+		logrus.Debugf("worker for room %q stopped", w.roomID)
+		w.running = false
 	}()
+	w.running = true
 }
 
 func (r *Inputer) startWorkerForRoom(roomID string, seq uint64) {
@@ -150,7 +158,10 @@ func (r *Inputer) startWorkerForRoom(roomID string, seq uint64) {
 	defer w.Unlock()
 
 	w.ephemeralSeq = seq
-
+	logrus.Debugf("loaded worker for room %q at seq %d (loaded=%t, subscription=%v)", roomID, seq, loaded, w.subscription)
+	if !w.running {
+		w.ch = make(chan struct{}, 1)
+	}
 	if !loaded || w.subscription == nil {
 		streamName := r.Cfg.Matrix.JetStream.Prefixed(jetstream.InputRoomEvent)
 		consumer := r.Cfg.Matrix.JetStream.Prefixed("RoomInput" + jetstream.Tokenise(w.roomID))
@@ -335,6 +346,8 @@ func (w *worker) _next() {
 			logrus.WithError(err).Errorf("Failed to unsubscribe to stream for room %q", w.roomID)
 		}
 		w.subscription = nil
+		close(w.ch)
+		logrus.Debugf("No activity for room %q for a while, shutting down subscriber", w.roomID)
 		w.Unlock()
 		return
 	case errors.Is(err, nats.ErrConsumerDeleted) || errors.Is(err, nats.ErrConsumerNotFound):
@@ -348,6 +361,8 @@ func (w *worker) _next() {
 			logrus.WithError(err).Errorf("Failed to unsubscribe to stream for room %q", w.roomID)
 		}
 		w.subscription = nil
+		close(w.ch)
+		logrus.Debugf("Consumer for room %q was deleted by NATS due to inactivity, shutting down subscriber", w.roomID)
 		return
 	default:
 		// Something went wrong while trying to fetch the next event
@@ -362,6 +377,8 @@ func (w *worker) _next() {
 			logrus.WithError(err).Errorf("Failed to unsubscribe to stream for room %q", w.roomID)
 		}
 		w.subscription = nil
+		close(w.ch)
+		logrus.Debugf("Shutting down subscriber for room %q due to error, will restart on new activity", w.roomID)
 		w.Unlock()
 		return
 	}
