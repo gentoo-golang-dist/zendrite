@@ -4,7 +4,7 @@ description: Frequently asked questions about Zendrite
 ---
 
 Most of the content originated from [element-hq/dendrite](https://github.com/element-hq/dendrite) and might not be up-to-date anymore with respect to the many changes of this fork.
-Please use with caution and/or report drifts in an issue/Pull Request.
+Please use with caution and/or report drifts in an issue or pull request.
 
 ## Why does Zendrite exist?
 
