@@ -1712,3 +1712,78 @@ func TestStartupSweepPurgesEmptyRooms(t *testing.T) {
 		waitForRoomGone(t, ctx, rsAPI, room.ID, 5*time.Second)
 	})
 }
+
+// TestAutoPurgeRoomInfoNilAfterPurge confirms that after auto-purge
+// completes, QueryRoomVersionForRoom for the purged room does not panic
+// and EmptyRooms no longer lists it.
+func TestAutoPurgeRoomInfoNilAfterPurge(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.RoomServer.AutoPurgeEmptyRooms = true
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		err := api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false)
+		assert.NoError(t, err)
+
+		waitForRoomGone(t, ctx, rsAPI, room.ID, 5*time.Second)
+
+		// After purge, EmptyRooms must not list the room.
+		empty, err := rsAPI.EmptyRooms(ctx)
+		assert.NoError(t, err)
+		for _, r := range empty {
+			assert.NotEqual(t, room.ID, r, "purged room should not appear in EmptyRooms")
+		}
+
+		// QueryRoomVersionForRoom must not panic for a purged room.
+		// It may return an error or an empty version — both are acceptable.
+		version, err := rsAPI.QueryRoomVersionForRoom(ctx, room.ID)
+		t.Logf("post-purge QueryRoomVersionForRoom: version=%q err=%v", version, err)
+	})
+}
+
+// TestAutoPurgeConcurrentRooms confirms that multiple rooms whose last
+// local user leaves at roughly the same time are all purged, with no
+// deadlock or starvation between their PurgeTracker entries.
+func TestAutoPurgeConcurrentRooms(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	const numRooms = 5
+	rooms := make([]*test.Room, 0, numRooms)
+	for i := 0; i < numRooms; i++ {
+		r := test.NewRoom(t, alice)
+		r.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
+		rooms = append(rooms, r)
+	}
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.RoomServer.AutoPurgeEmptyRooms = true
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		for _, r := range rooms {
+			err := api.SendEvents(ctx, rsAPI, api.KindNew, r.Events(), "test", "test", "test", nil, false)
+			assert.NoError(t, err)
+		}
+
+		for _, r := range rooms {
+			waitForRoomGone(t, ctx, rsAPI, r.ID, 10*time.Second)
+		}
+	})
+}
