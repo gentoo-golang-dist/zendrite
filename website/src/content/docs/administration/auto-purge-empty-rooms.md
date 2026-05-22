@@ -6,15 +6,15 @@ description: Automatically remove rooms that have no local members
 When a Matrix room has no local members joined, the roomserver still holds all of its state (events, memberships, state snapshots, redactions, etc.) in the database.
 For long-running homeservers these "empty" rooms accumulate as users leave or are kicked, taking up disk and slowing full-table scans.
 
-Zendrite can purge them automatically.
-The feature is controlled by a single `room_server.auto_purge_empty_rooms` flag, which is `false` by default:
+Zendrite purges them automatically.
+The feature is controlled by a single `room_server.auto_purge_empty_rooms` flag, which is **`true` by default**:
 
 ```yaml
 room_server:
   auto_purge_empty_rooms: true
 ```
 
-When enabled, two behaviours fire together.
+Two behaviours fire together when enabled.
 
 ## Startup sweep
 
@@ -39,7 +39,7 @@ Remote joins (made by federated users on other servers) are not blocked at the f
 
 ## Disabling
 
-Setting `auto_purge_empty_rooms: false` (or leaving it at the default) disables both the startup sweep and the runtime trigger.
+Setting `auto_purge_empty_rooms: false` disables both the startup sweep and the runtime trigger.
 Administrators can still purge individual rooms manually via [`POST /_zendrite/admin/purgeRoom/{roomID}`](/administration/adminapi/#post-_zendriteadminpurgeroomroomid).
 
 ## Caveats

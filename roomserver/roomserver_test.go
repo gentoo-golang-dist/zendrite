@@ -1603,7 +1603,7 @@ func TestAutoPurgeDisabledKeepsEmptyRoom(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
 		defer closeDB()
-		// AutoPurgeEmptyRooms defaults to false.
+		cfg.RoomServer.AutoPurgeEmptyRooms = false
 
 		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
 		natsInstance := &jetstream.NATSInstance{}
@@ -1677,8 +1677,9 @@ func TestStartupSweepPurgesEmptyRooms(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
 		defer closeDB()
-		// AutoPurgeEmptyRooms left at default (false). The startup sweep
-		// runs regardless.
+		// Disable the auto-trigger so the explicit sweep below is the only
+		// thing driving the purge — keeps the assertions deterministic.
+		cfg.RoomServer.AutoPurgeEmptyRooms = false
 
 		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
 		natsInstance := &jetstream.NATSInstance{}
