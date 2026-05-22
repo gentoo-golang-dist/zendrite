@@ -28,20 +28,20 @@ In particular:
 
 - The number of users using the server;
 - The number of rooms that the server is joined to — federated rooms in particular will typically use more resources than rooms with only local users;
-- The complexity of rooms that the server is joined to — rooms with more members coming and going will typically be of a much higher complexity.
+- **The complexity of rooms that the server is joined to** — rooms with more members coming and going will typically be of a much higher complexity.
 
 Some tasks are more expensive than others, such as joining rooms over federation, running state resolution or sending messages into very large federated rooms with lots of remote users.
 Therefore you should plan accordingly and ensure that you have enough resources available to endure spikes in CPU or RAM usage, as these may be considerably higher than the idle resource usage.
 
 At an absolute minimum, Zendrite will expect 1GB RAM.
-For a comfortable day-to-day deployment which can participate in federated rooms for a number of local users, be prepared to assign 2-4 CPU cores and 8GB RAM — more if your user count increases.
+For a comfortable day-to-day deployment which can participate in federated rooms for a number of local users, be prepared to assign 2-4 CPU cores and 8GB RAM — more if your room count increases.
 
 If you are running PostgreSQL on the same machine, allow extra headroom for this too, as the database engine will also have CPU and RAM requirements of its own.
 Running too many heavy services on the same machine may result in resource starvation and processes may end up being killed by the operating system if they try to use too much memory.
 
 ### Saving memory
 
-If necessary you can save some RAM at the cost of greater database load by disabling the cache in zendrite.yaml
+If necessary for your environment you could save some RAM at the cost of greater database CPU load by disabling the cache in zendrite.yaml
 ```yaml
 global:
   cache:
