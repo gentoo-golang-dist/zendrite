@@ -83,7 +83,9 @@ WantedBy=multi-user.target
 
 Notes on the hardening block:
 
-- `ProtectHome=read-only` plus `ReadWritePaths=/home/zendrite` is the trade-off for keeping state under `/home/zendrite`. Debian-style packaging would instead use `/var/lib/zendrite` as the user's home _and_ `WorkingDirectory=`; in that layout you can drop `ReadWritePaths=` and tighten to `ProtectHome=true` (which only covers `/home`, `/root`, `/run/user`, so `/var/lib/zendrite` is unaffected).
+- `ProtectHome=read-only` plus `ReadWritePaths=/home/zendrite` is the trade-off for keeping state under `/home/zendrite`.
+  Do **not** "tighten" this to `ProtectHome=true` while state still lives in `/home/zendrite` — `true` makes the directory inaccessible (not just read-only) and overrides the `ReadWritePaths=` exemption, locking Zendrite out of its own state.
+  Debian-style packaging instead uses `/var/lib/zendrite` as the user's home _and_ `WorkingDirectory=`; in that layout you can drop `ReadWritePaths=` and use `ProtectHome=true` safely, because `ProtectHome` only covers `/home`, `/root`, `/run/user`.
 - `SystemCallFilter` is intentionally not set — `@system-service` is broad but failures surface as silent `EPERM` / `SIGSYS`, which is exactly the "hard to debug" category. Add it if you want and have tested your build.
 - `CapabilityBoundingSet=` (empty) is safe because the example binds to `127.0.0.1:8008`. If you bind to a port below 1024 you'll need `CAP_NET_BIND_SERVICE` set on both `CapabilityBoundingSet` and `AmbientCapabilities`.
 - `RestrictAddressFamilies` includes `AF_UNIX` for Postgres-over-socket setups and `AF_INET6` for outgoing IPv6 federation.
