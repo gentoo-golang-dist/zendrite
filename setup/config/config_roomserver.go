@@ -21,12 +21,21 @@ type RoomServer struct {
 	// Set to false to disable both behaviors.
 	AutoPurgeEmptyRooms bool `yaml:"auto_purge_empty_rooms"`
 
+	// AutoForgetOnLeave makes every transition to leave or ban for a local
+	// user behave as if the user had also called /forget on the room. This
+	// matches the Matrix 1.18 m.forget_forced_upon_leave capability, which
+	// is advertised via /_matrix/client/v3/capabilities when this is true.
+	// Independent of AutoPurgeEmptyRooms: a forgotten room is not deleted,
+	// just hidden from the leaving user's history. Defaults to true.
+	AutoForgetOnLeave bool `yaml:"auto_forget_on_leave"`
+
 	Database DatabaseOptions `yaml:"database,omitempty"`
 }
 
 func (c *RoomServer) Defaults(opts DefaultOpts) {
 	c.DefaultRoomVersion = gomatrixserverlib.RoomVersionV12
 	c.AutoPurgeEmptyRooms = true
+	c.AutoForgetOnLeave = true
 	if opts.Generate {
 		if !opts.SingleDatabase {
 			c.Database.ConnectionString = "file:roomserver.db"

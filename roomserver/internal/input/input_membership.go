@@ -173,7 +173,11 @@ func (r *Inputer) updateMembership(
 	case spec.Join:
 		return updateToJoinMembership(mu, add, updates)
 	case spec.Leave, spec.Ban:
-		return updateToLeaveMembership(mu, add, newMembership, updates)
+		// Auto-forget transitions to leave/ban for local users when the
+		// feature is on (matches the Matrix 1.18 m.forget_forced_upon_leave
+		// capability that the /capabilities endpoint advertises).
+		forget := r.Cfg.AutoForgetOnLeave && targetLocal
+		return updateToLeaveMembership(mu, add, newMembership, updates, forget)
 	case spec.Knock:
 		return updateToKnockMembership(mu, add, updates)
 	default:
@@ -202,7 +206,7 @@ func updateToJoinMembership(
 	// are active for that user. We notify the consumers that the invites have
 	// been retired using a special event, even though they could infer this
 	// by studying the state changes in the room event stream.
-	_, retired, err := mu.Update(tables.MembershipStateJoin, add)
+	_, retired, err := mu.Update(tables.MembershipStateJoin, add, false)
 	if err != nil {
 		return nil, err
 	}
@@ -223,13 +227,13 @@ func updateToJoinMembership(
 
 func updateToLeaveMembership(
 	mu *shared.MembershipUpdater, add *types.Event,
-	newMembership string, updates []api.OutputEvent,
+	newMembership string, updates []api.OutputEvent, forget bool,
 ) ([]api.OutputEvent, error) {
 	// When we mark a user as having left we will invalidate any invites that
 	// are active for that user. We notify the consumers that the invites have
 	// been retired using a special event, even though they could infer this
 	// by studying the state changes in the room event stream.
-	_, retired, err := mu.Update(tables.MembershipStateLeaveOrBan, add)
+	_, retired, err := mu.Update(tables.MembershipStateLeaveOrBan, add, forget)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +255,7 @@ func updateToLeaveMembership(
 func updateToKnockMembership(
 	mu *shared.MembershipUpdater, add *types.Event, updates []api.OutputEvent,
 ) ([]api.OutputEvent, error) {
-	if _, _, err := mu.Update(tables.MembershipStateKnock, add); err != nil {
+	if _, _, err := mu.Update(tables.MembershipStateKnock, add, false); err != nil {
 		return nil, err
 	}
 	return updates, nil

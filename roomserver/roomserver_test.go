@@ -1827,3 +1827,93 @@ func TestForgetRoomIdempotentForUnknownRoom(t *testing.T) {
 			"PerformForget on an unknown room must be a no-op, not panic or error")
 	})
 }
+
+// queryMembershipForUser is a small helper used by the auto-forget tests.
+func queryMembershipForUser(t *testing.T, ctx context.Context, rsAPI api.RoomserverInternalAPI, roomID, userID string) api.QueryMembershipForUserResponse {
+	t.Helper()
+	uid, err := spec.NewUserID(userID, true)
+	if err != nil {
+		t.Fatalf("NewUserID: %v", err)
+	}
+	req := &api.QueryMembershipForUserRequest{RoomID: roomID, UserID: *uid}
+	res := api.QueryMembershipForUserResponse{}
+	if err := rsAPI.QueryMembershipForUser(ctx, req, &res); err != nil {
+		t.Fatalf("QueryMembershipForUser: %v", err)
+	}
+	return res
+}
+
+func TestAutoForgetOnLeaveMarksRoomForgotten(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.RoomServer.AutoForgetOnLeave = true
+		// Disable auto-purge so the room persists and we can inspect the
+		// membership row.
+		cfg.RoomServer.AutoPurgeEmptyRooms = false
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		err := api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false)
+		assert.NoError(t, err)
+
+		got := queryMembershipForUser(t, ctx, rsAPI, room.ID, alice.ID)
+		assert.Equal(t, spec.Leave, got.Membership, "alice should be in leave state")
+		assert.True(t, got.IsRoomForgotten, "auto-forget should mark the room as forgotten for alice")
+	})
+}
+
+func TestAutoForgetOnLeaveDisabledKeepsMembership(t *testing.T) {
+	ctx := context.Background()
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(alice.ID))
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.RoomServer.AutoForgetOnLeave = false
+		cfg.RoomServer.AutoPurgeEmptyRooms = false
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		err := api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false)
+		assert.NoError(t, err)
+
+		got := queryMembershipForUser(t, ctx, rsAPI, room.ID, alice.ID)
+		assert.Equal(t, spec.Leave, got.Membership)
+		assert.False(t, got.IsRoomForgotten, "with the flag off, alice's membership should not be marked as forgotten")
+	})
+}
+
+func TestAutoForgetOnLeaveEnabled_ReflectsConfig(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.RoomServer.AutoForgetOnLeave = true
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		assert.True(t, rsAPI.AutoForgetOnLeaveEnabled())
+
+		cfg.RoomServer.AutoForgetOnLeave = false
+		assert.False(t, rsAPI.AutoForgetOnLeaveEnabled())
+	})
+}

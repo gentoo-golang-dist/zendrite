@@ -264,6 +264,14 @@ func (r *RoomserverInternalAPI) DefaultRoomVersion() gomatrixserverlib.RoomVersi
 	return r.defaultRoomVersion
 }
 
+// AutoForgetOnLeaveEnabled reports whether the server is configured to
+// automatically forget rooms when a local user transitions to leave or
+// ban. Used by the /capabilities endpoint to advertise
+// m.forget_forced_upon_leave.
+func (r *RoomserverInternalAPI) AutoForgetOnLeaveEnabled() bool {
+	return r.Cfg.RoomServer.AutoForgetOnLeave
+}
+
 func (r *RoomserverInternalAPI) IsKnownRoom(ctx context.Context, roomID spec.RoomID) (bool, error) {
 	return r.Inviter.IsKnownRoom(ctx, roomID)
 }
