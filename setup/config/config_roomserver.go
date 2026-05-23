@@ -26,7 +26,13 @@ type RoomServer struct {
 	// matches the Matrix 1.18 m.forget_forced_upon_leave capability, which
 	// is advertised via /_matrix/client/v3/capabilities when this is true.
 	// Independent of AutoPurgeEmptyRooms: a forgotten room is not deleted,
-	// just hidden from the leaving user's history. Defaults to true.
+	// just hidden from the leaving user's history.
+	//
+	// Defaults to false. The asymmetric trade-off is the reason: forgetting
+	// a room drops the user's archived-rooms UI entry and their /messages
+	// access to pre-leave history, which is worse for users who got kicked
+	// or who left a high-activity room. Users who prefer the auto-forget UX
+	// can opt in.
 	AutoForgetOnLeave bool `yaml:"auto_forget_on_leave"`
 
 	Database DatabaseOptions `yaml:"database,omitempty"`
@@ -35,7 +41,6 @@ type RoomServer struct {
 func (c *RoomServer) Defaults(opts DefaultOpts) {
 	c.DefaultRoomVersion = gomatrixserverlib.RoomVersionV12
 	c.AutoPurgeEmptyRooms = true
-	c.AutoForgetOnLeave = true
 	if opts.Generate {
 		if !opts.SingleDatabase {
 			c.Database.ConnectionString = "file:roomserver.db"

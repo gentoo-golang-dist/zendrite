@@ -296,9 +296,14 @@ room_server:
   # Automatically mark a room as forgotten for a local user whenever their
   # membership transitions to leave or ban. Matches the Matrix 1.18
   # m.forget_forced_upon_leave capability advertised via
-  # /_matrix/client/v3/capabilities. Set to false to require clients to
-  # call /forget explicitly. Defaults to true.
-  auto_forget_on_leave: true
+  # /_matrix/client/v3/capabilities.
+  #
+  # Defaults to false. Forgetting a room hides it from the leaving user's
+  # archived-rooms UI and drops their /messages access to pre-leave
+  # history. Enable this if you prefer the "leaving the room cleans up
+  # client UI" behaviour over the "user can browse rooms they have left"
+  # behaviour.
+  auto_forget_on_leave: false
 
 # Configuration for the Media API.
 media_api:
