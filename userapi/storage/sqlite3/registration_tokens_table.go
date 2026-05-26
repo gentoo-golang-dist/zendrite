@@ -54,6 +54,9 @@ const updateTokenUsesAllowedSQL = "" +
 const updateTokenExpiryTimeSQL = "" +
 	"UPDATE userapi_registration_tokens SET expiry_time = $2 WHERE token = $1"
 
+const updateTokenIncrementCompletedSQL = "" +
+	"UPDATE userapi_registration_tokens SET completed = completed + 1 WHERE token = $1"
+
 type registrationTokenStatements struct {
 	selectTokenStatement                         *sql.Stmt
 	insertTokenStatement                         *sql.Stmt
@@ -65,6 +68,7 @@ type registrationTokenStatements struct {
 	updateTokenUsesAllowedAndExpiryTimeStatement *sql.Stmt
 	updateTokenUsesAllowedStatement              *sql.Stmt
 	updateTokenExpiryTimeStatement               *sql.Stmt
+	updateTokenIncrementCompletedStatement       *sql.Stmt
 }
 
 func NewSQLiteRegistrationTokensTable(db *sql.DB) (tables.RegistrationTokensTable, error) {
@@ -84,6 +88,7 @@ func NewSQLiteRegistrationTokensTable(db *sql.DB) (tables.RegistrationTokensTabl
 		{&s.updateTokenUsesAllowedAndExpiryTimeStatement, updateTokenUsesAllowedAndExpiryTimeSQL},
 		{&s.updateTokenUsesAllowedStatement, updateTokenUsesAllowedSQL},
 		{&s.updateTokenExpiryTimeStatement, updateTokenExpiryTimeSQL},
+		{&s.updateTokenIncrementCompletedStatement, updateTokenIncrementCompletedSQL},
 	}.Prepare(db)
 }
 
@@ -192,6 +197,7 @@ func (s *registrationTokenStatements) UpdateRegistrationToken(ctx context.Contex
 	var stmt *sql.Stmt
 	usesAllowed, usesAllowedPresent := newAttributes["usesAllowed"]
 	expiryTime, expiryTimePresent := newAttributes["expiryTime"]
+	_, completedPresent := newAttributes["completed"]
 	switch {
 	case usesAllowedPresent && expiryTimePresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenUsesAllowedAndExpiryTimeStatement)
@@ -208,6 +214,12 @@ func (s *registrationTokenStatements) UpdateRegistrationToken(ctx context.Contex
 	case expiryTimePresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenExpiryTimeStatement)
 		_, err := stmt.ExecContext(ctx, tokenString, expiryTime)
+		if err != nil {
+			return nil, err
+		}
+	case !usesAllowedPresent && !expiryTimePresent && completedPresent:
+		stmt := sqlutil.TxStmt(tx, s.updateTokenIncrementCompletedStatement)
+		_, err := stmt.ExecContext(ctx, tokenString)
 		if err != nil {
 			return nil, err
 		}

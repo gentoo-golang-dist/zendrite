@@ -220,6 +220,7 @@ type authDict struct {
 	// Recaptcha
 	Response string `json:"response"`
 	// TODO: Lots of custom keys depending on the type
+	Token string `json:"token"`
 }
 
 // https://spec.matrix.org/v1.7/client-server-api/#user-interactive-authentication-api
@@ -676,7 +677,7 @@ func handleRegistrationFlow(
 	if v := cfg.Matrix.VirtualHost(r.ServerName); v != nil {
 		registrationEnabled, _ = v.RegistrationAllowed()
 	}
-	if !registrationEnabled && r.Auth.Type != authtypes.LoginTypeSharedSecret {
+	if !registrationEnabled && r.Auth.Type != authtypes.LoginTypeSharedSecret && r.Auth.Type != authtypes.LoginTypeRegistrationToken {
 		return util.JSONResponse{
 			Code: http.StatusForbidden,
 			JSON: spec.Forbidden(
@@ -736,6 +737,31 @@ func handleRegistrationFlow(
 		// there is nothing to do
 		// Add Dummy to the list of completed registration stages
 		sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeDummy)
+
+	case authtypes.LoginTypeRegistrationToken:
+		token, err := userAPI.PerformAdminGetRegistrationToken(req.Context(), r.Auth.Token)
+		if err != nil {
+			return util.JSONResponse{
+				Code: http.StatusUnauthorized,
+				JSON: spec.InvalidParam(err.Error()),
+			}
+		}
+		if !time.Unix(*token.ExpiryTime, 0).After(time.Now()) {
+			return util.JSONResponse{
+				Code: http.StatusUnauthorized,
+				JSON: spec.InvalidParam("token expired"),
+			}
+		}
+		if *token.UsesAllowed <= *token.Completed {
+			return util.JSONResponse{
+				Code: http.StatusUnauthorized,
+				JSON: spec.InvalidParam(fmt.Sprintf("token used up")),
+			}
+		}
+		newAttributes := make(map[string]any)
+		newAttributes["completed"] = *token.Completed + 1
+		userAPI.PerformAdminUpdateRegistrationToken(req.Context(), r.Auth.Token, newAttributes)
+		sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeRegistrationToken)
 
 	case "":
 		// An empty auth type means that we want to fetch the available
