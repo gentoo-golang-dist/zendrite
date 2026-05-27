@@ -40,11 +40,12 @@ When the flag is on, every membership transition to `leave` or `ban` for a **loc
 
 Remote users on other homeservers are unaffected — their forgotten state is their own homeserver's concern.
 
-The flag is independent of [auto-purge of empty rooms](/administration/auto-purge-empty-rooms/). When both are on:
+The flag interacts cleanly with [auto-purge of empty rooms](/administration/auto-purge-empty-rooms/), which has its own tri-state setting (`never`, `on_empty`, `on_all_forgotten`).
 
-1. User leaves a room → membership transition to `leave`.
-2. The user's row is marked `forgotten`.
-3. If the user was the last local member, the room is also asynchronously purged from the database entirely.
+- With the default purge mode `on_all_forgotten`, enabling `auto_forget_on_leave` forces a forget at every leave, so the last leave becomes both the last membership transition and the last forget — the room is purged immediately.
+- With `on_empty`, the room is already purged on the last leave regardless of forgotten state, so auto-forget makes no difference to the purge timing but still clears the leaving user's history access for any room that stays around (e.g. because other locals are still in it).
+
+See [Auto-purging empty rooms](/administration/auto-purge-empty-rooms/) for the full interaction table.
 
 ## Capability advertisement
 

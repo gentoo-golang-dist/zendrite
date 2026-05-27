@@ -104,6 +104,11 @@ type RoomserverInternalAPI interface {
 	// same room while a purge is running are coalesced. reason is a short
 	// label included in log lines (e.g. "event", "startup_sweep").
 	AutoPurgeRoom(ctx context.Context, roomID, reason string)
+	// ScheduleAutoPurgeIfEligible evaluates the given room against the
+	// configured AutoPurgeMode and schedules an async purge if eligible.
+	// Used by /forget to fire a check after the last non-forgotten
+	// membership disappears under on_all_forgotten.
+	ScheduleAutoPurgeIfEligible(ctx context.Context, roomID string)
 }
 
 type UserRoomPrivateKeyCreator interface {
