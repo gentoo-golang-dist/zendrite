@@ -746,21 +746,33 @@ func handleRegistrationFlow(
 				JSON: spec.InvalidParam(err.Error()),
 			}
 		}
-		if !time.Unix(*token.ExpiryTime, 0).After(time.Now()) {
+		if token.ExpiryTime != nil && !time.UnixMilli(*token.ExpiryTime).After(time.Now()) {
 			return util.JSONResponse{
 				Code: http.StatusUnauthorized,
 				JSON: spec.InvalidParam("token expired"),
 			}
 		}
-		if *token.UsesAllowed <= *token.Completed {
+		var pending, completed int32
+		if token.Pending != nil {
+			pending = *token.Pending
+		}
+		if token.Completed != nil {
+			completed = *token.Completed
+		}
+		if token.UsesAllowed != nil && *token.UsesAllowed <= pending+completed {
 			return util.JSONResponse{
 				Code: http.StatusUnauthorized,
-				JSON: spec.InvalidParam(fmt.Sprintf("token used up")),
+				JSON: spec.InvalidParam("token used up"),
 			}
 		}
-		newAttributes := make(map[string]any)
-		newAttributes["completed"] = *token.Completed + 1
-		userAPI.PerformAdminUpdateRegistrationToken(req.Context(), r.Auth.Token, newAttributes)
+		newAttributes := map[string]any{"completed": completed + 1}
+		if _, err := userAPI.PerformAdminUpdateRegistrationToken(req.Context(), r.Auth.Token, newAttributes); err != nil {
+			util.GetLogger(req.Context()).WithError(err).Error("failed to update registration token usage")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
+		}
 		sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeRegistrationToken)
 
 	case "":
