@@ -869,5 +869,39 @@ func TestRegisterWithRegistrationToken(t *testing.T) {
 			}
 			assertCounters(t, "two", 0, 2)
 		})
+
+		t.Run("single-shot token auth works with registration_disabled=true", func(t *testing.T) {
+			// Canonical token-only config: clients submit the token in a single POST,
+			// bypassing the registration_disabled check via LoginTypeRegistrationToken.
+			cfg.ClientAPI.RegistrationDisabled = true
+			defer func() { cfg.ClientAPI.RegistrationDisabled = false }()
+			mustCreateToken(t, capi.RegistrationToken{
+				Token:       ptrTo("single-shot"),
+				UsesAllowed: ptrTo(int32(1)),
+				ExpiryTime:  ptrTo(futureMillis),
+				Pending:     ptrTo(int32(0)),
+				Completed:   ptrTo(int32(0)),
+			})
+			deviceID, displayName := "dev", "Device"
+			body := &bytes.Buffer{}
+			if err := json.NewEncoder(body).Encode(registerRequest{
+				Username:           "kate",
+				Password:           "long-password",
+				DeviceID:           &deviceID,
+				InitialDisplayName: &displayName,
+				Auth: authDict{
+					Type:  authtypes.LoginTypeRegistrationToken,
+					Token: "single-shot",
+				},
+			}); err != nil {
+				t.Fatalf("encode request: %s", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/", body)
+			resp := Register(req, userAPI, &cfg.ClientAPI)
+			if _, ok := resp.JSON.(registerResponse); !ok {
+				t.Fatalf("expected successful registerResponse, got: %+v", resp)
+			}
+			assertCounters(t, "single-shot", 0, 1)
+		})
 	})
 }
