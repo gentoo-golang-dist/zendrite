@@ -54,8 +54,14 @@ const updateTokenUsesAllowedSQL = "" +
 const updateTokenExpiryTimeSQL = "" +
 	"UPDATE userapi_registration_tokens SET expiry_time = $2 WHERE token = $1"
 
-const updateTokenIncrementCompletedSQL = "" +
-	"UPDATE userapi_registration_tokens SET completed = completed + 1 WHERE token = $1"
+const updateTokenIncrementPendingSQL = "" +
+	"UPDATE userapi_registration_tokens SET pending = pending + 1 WHERE token = $1"
+
+const updateTokenDecrementPendingSQL = "" +
+	"UPDATE userapi_registration_tokens SET pending = pending - 1 WHERE token = $1 AND pending > 0"
+
+const updateTokenMarkUsedSQL = "" +
+	"UPDATE userapi_registration_tokens SET pending = pending - 1, completed = completed + 1 WHERE token = $1 AND pending > 0"
 
 type registrationTokenStatements struct {
 	selectTokenStatement                         *sql.Stmt
@@ -68,7 +74,9 @@ type registrationTokenStatements struct {
 	updateTokenUsesAllowedAndExpiryTimeStatement *sql.Stmt
 	updateTokenUsesAllowedStatement              *sql.Stmt
 	updateTokenExpiryTimeStatement               *sql.Stmt
-	updateTokenIncrementCompletedStatement       *sql.Stmt
+	updateTokenIncrementPendingStatement         *sql.Stmt
+	updateTokenDecrementPendingStatement         *sql.Stmt
+	updateTokenMarkUsedStatement                 *sql.Stmt
 }
 
 func NewSQLiteRegistrationTokensTable(db *sql.DB) (tables.RegistrationTokensTable, error) {
@@ -88,7 +96,9 @@ func NewSQLiteRegistrationTokensTable(db *sql.DB) (tables.RegistrationTokensTabl
 		{&s.updateTokenUsesAllowedAndExpiryTimeStatement, updateTokenUsesAllowedAndExpiryTimeSQL},
 		{&s.updateTokenUsesAllowedStatement, updateTokenUsesAllowedSQL},
 		{&s.updateTokenExpiryTimeStatement, updateTokenExpiryTimeSQL},
-		{&s.updateTokenIncrementCompletedStatement, updateTokenIncrementCompletedSQL},
+		{&s.updateTokenIncrementPendingStatement, updateTokenIncrementPendingSQL},
+		{&s.updateTokenDecrementPendingStatement, updateTokenDecrementPendingSQL},
+		{&s.updateTokenMarkUsedStatement, updateTokenMarkUsedSQL},
 	}.Prepare(db)
 }
 
@@ -197,7 +207,9 @@ func (s *registrationTokenStatements) UpdateRegistrationToken(ctx context.Contex
 	var stmt *sql.Stmt
 	usesAllowed, usesAllowedPresent := newAttributes["usesAllowed"]
 	expiryTime, expiryTimePresent := newAttributes["expiryTime"]
-	_, completedPresent := newAttributes["completed"]
+	_, incrementPending := newAttributes["incrementPending"]
+	_, decrementPending := newAttributes["decrementPending"]
+	_, markUsed := newAttributes["markUsed"]
 	switch {
 	case usesAllowedPresent && expiryTimePresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenUsesAllowedAndExpiryTimeStatement)
@@ -217,10 +229,19 @@ func (s *registrationTokenStatements) UpdateRegistrationToken(ctx context.Contex
 		if err != nil {
 			return nil, err
 		}
-	case !usesAllowedPresent && !expiryTimePresent && completedPresent:
-		stmt := sqlutil.TxStmt(tx, s.updateTokenIncrementCompletedStatement)
-		_, err := stmt.ExecContext(ctx, tokenString)
-		if err != nil {
+	case incrementPending:
+		stmt = sqlutil.TxStmt(tx, s.updateTokenIncrementPendingStatement)
+		if _, err := stmt.ExecContext(ctx, tokenString); err != nil {
+			return nil, err
+		}
+	case markUsed:
+		stmt = sqlutil.TxStmt(tx, s.updateTokenMarkUsedStatement)
+		if _, err := stmt.ExecContext(ctx, tokenString); err != nil {
+			return nil, err
+		}
+	case decrementPending:
+		stmt = sqlutil.TxStmt(tx, s.updateTokenDecrementPendingStatement)
+		if _, err := stmt.ExecContext(ctx, tokenString); err != nil {
 			return nil, err
 		}
 	}
