@@ -628,7 +628,11 @@ func SendForget(
 			JSON: spec.Forbidden("room does not exist"),
 		}
 	}
-	if membershipRes.IsInRoom {
+	// The cached membership row can lag behind the room's current state — a
+	// remote kick of the last local member can leave the row stale at "join"
+	// even though current state already records the leave. Confirm against
+	// current state before refusing, so a kicked user can still /forget.
+	if membershipRes.IsInRoom && currentlyJoined(ctx, rsAPI, roomID, membershipRes.SenderID) {
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: spec.Forbidden(fmt.Sprintf("User %s is still in room %s", device.UserID, roomID)),
@@ -651,6 +655,28 @@ func SendForget(
 		Code: http.StatusOK,
 		JSON: struct{}{},
 	}
+}
+
+// currentlyJoined reports whether the user identified by senderID is joined to
+// the room according to its current state. Current state is the authoritative
+// membership source; the cached membership table can be stale (see SendForget),
+// so /forget defers to this rather than the cached IsInRoom flag.
+func currentlyJoined(ctx context.Context, rsAPI roomserverAPI.ClientRoomserverAPI, roomID string, senderID *spec.SenderID) bool {
+	if senderID == nil {
+		return false
+	}
+	memberEvent := roomserverAPI.GetStateEvent(ctx, rsAPI, roomID, gomatrixserverlib.StateKeyTuple{
+		EventType: spec.MRoomMember,
+		StateKey:  string(*senderID),
+	})
+	if memberEvent == nil {
+		return false
+	}
+	membership, err := memberEvent.Membership()
+	if err != nil {
+		return false
+	}
+	return membership == spec.Join
 }
 
 func getPowerlevels(req *http.Request, rsAPI roomserverAPI.ClientRoomserverAPI, roomID string) (*gomatrixserverlib.PowerLevelContent, *util.JSONResponse) {
