@@ -17,7 +17,7 @@ room_server:
 
 The default is `false`.
 
-When enabled, Zendrite advertises the [Matrix 1.18 `m.forget_forced_upon_leave`](https://spec.matrix.org/v1.18/client-server-api/#mforget_forced_upon_leave-capability) capability via [`/_matrix/client/v3/capabilities`](https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3capabilities) so compliant clients know to skip the "Forget room?" prompt.
+When enabled, Zendrite advertises the Matrix 1.18 [`m.forget_forced_upon_leave`](https://spec.matrix.org/v1.18/client-server-api/#mforget_forced_upon_leave-capability) capability (introduced by [MSC4267](https://github.com/matrix-org/matrix-spec-proposals/blob/main/proposals/4267-forget-room-on-leave.md)) via [`/_matrix/client/v3/capabilities`](https://spec.matrix.org/v1.18/client-server-api/#get_matrixclientv3capabilities) so compliant clients know to skip the "Forget room?" prompt.
 
 ## Why default off
 
@@ -42,10 +42,19 @@ Remote users on other homeservers are unaffected — their forgotten state is th
 
 The flag interacts cleanly with [auto-purge of empty rooms](/administration/auto-purge-empty-rooms/), which has its own tri-state setting (`never`, `on_empty`, `on_all_forgotten`).
 
-- With the default purge mode `on_all_forgotten`, enabling `auto_forget_on_leave` forces a forget at every leave, so the last leave becomes both the last membership transition and the last forget — the room is purged immediately.
-- With `on_empty`, the room is already purged on the last leave regardless of forgotten state, so auto-forget makes no difference to the purge timing but still clears the leaving user's history access for any room that stays around (e.g. because other locals are still in it).
+- With the default purge mode `on_all_forgotten`, enabling `auto_forget_on_leave` forces a forget at every leave, so the last leave becomes both the last membership transition and the last forget. The room is purged immediately.
+- With `on_empty`, the room is already purged on the last leave regardless of forgotten state, so auto-forget makes no difference to the purge timing. It still clears the leaving user's history access for any room that stays around (e.g. because other locals are still in it).
 
 See [Auto-purging empty rooms](/administration/auto-purge-empty-rooms/) for the full interaction table.
+
+### Caveat: `on_empty` with `auto_forget_on_leave: false`
+
+This combination is the one mismatch worth flagging.
+With `auto_forget_on_leave: false` the server advertises `m.forget_forced_upon_leave: { enabled: false }`, so a compliant client expects rooms to stick around after a leave and shows the "Forget room?" prompt.
+With `auto_purge_empty_rooms: on_empty` the room is destroyed whenever the last local member leaves, which from that user's point of view is indistinguishable from forgetting.
+The client's expectation no longer matches what the server does for that specific case.
+
+Zendrite does not pretend the capability is `true` here, because for multi-user rooms it really isn't (the leaving user keeps history access until they `/forget`, exactly as advertised). The mismatch only bites when the leaving user is also the last local member. If that combination matters for your deployment, enable `auto_forget_on_leave` so the capability and the behaviour line up.
 
 ## Capability advertisement
 

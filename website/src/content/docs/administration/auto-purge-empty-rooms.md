@@ -39,7 +39,7 @@ The auto-purge mode pairs with [`auto_forget_on_leave`](/administration/auto-for
 | --- | --- | --- |
 | `false` (default) | `on_all_forgotten` (default) | Users keep history access after leaving until they `/forget`. The room is purged after the last non-forgotten row goes away. |
 | `true` | `on_empty` *or* `on_all_forgotten` | Instant cleanup: the last leave forgets the user, and the room is purged immediately. The two modes coincide in this case. |
-| `false` | `on_empty` | The room is purged when the last local user leaves, even if they did not `/forget`. Their `/messages` access disappears with the room. |
+| `false` | `on_empty` | The room is purged when the last local user leaves, even if they did not `/forget`. Their `/messages` access disappears with the room. See the [caveat in the auto-forget docs](/administration/auto-forget-on-leave/#caveat-on_empty-with-auto_forget_on_leave-false): the advertised `m.forget_forced_upon_leave: false` capability is honest for multi-user rooms but does not predict the last-user-leaves case. |
 | any | `never` | Nothing happens automatically. Use [`/admin/purgeRoom`](/administration/adminapi/#post-_zendriteadminpurgeroomroomid) to clean up. |
 
 The default combination (`auto_forget_on_leave: false`, `auto_purge_empty_rooms: on_all_forgotten`) is the most conservative choice that still removes truly idle rooms: users get to browse pre-leave history until they explicitly forget, and once they do the storage is reclaimed.
