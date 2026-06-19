@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/internal"
@@ -164,29 +165,34 @@ func (m *Migrator) ensureMigrationsTable(ctx context.Context) error {
 		return fmt.Errorf("unable to create db_migrations: %w", err)
 	}
 
-	rows, err := m.db.QueryContext(ctx, "SELECT * FROM db_migrations LIMIT 0")
+	columnsQuery := "SELECT name FROM pragma_table_info('db_migrations')"
+	if _, ok := m.db.Driver().(*stdlib.Driver); ok {
+		columnsQuery = "" +
+			"SELECT column_name FROM information_schema.columns" +
+			" WHERE table_schema = current_schema()" +
+			" AND table_name = 'db_migrations'"
+	}
+	rows, err := m.db.QueryContext(ctx, columnsQuery)
 	if err != nil {
 		return fmt.Errorf("unable to inspect db_migrations: %w", err)
 	}
-	columns, err := rows.Columns()
-	if rowsErr := rows.Err(); err == nil {
-		err = rowsErr
-	}
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return fmt.Errorf("unable to inspect db_migrations columns: %w", err)
-	}
+	defer internal.CloseAndLogIfError(ctx, rows, "ensureMigrationsTable: rows.close() failed")
 
 	var hasDendriteVersion, hasZendriteVersion bool
-	for _, column := range columns {
+	for rows.Next() {
+		var column string
+		if err = rows.Scan(&column); err != nil {
+			return fmt.Errorf("unable to inspect db_migrations columns: %w", err)
+		}
 		switch column {
 		case "dendrite_version":
 			hasDendriteVersion = true
 		case "zendrite_version":
 			hasZendriteVersion = true
 		}
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("unable to inspect db_migrations columns: %w", err)
 	}
 
 	if hasDendriteVersion && !hasZendriteVersion {
