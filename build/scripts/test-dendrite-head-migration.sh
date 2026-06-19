@@ -39,7 +39,7 @@ if [ "$backend" = postgres ]; then
     -e POSTGRES_HOST_AUTH_METHOD=trust \
     -e POSTGRES_DB=zendrite \
     -v "$postgres_volume:/var/lib/postgresql/data" \
-    postgres:17-bookworm >/dev/null
+    postgres:17-trixie >/dev/null
 
   until docker exec "$postgres_container" pg_isready -U postgres -d zendrite >/dev/null 2>&1; do
     sleep 1
