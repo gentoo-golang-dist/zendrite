@@ -34,6 +34,8 @@ const insertVersionSQL = "" +
 
 const selectDBMigrationsSQL = "SELECT version FROM db_migrations"
 
+var dbMigrationsSetupMutex sync.Mutex
+
 // Migration defines a migration to be run.
 type Migration struct {
 	// Version is a simple description/name of this migration.
@@ -133,14 +135,8 @@ func (m *Migrator) insertMigration(ctx context.Context, txn *sql.Tx, migrationNa
 // migrations table, if it doesn't exist.
 func (m *Migrator) ExecutedMigrations(ctx context.Context) (map[string]struct{}, error) {
 	result := make(map[string]struct{})
-	// Attempt to rename the legacy "dendrite_version" column. This handles
-	// existing databases created by Dendrite. The rename is idempotent: it
-	// silently fails on fresh databases (column doesn't exist) and on
-	// databases that have already been migrated.
-	_, _ = m.db.ExecContext(ctx, renameDBMigrationsColumnSQL)
-	_, err := m.db.ExecContext(ctx, createDBMigrationsSQL)
-	if err != nil {
-		return nil, fmt.Errorf("unable to create db_migrations: %w", err)
+	if err := m.ensureMigrationsTable(ctx); err != nil {
+		return nil, err
 	}
 	rows, err := m.db.QueryContext(ctx, selectDBMigrationsSQL)
 	if err != nil {
@@ -156,6 +152,49 @@ func (m *Migrator) ExecutedMigrations(ctx context.Context) (map[string]struct{},
 	}
 
 	return result, rows.Err()
+}
+
+func (m *Migrator) ensureMigrationsTable(ctx context.Context) error {
+	// Each component has its own Migrator, so serialize the one-time schema
+	// inspection and legacy rename within this process.
+	dbMigrationsSetupMutex.Lock()
+	defer dbMigrationsSetupMutex.Unlock()
+
+	if _, err := m.db.ExecContext(ctx, createDBMigrationsSQL); err != nil {
+		return fmt.Errorf("unable to create db_migrations: %w", err)
+	}
+
+	rows, err := m.db.QueryContext(ctx, "SELECT * FROM db_migrations LIMIT 0")
+	if err != nil {
+		return fmt.Errorf("unable to inspect db_migrations: %w", err)
+	}
+	columns, err := rows.Columns()
+	if rowsErr := rows.Err(); err == nil {
+		err = rowsErr
+	}
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("unable to inspect db_migrations columns: %w", err)
+	}
+
+	var hasDendriteVersion, hasZendriteVersion bool
+	for _, column := range columns {
+		switch column {
+		case "dendrite_version":
+			hasDendriteVersion = true
+		case "zendrite_version":
+			hasZendriteVersion = true
+		}
+	}
+
+	if hasDendriteVersion && !hasZendriteVersion {
+		if _, err = m.db.ExecContext(ctx, renameDBMigrationsColumnSQL); err != nil {
+			return fmt.Errorf("unable to migrate db_migrations column: %w", err)
+		}
+	}
+	return nil
 }
 
 // InsertMigration creates the migrations table if it doesn't exist and
