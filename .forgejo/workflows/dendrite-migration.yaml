@@ -7,6 +7,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'build/scripts/DendriteMigration.Dockerfile'
+      - 'build/scripts/DendriteMigrationTest.Dockerfile'
       - 'build/scripts/dendrite-migration-entrypoint.sh'
       - 'build/scripts/test-dendrite-head-migration.sh'
       - '.forgejo/workflows/dendrite-migration.yaml'

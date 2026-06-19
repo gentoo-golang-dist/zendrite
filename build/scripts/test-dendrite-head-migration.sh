@@ -65,35 +65,43 @@ docker build \
   -t zendrite-migration-zendrite:current \
   "$root"
 
+docker build \
+  -f "$root/build/scripts/DendriteMigrationTest.Dockerfile" \
+  -t zendrite-migration-test:current \
+  "$root"
+
 start_homeserver() {
   name=$1
   image=$2
   docker run -d \
     --name "$name" \
     --network "$network" \
-    -p 127.0.0.1::8008 \
     -e SERVER_NAME=hs1 \
     -e DATABASE_URL="$database_url" \
     -v "$data_volume:/data" \
     "$image" >/dev/null
 
-  port=$(docker port "$name" 8008/tcp | sed 's/.*://')
-  url="http://127.0.0.1:$port"
   attempts=0
-  until curl --fail --silent "$url/_matrix/client/versions" >/dev/null; do
+  until docker exec "$name" \
+    curl --fail --silent "http://127.0.0.1:8008/_matrix/client/versions" >/dev/null; do
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 120 ]; then
-      docker logs "$name"
+      docker logs "$name" >&2
       return 1
     fi
     sleep 1
   done
-  printf '%s\n' "$url"
 }
 
-dendrite_url=$(start_homeserver "$dendrite_container" zendrite-migration-dendrite:head)
-go run "$root/cmd/dendrite-migration-test" -url "$dendrite_url" seed
+start_homeserver "$dendrite_container" zendrite-migration-dendrite:head
+docker run --rm \
+  --network "$network" \
+  zendrite-migration-test:current \
+  -url "http://$dendrite_container:8008" seed
 docker rm -f "$dendrite_container" >/dev/null
 
-zendrite_url=$(start_homeserver "$zendrite_container" zendrite-migration-zendrite:current)
-go run "$root/cmd/dendrite-migration-test" -url "$zendrite_url" verify
+start_homeserver "$zendrite_container" zendrite-migration-zendrite:current
+docker run --rm \
+  --network "$network" \
+  zendrite-migration-test:current \
+  -url "http://$zendrite_container:8008" verify
