@@ -30,8 +30,8 @@ jobs:
           - postgres
           - sqlite
     steps:
-      - name: Install Node.js
-        run: apk add --no-cache nodejs
+      - name: Install runner dependencies
+        run: apk add --no-cache curl git nodejs
       - uses: actions/checkout@v6
       - name: Set up Go
         uses: actions/setup-go@v6
