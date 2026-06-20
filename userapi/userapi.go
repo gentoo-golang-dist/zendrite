@@ -7,10 +7,13 @@
 package userapi
 
 import (
+	"context"
+	"math"
 	"net/http"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
 	fedsenderapi "codefloe.com/pat-s/zendrite/federationapi/api"
@@ -61,6 +64,9 @@ func NewInternalAPI(
 	)
 	if err != nil {
 		logrus.WithError(err).Panicf("failed to connect to accounts db")
+	}
+	if enableMetrics {
+		prometheus.MustRegister(newRegisteredUsersGauge(processContext.Context(), db))
 	}
 
 	keyDB, err := storage.NewKeyDatabase(cm, &zendriteCfg.KeyServer.Database)
@@ -153,4 +159,30 @@ func NewInternalAPI(
 	}
 
 	return userAPI
+}
+
+type accountCounter interface {
+	CountAccounts(ctx context.Context) (int64, error)
+}
+
+const registeredUsersMetricTimeout = 5 * time.Second
+
+func newRegisteredUsersGauge(processCtx context.Context, db accountCounter) prometheus.Collector {
+	return prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "zendrite_clientapi_reg_users_total",
+			Help: "Total number of registered users",
+		},
+		func() float64 {
+			ctx, cancel := context.WithTimeout(processCtx, registeredUsersMetricTimeout)
+			defer cancel()
+
+			count, err := db.CountAccounts(ctx)
+			if err != nil {
+				logrus.WithError(err).Error("failed to count registered users for Prometheus")
+				return math.NaN()
+			}
+			return float64(count)
+		},
+	)
 }
