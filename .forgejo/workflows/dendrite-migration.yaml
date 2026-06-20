@@ -3,9 +3,9 @@ name: Dendrite migration
 on:
   pull_request:
     paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
+      - '**/storage/**'
+      - 'internal/sqlutil/**'
+      - 'cmd/dendrite-migration-test/**'
       - 'build/scripts/DendriteMigration.Dockerfile'
       - 'build/scripts/DendriteMigrationTest.Dockerfile'
       - 'build/scripts/dendrite-migration-entrypoint.sh'

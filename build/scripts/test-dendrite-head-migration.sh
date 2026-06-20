@@ -12,17 +12,22 @@ esac
 
 root=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
 tmp=$(mktemp -d)
-network="zendrite-migration-$$"
-data_volume="zendrite-migration-data-$$"
-postgres_volume="zendrite-migration-postgres-$$"
-dendrite_container="zendrite-migration-dendrite-$$"
-zendrite_container="zendrite-migration-zendrite-$$"
-postgres_container="zendrite-migration-postgres-$$"
+run_id="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${backend}-$$"
+network="zendrite-migration-$run_id"
+data_volume="zendrite-migration-data-$run_id"
+postgres_volume="zendrite-migration-postgres-$run_id"
+dendrite_container="zendrite-migration-dendrite-$run_id"
+zendrite_container="zendrite-migration-zendrite-$run_id"
+postgres_container="zendrite-migration-postgres-$run_id"
+dendrite_image="zendrite-migration-dendrite:$run_id"
+zendrite_image="zendrite-migration-zendrite:$run_id"
+test_image="zendrite-migration-test:$run_id"
 
 cleanup() {
   docker rm -f "$dendrite_container" "$zendrite_container" "$postgres_container" >/dev/null 2>&1 || true
   docker volume rm -f "$data_volume" "$postgres_volume" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  docker image rm -f "$dendrite_image" "$zendrite_image" "$test_image" >/dev/null 2>&1 || true
   rm -rf "$tmp"
 }
 trap cleanup EXIT INT TERM
@@ -56,18 +61,18 @@ cp "$root/build/scripts/dendrite-migration-entrypoint.sh" "$tmp/dendrite/build/s
 docker build \
   -f "$tmp/dendrite/Dockerfile.migration" \
   --build-arg BINARY=dendrite \
-  -t zendrite-migration-dendrite:head \
+  -t "$dendrite_image" \
   "$tmp/dendrite"
 
 docker build \
   -f "$root/build/scripts/DendriteMigration.Dockerfile" \
   --build-arg BINARY=zendrite \
-  -t zendrite-migration-zendrite:current \
+  -t "$zendrite_image" \
   "$root"
 
 docker build \
   -f "$root/build/scripts/DendriteMigrationTest.Dockerfile" \
-  -t zendrite-migration-test:current \
+  -t "$test_image" \
   "$root"
 
 start_homeserver() {
@@ -93,15 +98,15 @@ start_homeserver() {
   done
 }
 
-start_homeserver "$dendrite_container" zendrite-migration-dendrite:head
+start_homeserver "$dendrite_container" "$dendrite_image"
 docker run --rm \
   --network "$network" \
-  zendrite-migration-test:current \
+  "$test_image" \
   -url "http://$dendrite_container:8008" seed
 docker rm -f "$dendrite_container" >/dev/null
 
-start_homeserver "$zendrite_container" zendrite-migration-zendrite:current
+start_homeserver "$zendrite_container" "$zendrite_image"
 docker run --rm \
   --network "$network" \
-  zendrite-migration-test:current \
+  "$test_image" \
   -url "http://$zendrite_container:8008" verify
