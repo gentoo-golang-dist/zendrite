@@ -7,7 +7,6 @@
 package userapi
 
 import (
-	"context"
 	"math"
 	"net/http"
 	"time"
@@ -65,8 +64,17 @@ func NewInternalAPI(
 	if err != nil {
 		logrus.WithError(err).Panicf("failed to connect to accounts db")
 	}
+	var registeredUsersGauge prometheus.Gauge
 	if enableMetrics {
-		prometheus.MustRegister(newRegisteredUsersGauge(processContext.Context(), db))
+		registeredUsersGauge = newRegisteredUsersGauge()
+		count, countErr := db.CountAccounts(processContext.Context())
+		if countErr != nil {
+			logrus.WithError(countErr).Error("failed to count registered users for Prometheus")
+			registeredUsersGauge.Set(math.NaN())
+		} else {
+			registeredUsersGauge.Set(float64(count))
+		}
+		prometheus.MustRegister(registeredUsersGauge)
 	}
 
 	keyDB, err := storage.NewKeyDatabase(cm, &zendriteCfg.KeyServer.Database)
@@ -101,6 +109,7 @@ func NewInternalAPI(
 		DisableTLSValidation: zendriteCfg.UserAPI.PushGatewayDisableTLSValidation,
 		PgClient:             pgClient,
 		FedClient:            fedClient,
+		RegisteredUsersGauge: registeredUsersGauge,
 	}
 
 	updater := internal.NewDeviceListUpdater(processContext, keyDB, userAPI, keyChangeProducer, fedClient, zendriteCfg.UserAPI.WorkerCount, rsAPI, zendriteCfg.Global.ServerName, enableMetrics, blacklistedOrBackingOffFn)
@@ -161,28 +170,11 @@ func NewInternalAPI(
 	return userAPI
 }
 
-type accountCounter interface {
-	CountAccounts(ctx context.Context) (int64, error)
-}
-
-const registeredUsersMetricTimeout = 5 * time.Second
-
-func newRegisteredUsersGauge(processCtx context.Context, db accountCounter) prometheus.Collector {
-	return prometheus.NewGaugeFunc(
+func newRegisteredUsersGauge() prometheus.Gauge {
+	return prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "zendrite_clientapi_reg_users_total",
 			Help: "Total number of registered users",
-		},
-		func() float64 {
-			ctx, cancel := context.WithTimeout(processCtx, registeredUsersMetricTimeout)
-			defer cancel()
-
-			count, err := db.CountAccounts(ctx)
-			if err != nil {
-				logrus.WithError(err).Error("failed to count registered users for Prometheus")
-				return math.NaN()
-			}
-			return float64(count)
 		},
 	)
 }

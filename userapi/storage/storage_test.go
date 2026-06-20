@@ -542,8 +542,8 @@ func Test_Notification(t *testing.T) {
 				RoomID: roomID,
 				TS:     spec.AsTimestamp(ts),
 			}
-			err = db.InsertNotification(ctx, aliceLocalpart, aliceDomain, eventID, uint64(i+1), nil, notification)
-			assert.NoError(t, err, "unable to insert notification")
+			insertErr := db.InsertNotification(ctx, aliceLocalpart, aliceDomain, eventID, uint64(i+1), nil, notification)
+			assert.NoError(t, insertErr, "unable to insert notification")
 		}
 
 		// get notifications

@@ -6,7 +6,6 @@
 package userapi
 
 import (
-	"context"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,15 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type staticAccountCounter int64
-
-func (c staticAccountCounter) CountAccounts(context.Context) (int64, error) {
-	return int64(c), nil
-}
-
 func TestRegisteredUsersGauge(t *testing.T) {
 	registry := prometheus.NewPedanticRegistry()
-	require.NoError(t, registry.Register(newRegisteredUsersGauge(context.Background(), staticAccountCounter(42))))
+	gauge := newRegisteredUsersGauge()
+	gauge.Set(42)
+	require.NoError(t, registry.Register(gauge))
 
 	metricFamilies, err := registry.Gather()
 	require.NoError(t, err)
