@@ -315,10 +315,15 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 	}
 
 	if localpart == "" {
-		// No mapping exists yet. Use the username claim from the introspection response.
+		// No mapping exists yet. Use the username claim from the introspection response,
+		// falling back to the subject claim for providers like Ory Hydra that don't
+		// expose a username.
 		localpart = sanitizeLocalpart(introspection.Username)
 		if localpart == "" {
-			logrus.WithField("sub", sub).Warn("MSC3861: introspection response has no username and no existing external ID mapping")
+			localpart = sanitizeLocalpart(introspection.Sub)
+		}
+		if localpart == "" {
+			logrus.WithField("sub", sub).Warn("MSC3861: introspection response has no username, no sub, and no existing external ID mapping")
 			return nil
 		}
 

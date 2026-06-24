@@ -600,7 +600,7 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			}
 		})
 
-		t.Run("NoUsername", func(t *testing.T) {
+		t.Run("NoUsernameFallsBackToSub", func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
@@ -620,8 +620,12 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			if err := userAPI.queryAccessTokenMSC3861(context.Background(), req, res); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if res.Device != nil {
-				t.Errorf("expected nil device when no username, got %+v", res.Device)
+			if res.Device == nil {
+				t.Fatal("expected device when falling back to sub")
+			}
+			expectedUserID := "@opaque-uuid-nousername:test"
+			if res.Device.UserID != expectedUserID {
+				t.Errorf("expected user ID %s, got %s", expectedUserID, res.Device.UserID)
 			}
 		})
 	})
