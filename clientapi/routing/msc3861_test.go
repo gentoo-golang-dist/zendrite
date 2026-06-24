@@ -68,9 +68,14 @@ func TestMSC3861_DisabledEndpoints(t *testing.T) {
 
 	endpoints := []endpointTest{
 		{"register", http.MethodPost, "/_matrix/client/v3/register"},
+		{"register available", http.MethodGet, "/_matrix/client/v3/register/available"},
 		{"password", http.MethodPost, "/_matrix/client/v3/account/password"},
 		{"deactivate", http.MethodPost, "/_matrix/client/v3/account/deactivate"},
 		{"3pid POST", http.MethodPost, "/_matrix/client/v3/account/3pid"},
+		{"3pid delete", http.MethodPost, "/_matrix/client/v3/account/3pid/delete"},
+		{"3pid email requestToken", http.MethodPost, "/_matrix/client/v3/account/3pid/email/requestToken"},
+		{"register email requestToken", http.MethodPost, "/_matrix/client/v3/register/email/requestToken"},
+		{"auth fallback web", http.MethodGet, "/_matrix/client/v3/auth/m.login.sso/fallback/web"},
 		{"device PUT", http.MethodPut, "/_matrix/client/v3/devices/ABCDEF"},
 		{"device DELETE", http.MethodDelete, "/_matrix/client/v3/devices/ABCDEF"},
 		{"delete_devices", http.MethodPost, "/_matrix/client/v3/delete_devices"},
@@ -173,6 +178,75 @@ func TestMSC3861_WellKnown(t *testing.T) {
 	}
 	if resp.Authentication.Account != cfg.MSCs.MSC3861.AccountManagementURL {
 		t.Errorf("expected account %s, got %s", cfg.MSCs.MSC3861.AccountManagementURL, resp.Authentication.Account)
+	}
+}
+
+func TestMSC3861_AuthMetadata(t *testing.T) {
+	t.Parallel()
+	routers, cfg, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v1/auth_metadata")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp AuthMetadataResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Issuer != cfg.MSCs.MSC3861.Issuer {
+		t.Errorf("expected issuer %s, got %s", cfg.MSCs.MSC3861.Issuer, resp.Issuer)
+	}
+	if resp.AuthorizationEndpoint == "" {
+		t.Error("expected non-empty authorization_endpoint")
+	}
+	if resp.TokenEndpoint == "" {
+		t.Error("expected non-empty token_endpoint")
+	}
+	if resp.RegistrationEndpoint == "" {
+		t.Error("expected non-empty registration_endpoint")
+	}
+	if resp.RevocationEndpoint == "" {
+		t.Error("expected non-empty revocation_endpoint")
+	}
+	if resp.JWKSURI == "" {
+		t.Error("expected non-empty jwks_uri")
+	}
+}
+
+func TestMSC3861_MASAdminRoutesRequireAdminToken(t *testing.T) {
+	t.Parallel()
+
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	defer closeDB()
+	cfg.ClientAPI.RateLimiting.Enabled = false
+	cfg.MSCs.MSCs = []string{"msc3861"}
+	cfg.MSCs.MSC3861 = config.MSC3861Config{
+		Issuer:       "https://auth.example.com",
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		// AdminToken deliberately left empty.
+	}
+	cfg.Global.WellKnownClientName = "https://matrix.example.com"
+
+	natsInstance := jetstream.NATSInstance{}
+	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+	caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+	rsAPI.SetFederationAPI(nil, nil)
+	userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, &natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+
+	routers := httputil.NewRouters()
+	Setup(routers, cfg, nil, nil, userAPI, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
+
+	req := test.NewRequest(t, http.MethodGet, "/_synapse/admin/v1/username_available?username=alice")
+	rec := httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 when admin_token is empty, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"net/url"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 )
@@ -50,6 +51,64 @@ type MSC3861Config struct {
 	// IntrospectionEndpoint overrides the OIDC introspection endpoint URL.
 	// If empty, defaults to {Issuer}/oauth2/introspect.
 	IntrospectionEndpoint string `yaml:"introspection_endpoint"`
+
+	// AuthorizationEndpoint overrides the OIDC authorization endpoint URL.
+	// If empty, defaults to {Issuer}/oauth2/auth.
+	AuthorizationEndpoint string `yaml:"authorization_endpoint"`
+
+	// TokenEndpoint overrides the OIDC token endpoint URL.
+	// If empty, defaults to {Issuer}/oauth2/token.
+	TokenEndpoint string `yaml:"token_endpoint"`
+
+	// RegistrationEndpoint overrides the OIDC dynamic client registration endpoint URL.
+	// If empty, defaults to {Issuer}/oauth2/clients/register.
+	RegistrationEndpoint string `yaml:"registration_endpoint"`
+
+	// RevocationEndpoint overrides the OIDC token revocation endpoint URL.
+	// If empty, defaults to {Issuer}/oauth2/revoke.
+	RevocationEndpoint string `yaml:"revocation_endpoint"`
+
+	// JWKSURI overrides the JWKS URI advertised in authorization server metadata.
+	// If empty, defaults to {Issuer}/oauth2/keys.
+	JWKSURI string `yaml:"jwks_uri"`
+}
+
+// msc3861Endpoint returns the configured endpoint or the default built from the issuer.
+func (c *MSC3861Config) msc3861Endpoint(configured, defaultPath string) string {
+	if configured != "" {
+		return configured
+	}
+	return strings.TrimSuffix(c.Issuer, "/") + defaultPath
+}
+
+// AuthorizationEndpointOrDefault returns the authorization endpoint to advertise.
+func (c *MSC3861Config) AuthorizationEndpointOrDefault() string {
+	return c.msc3861Endpoint(c.AuthorizationEndpoint, "/oauth2/auth")
+}
+
+// TokenEndpointOrDefault returns the token endpoint to advertise.
+func (c *MSC3861Config) TokenEndpointOrDefault() string {
+	return c.msc3861Endpoint(c.TokenEndpoint, "/oauth2/token")
+}
+
+// RegistrationEndpointOrDefault returns the dynamic client registration endpoint to advertise.
+func (c *MSC3861Config) RegistrationEndpointOrDefault() string {
+	return c.msc3861Endpoint(c.RegistrationEndpoint, "/oauth2/clients/register")
+}
+
+// RevocationEndpointOrDefault returns the token revocation endpoint to advertise.
+func (c *MSC3861Config) RevocationEndpointOrDefault() string {
+	return c.msc3861Endpoint(c.RevocationEndpoint, "/oauth2/revoke")
+}
+
+// JWKSURIOrDefault returns the JWKS URI to advertise.
+func (c *MSC3861Config) JWKSURIOrDefault() string {
+	return c.msc3861Endpoint(c.JWKSURI, "/oauth2/keys")
+}
+
+// IntrospectionEndpointOrDefault returns the token introspection endpoint to use.
+func (c *MSC3861Config) IntrospectionEndpointOrDefault() string {
+	return c.msc3861Endpoint(c.IntrospectionEndpoint, "/oauth2/introspect")
 }
 
 func (c *MSCs) Defaults(opts DefaultOpts) {

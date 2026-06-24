@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/sirupsen/logrus"
 
+	zinternal "codefloe.com/pat-s/zendrite/internal"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
@@ -49,17 +51,22 @@ var (
 	introspectionCache     *ttlcache.Cache[string, *cachedIntrospection]
 	introspectionCacheOnce sync.Once
 
-	// DiscoveredEndpoint caches the discovered introspection endpoint.
-	discoveredEndpoint     string
-	discoveredEndpointTime time.Time
-	discoveryMu            sync.Mutex
+	// DiscoveredEndpoints caches the discovered introspection endpoint per issuer.
+	discoveredEndpoints   = make(map[string]*oidcDiscoveryCache)
+	discoveredEndpointsMu sync.Mutex
 )
+
+type oidcDiscoveryCache struct {
+	endpoint string
+	cachedAt time.Time
+}
 
 const (
 	introspectionCacheTTL     = 30 * time.Second
 	introspectionCacheMaxSize = 10_000
 	discoveryEndpointCacheTTL = 1 * time.Hour
-	deviceScopePrefix         = "urn:matrix:org.matrix.msc2967.client:device:"
+	deviceScopePrefix         = "urn:matrix:device:"
+	legacyDeviceScopePrefix   = "urn:matrix:org.matrix.msc2967.client:device:"
 )
 
 func getIntrospectionCache() *ttlcache.Cache[string, *cachedIntrospection] {
@@ -80,27 +87,59 @@ func hashToken(token string) string {
 }
 
 // extractDeviceIDFromScope parses the OAuth scope string for a device ID
-// encoded as urn:matrix:org.matrix.msc2967.client:device:DEVICEID.
+// encoded as urn:matrix:device:DEVICEID (or the legacy unstable prefix).
 func extractDeviceIDFromScope(scope string) string {
 	for _, part := range strings.Fields(scope) {
-		if strings.HasPrefix(part, deviceScopePrefix) {
+		switch {
+		case strings.HasPrefix(part, deviceScopePrefix):
 			return strings.TrimPrefix(part, deviceScopePrefix)
+		case strings.HasPrefix(part, legacyDeviceScopePrefix):
+			return strings.TrimPrefix(part, legacyDeviceScopePrefix)
 		}
 	}
 	return ""
 }
 
-// discoverIntrospectionEndpoint fetches the OIDC discovery document from the issuer
-// and returns the introspection_endpoint. Results are cached for 1 hour.
-func discoverIntrospectionEndpoint(ctx context.Context, issuer string, httpClient *http.Client) string {
-	discoveryMu.Lock()
-	defer discoveryMu.Unlock()
+var localpartInvalidChars = regexp.MustCompile(`[^0-9a-z_\-+=./]+`)
 
-	if discoveredEndpoint != "" && time.Since(discoveredEndpointTime) < discoveryEndpointCacheTTL {
-		return discoveredEndpoint
+// sanitizeLocalpart converts an arbitrary OIDC username claim into a valid
+// Matrix localpart. Invalid characters are replaced with underscores, the
+// result is lowercased, leading underscores are avoided, and it is trimmed
+// to a sensible length. An empty input yields an empty result.
+func sanitizeLocalpart(input string) string {
+	if strings.TrimSpace(input) == "" {
+		return ""
 	}
 
-	discoveryURL := strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
+	s := strings.ToLower(input)
+	s = localpartInvalidChars.ReplaceAllString(s, "_")
+	// Trim trailing underscores; leading underscores are handled below.
+	s = strings.TrimRight(s, "_")
+
+	if strings.HasPrefix(s, "_") {
+		s = "u" + s
+	}
+
+	const maxLocalpartLen = 64
+	if len(s) > maxLocalpartLen {
+		s = s[:maxLocalpartLen]
+	}
+
+	return s
+}
+
+// discoverIntrospectionEndpoint fetches the OIDC discovery document from the issuer
+// and returns the introspection_endpoint. Results are cached for 1 hour per issuer.
+func discoverIntrospectionEndpoint(ctx context.Context, issuer string, httpClient *http.Client) string {
+	discoveredEndpointsMu.Lock()
+	defer discoveredEndpointsMu.Unlock()
+
+	issuer = strings.TrimSuffix(issuer, "/")
+	if cached, ok := discoveredEndpoints[issuer]; ok && cached.endpoint != "" && time.Since(cached.cachedAt) < discoveryEndpointCacheTTL {
+		return cached.endpoint
+	}
+
+	discoveryURL := issuer + "/.well-known/openid-configuration"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
@@ -128,12 +167,15 @@ func discoverIntrospectionEndpoint(ctx context.Context, issuer string, httpClien
 	}
 
 	if discovery.IntrospectionEndpoint != "" {
-		discoveredEndpoint = discovery.IntrospectionEndpoint
-		discoveredEndpointTime = time.Now()
-		logrus.WithField("endpoint", discoveredEndpoint).Info("MSC3861: discovered introspection endpoint")
+		discoveredEndpoints[issuer] = &oidcDiscoveryCache{
+			endpoint: discovery.IntrospectionEndpoint,
+			cachedAt: time.Now(),
+		}
+		logrus.WithField("endpoint", discovery.IntrospectionEndpoint).Info("MSC3861: discovered introspection endpoint")
+		return discovery.IntrospectionEndpoint
 	}
 
-	return discoveredEndpoint
+	return ""
 }
 
 // resolveIntrospectionEndpoint returns the introspection endpoint to use,
@@ -147,7 +189,7 @@ func resolveIntrospectionEndpoint(ctx context.Context, msc3861 *config.MSC3861Co
 		return endpoint
 	}
 
-	return strings.TrimSuffix(msc3861.Issuer, "/") + "/oauth2/introspect"
+	return msc3861.IntrospectionEndpointOrDefault()
 }
 
 // introspectToken calls the OIDC introspection endpoint to validate an access token.
@@ -249,7 +291,13 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		return nil
 	}
 
-	// 5. Resolve user identity via external ID mapping.
+	// 5. Validate token expiry if present.
+	if introspection.Exp > 0 && time.Now().Unix() > introspection.Exp {
+		logrus.WithField("exp", introspection.Exp).Warn("MSC3861: access token has expired")
+		return nil
+	}
+
+	// 6. Resolve user identity via external ID mapping.
 	sub := introspection.Sub
 	if sub == "" {
 		logrus.Warn("MSC3861: introspection response has empty sub")
@@ -268,7 +316,7 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 
 	if localpart == "" {
 		// No mapping exists yet. Use the username claim from the introspection response.
-		localpart = introspection.Username
+		localpart = sanitizeLocalpart(introspection.Username)
 		if localpart == "" {
 			logrus.WithField("sub", sub).Warn("MSC3861: introspection response has no username and no existing external ID mapping")
 			return nil
@@ -289,13 +337,19 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		}).Info("MSC3861: created external ID mapping")
 	}
 
-	// 6. Determine account type from scope.
+	// 6. Validate the localpart before it is used for account provisioning.
+	if err := zinternal.ValidateUsername(localpart, serverName); err != nil {
+		logrus.WithError(err).WithField("localpart", localpart).Warn("MSC3861: localpart is not valid")
+		return nil
+	}
+
+	// 7. Determine account type from scope.
 	accountType := api.AccountTypeUser
 	if strings.Contains(introspection.Scope, "urn:synapse:admin:*") {
 		accountType = api.AccountTypeAdmin
 	}
 
-	// 7. Auto-provision user account if it doesn't exist.
+	// 8. Auto-provision user account if it doesn't exist.
 	var createRes api.PerformAccountCreationResponse
 	if err := a.PerformAccountCreation(ctx, &api.PerformAccountCreationRequest{
 		AccountType: accountType,

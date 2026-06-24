@@ -142,17 +142,14 @@ func TestIntrospectToken_ServerError(t *testing.T) {
 
 func TestIntrospectToken_DefaultEndpoint(t *testing.T) {
 	// Not parallel: this test relies on the package-level discovery cache.
-	discoveryMu.Lock()
-	savedEndpoint := discoveredEndpoint
-	savedTime := discoveredEndpointTime
-	discoveredEndpoint = ""
-	discoveredEndpointTime = time.Time{}
-	discoveryMu.Unlock()
+	discoveredEndpointsMu.Lock()
+	saved := discoveredEndpoints
+	discoveredEndpoints = make(map[string]*oidcDiscoveryCache)
+	discoveredEndpointsMu.Unlock()
 	defer func() {
-		discoveryMu.Lock()
-		discoveredEndpoint = savedEndpoint
-		discoveredEndpointTime = savedTime
-		discoveryMu.Unlock()
+		discoveredEndpointsMu.Lock()
+		discoveredEndpoints = saved
+		discoveredEndpointsMu.Unlock()
 	}()
 
 	var requestedPath string
@@ -224,10 +221,13 @@ func TestExtractDeviceIDFromScope(t *testing.T) {
 		scope    string
 		expected string
 	}{
+		{"openid urn:matrix:device:ABCDEF", "ABCDEF"},
 		{"openid urn:matrix:org.matrix.msc2967.client:device:ABCDEF", "ABCDEF"},
 		{"openid urn:matrix:org.matrix.msc2967.client:api:*", ""},
+		{"urn:matrix:device:MyDevice openid", "MyDevice"},
 		{"urn:matrix:org.matrix.msc2967.client:device:MyDevice openid", "MyDevice"},
 		{"", ""},
+		{"urn:matrix:device:", ""},
 		{"urn:matrix:org.matrix.msc2967.client:device:", ""},
 	}
 
@@ -241,17 +241,14 @@ func TestExtractDeviceIDFromScope(t *testing.T) {
 
 func TestDiscoverIntrospectionEndpoint(t *testing.T) {
 	// Not parallel: this test relies on the package-level discovery cache.
-	discoveryMu.Lock()
-	savedEndpoint := discoveredEndpoint
-	savedTime := discoveredEndpointTime
-	discoveredEndpoint = ""
-	discoveredEndpointTime = time.Time{}
-	discoveryMu.Unlock()
+	discoveredEndpointsMu.Lock()
+	saved := discoveredEndpoints
+	discoveredEndpoints = make(map[string]*oidcDiscoveryCache)
+	discoveredEndpointsMu.Unlock()
 	defer func() {
-		discoveryMu.Lock()
-		discoveredEndpoint = savedEndpoint
-		discoveredEndpointTime = savedTime
-		discoveryMu.Unlock()
+		discoveredEndpointsMu.Lock()
+		discoveredEndpoints = saved
+		discoveredEndpointsMu.Unlock()
 	}()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,6 +266,73 @@ func TestDiscoverIntrospectionEndpoint(t *testing.T) {
 	endpoint := discoverIntrospectionEndpoint(context.Background(), srv.URL, srv.Client())
 	if endpoint != "https://auth.example.com/oauth2/introspect" {
 		t.Errorf("expected discovered endpoint, got %q", endpoint)
+	}
+}
+
+func TestDiscoverIntrospectionEndpoint_PerIssuerCache(t *testing.T) {
+	// Not parallel: this test relies on the package-level discovery cache.
+	discoveredEndpointsMu.Lock()
+	saved := discoveredEndpoints
+	discoveredEndpoints = make(map[string]*oidcDiscoveryCache)
+	discoveredEndpointsMu.Unlock()
+	defer func() {
+		discoveredEndpointsMu.Lock()
+		discoveredEndpoints = saved
+		discoveredEndpointsMu.Unlock()
+	}()
+
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"introspection_endpoint": "https://a.example.com/introspect"}) //nolint:errcheck
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer a.Close()
+
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"introspection_endpoint": "https://b.example.com/introspect"}) //nolint:errcheck
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer b.Close()
+
+	if got := discoverIntrospectionEndpoint(context.Background(), a.URL, a.Client()); got != "https://a.example.com/introspect" {
+		t.Errorf("issuer A: expected https://a.example.com/introspect, got %q", got)
+	}
+	if got := discoverIntrospectionEndpoint(context.Background(), b.URL, b.Client()); got != "https://b.example.com/introspect" {
+		t.Errorf("issuer B: expected https://b.example.com/introspect, got %q", got)
+	}
+	// A second lookup for issuer A must still return A's endpoint, not B's.
+	if got := discoverIntrospectionEndpoint(context.Background(), a.URL, a.Client()); got != "https://a.example.com/introspect" {
+		t.Errorf("issuer A cached: expected https://a.example.com/introspect, got %q", got)
+	}
+}
+
+func TestSanitizeLocalpart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"alice", "alice"},
+		{"Alice", "alice"},
+		{"alice@example.com", "alice_example.com"},
+		{"Alice.Smith_42", "alice.smith_42"},
+		{"_underscore", "u_underscore"},
+		{"", ""},
+		{"   ", ""},
+		{"foo!bar", "foo_bar"},
+	}
+	for _, tc := range tests {
+		got := sanitizeLocalpart(tc.input)
+		if got != tc.expected {
+			t.Errorf("sanitizeLocalpart(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
 	}
 }
 
@@ -351,6 +415,32 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			}
 			if res.Device.AccountType != api.AccountTypeUser {
 				t.Errorf("expected user account type, got %d", res.Device.AccountType)
+			}
+		})
+
+		t.Run("ExpiredToken", func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      "opaque-uuid-expired",
+					"scope":    "openid",
+					"username": "expireduser",
+					"exp":      time.Now().Add(-time.Hour).Unix(),
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			req := &api.QueryAccessTokenRequest{AccessToken: "expired-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(context.Background(), req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device != nil {
+				t.Errorf("expected nil device for expired token, got %+v", res.Device)
 			}
 		})
 
