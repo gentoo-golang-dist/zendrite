@@ -113,8 +113,9 @@ When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection
 **What changes when MSC3861 is enabled:**
 
 - Password-based registration and login are disabled.
-- `GET /login` returns only the `m.login.sso` flow.
-- `POST /login`, `/register`, `/account/password`, `/account/deactivate`, `/logout`, `/logout/all`, `/delete_devices`, and device modification endpoints return `403 M_FORBIDDEN`.
+- `GET /login` returns the legacy `m.login.sso` and `m.login.token` flows, so older Element Web/Desktop clients can sign in via the OIDC provider without native OIDC support.
+- `POST /login` accepts only `m.login.token` (used to redeem a login token issued by the SSO callback); other login types return `403 M_FORBIDDEN`.
+- `POST /register`, `/account/password`, `/account/deactivate`, `/logout`, `/logout/all`, `/delete_devices`, and device modification endpoints return `403 M_FORBIDDEN`.
 - `/.well-known/matrix/client` includes an `m.authentication` section with the OIDC issuer.
 - New users are auto-provisioned on first token introspection.
 
@@ -132,6 +133,12 @@ mscs:
     admin_token: ""                            # optional: static token for admin API access
     account_management_url: ""                 # optional: URL for account management UI
     introspection_endpoint: ""                 # optional: defaults to {issuer}/oauth2/introspect
+    authorization_endpoint: ""                 # optional: defaults to {issuer}/oauth2/auth
+    token_endpoint: ""                         # optional: defaults to {issuer}/oauth2/token
+    registration_endpoint: ""                  # optional: defaults to {issuer}/oauth2/clients/register
+    revocation_endpoint: ""                    # optional: defaults to {issuer}/oauth2/revoke
+    jwks_uri: ""                               # optional: defaults to {issuer}/oauth2/keys
+    sso_callback_url: ""                       # optional: defaults to {scheme}://{host}/_matrix/client/v3/login/sso/callback
 ```
 
 | Field | Required | Description |
