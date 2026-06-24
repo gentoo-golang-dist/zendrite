@@ -319,6 +319,32 @@ func TestMSC3861_ApplicationServiceRegisterStillWorks(t *testing.T) {
 	}
 }
 
+func TestMSC3861_VersionsAdvertisesMSC2965(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/versions")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		UnstableFeatures map[string]bool `json:"unstable_features"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if !resp.UnstableFeatures["org.matrix.msc2965"] {
+		t.Error("expected org.matrix.msc2965 unstable feature to be advertised")
+	}
+	if !resp.UnstableFeatures["org.matrix.msc2967"] {
+		t.Error("expected org.matrix.msc2967 unstable feature to be advertised")
+	}
+}
+
 func TestMSC3861_AuthMetadataUnstable(t *testing.T) {
 	t.Parallel()
 	routers, cfg, closeDB := setupMSC3861Routers(t)

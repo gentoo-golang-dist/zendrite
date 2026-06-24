@@ -104,6 +104,11 @@ func Setup(
 	for _, msc := range cfg.MSCs.MSCs {
 		unstableFeatures["org.matrix."+msc] = true
 	}
+	if oidcEnabled {
+		// MSC3861 implies the MSC2965 auth_metadata / MSC2967 scopes family.
+		unstableFeatures["org.matrix.msc2965"] = true
+		unstableFeatures["org.matrix.msc2967"] = true
+	}
 
 	// singleflight protects /join endpoints from being invoked
 	// multiple times from the same user and room, otherwise
