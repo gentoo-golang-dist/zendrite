@@ -150,11 +150,8 @@ func TestMSC3861_LoginFlowsGET(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if len(resp.Flows) != 1 {
-		t.Fatalf("expected 1 flow, got %d: %+v", len(resp.Flows), resp.Flows)
-	}
-	if resp.Flows[0]["type"] != "m.login.sso" {
-		t.Errorf("expected m.login.sso flow, got %s", resp.Flows[0]["type"])
+	if len(resp.Flows) != 0 {
+		t.Fatalf("expected 0 legacy flows, got %d: %+v", len(resp.Flows), resp.Flows)
 	}
 }
 
