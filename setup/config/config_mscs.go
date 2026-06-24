@@ -71,6 +71,11 @@ type MSC3861Config struct {
 	// JWKSURI overrides the JWKS URI advertised in authorization server metadata.
 	// If empty, defaults to {Issuer}/oauth2/keys.
 	JWKSURI string `yaml:"jwks_uri"`
+
+	// SSOCallbackURL overrides the callback URL used for the legacy SSO compat
+	// layer. If empty it is derived from the incoming request host as
+	// {scheme}://{host}/_matrix/client/v3/login/sso/callback.
+	SSOCallbackURL string `yaml:"sso_callback_url"`
 }
 
 // msc3861Endpoint returns the configured endpoint or the default built from the issuer.

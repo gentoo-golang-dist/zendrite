@@ -16,6 +16,7 @@ import (
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 
+	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
@@ -144,14 +145,22 @@ func TestMSC3861_LoginFlowsGET(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var resp struct {
-		Flows []map[string]string `json:"flows"`
-	}
+	var resp flows
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if len(resp.Flows) != 0 {
-		t.Fatalf("expected 0 legacy flows, got %d: %+v", len(resp.Flows), resp.Flows)
+	if len(resp.Flows) != 2 {
+		t.Fatalf("expected 2 flows (sso, token), got %d: %+v", len(resp.Flows), resp.Flows)
+	}
+	gotTypes := make(map[string]bool)
+	for _, f := range resp.Flows {
+		gotTypes[f.Type] = true
+	}
+	if !gotTypes[authtypes.LoginTypeSSO] {
+		t.Errorf("expected %s flow to be advertised", authtypes.LoginTypeSSO)
+	}
+	if !gotTypes[authtypes.LoginTypeToken] {
+		t.Errorf("expected %s flow to be advertised", authtypes.LoginTypeToken)
 	}
 }
 

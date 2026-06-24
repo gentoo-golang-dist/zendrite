@@ -31,20 +31,6 @@ func msc3861ForbiddenHandler(metricsName string) http.Handler {
 	})
 }
 
-// msc3861LoginFlows returns the login flows response when MSC3861 is active.
-// No legacy flows are advertised; clients must use the native OIDC flow via
-// auth_metadata (MSC2965).
-func msc3861LoginFlows(_ *config.MSCs) util.JSONResponse {
-	return util.JSONResponse{
-		Code: http.StatusOK,
-		JSON: struct {
-			Flows []map[string]string `json:"flows"`
-		}{
-			Flows: []map[string]string{},
-		},
-	}
-}
-
 // msc3861RegisterHandler returns a handler for POST /_matrix/client/v3/register
 // when MSC3861 is enabled. Application-service registrations
 // (m.login.application_service with an access token) are still allowed; all

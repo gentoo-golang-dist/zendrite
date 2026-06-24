@@ -12,5 +12,6 @@ const (
 	LoginTypeAltcha             = "org.codefloe.altcha"
 	LoginTypeApplicationService = "m.login.application_service"
 	LoginTypeToken              = "m.login.token"
+	LoginTypeSSO                = "m.login.sso"
 	LoginTypeRegistrationToken  = "m.login.registration_token"
 )

@@ -896,18 +896,22 @@ func Setup(
 	// Stub endpoints required by Element
 
 	if oidcEnabled {
+		ssoHandler := newSSOCompatHandler(&mscCfg.MSC3861, &zendriteCfg.Global, userAPI, http.DefaultClient, rateLimits)
+
 		v3mux.Handle(
 			"/login",
-			httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
-				if req.Method == http.MethodGet || req.Method == http.MethodOptions {
-					return msc3861LoginFlows(mscCfg)
-				}
-				return util.JSONResponse{
-					Code: http.StatusForbidden,
-					JSON: spec.Forbidden("Login is delegated to the OIDC provider via MSC3861."),
-				}
-			}),
+			msc3861LoginHandler(cfg, userAPI, rateLimits),
 		).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+
+		v3mux.Handle(
+			"/login/sso/redirect",
+			httputil.MakeExternalAPI("sso_redirect", ssoHandler.serveRedirect),
+		).Methods(http.MethodGet, http.MethodOptions)
+
+		v3mux.Handle(
+			"/login/sso/callback",
+			httputil.MakeExternalAPI("sso_callback", ssoHandler.serveCallback),
+		).Methods(http.MethodGet, http.MethodOptions)
 
 		v1mux.Handle(
 			"/auth_metadata",
