@@ -319,6 +319,27 @@ func TestMSC3861_ApplicationServiceRegisterStillWorks(t *testing.T) {
 	}
 }
 
+func TestMSC3861_AuthMetadataUnstable(t *testing.T) {
+	t.Parallel()
+	routers, cfg, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/unstable/org.matrix.msc2965/auth_metadata")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp AuthMetadataResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Issuer != cfg.MSCs.MSC3861.Issuer {
+		t.Errorf("expected issuer %s, got %s", cfg.MSCs.MSC3861.Issuer, resp.Issuer)
+	}
+}
+
 func TestMSC3861_AuthMetadataDisabled(t *testing.T) {
 	t.Parallel()
 

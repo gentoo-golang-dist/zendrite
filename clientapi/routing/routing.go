@@ -910,6 +910,13 @@ func Setup(
 				return msc3861AuthMetadata(mscCfg)
 			}),
 		).Methods(http.MethodGet, http.MethodOptions)
+
+		unstableMux.Handle(
+			"/org.matrix.msc2965/auth_metadata",
+			httputil.MakeExternalAPI("auth_metadata_unstable", func(req *http.Request) util.JSONResponse {
+				return msc3861AuthMetadata(mscCfg)
+			}),
+		).Methods(http.MethodGet, http.MethodOptions)
 	} else {
 		v3mux.Handle(
 			"/login",
