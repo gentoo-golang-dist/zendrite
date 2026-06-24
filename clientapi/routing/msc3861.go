@@ -5,13 +5,19 @@
 package routing
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
+	"github.com/tidwall/gjson"
 
+	"codefloe.com/pat-s/zendrite/clientapi/auth"
+	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
+	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // msc3861ForbiddenHandler returns an HTTP handler that rejects requests with
@@ -38,6 +44,47 @@ func msc3861LoginFlows(_ *config.MSCs) util.JSONResponse {
 			},
 		},
 	}
+}
+
+// msc3861RegisterHandler returns a handler for POST /_matrix/client/v3/register
+// when MSC3861 is enabled. Application-service registrations
+// (m.login.application_service with an access token) are still allowed; all
+// other registration attempts are rejected.
+func msc3861RegisterHandler(
+	cfg *config.ClientAPI,
+	userAPI userapi.ClientUserAPI,
+	rateLimits *httputil.RateLimits,
+) http.Handler {
+	return httputil.MakeExternalAPI("register", func(req *http.Request) util.JSONResponse {
+		if req.Body == nil {
+			req.Body = http.NoBody
+		}
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.NotJSON("Unable to read request body"),
+			}
+		}
+		req.Body.Close()
+		// Restore the body so the real registration handler can read it.
+		req.Body = io.NopCloser(bytes.NewReader(body))
+
+		// Allow application-service registrations through.
+		_, accessTokenErr := auth.ExtractAccessToken(req)
+		if gjson.GetBytes(body, "type").String() == authtypes.LoginTypeApplicationService && accessTokenErr == nil {
+			return Register(req, userAPI, cfg)
+		}
+
+		// Otherwise apply the usual rate limit and reject.
+		if r := rateLimits.Limit(req, nil); r != nil {
+			return *r
+		}
+		return util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden("Registration is delegated to the OIDC provider via MSC3861."),
+		}
+	})
 }
 
 // AuthMetadataResponse is the RFC8414-style authorization server metadata

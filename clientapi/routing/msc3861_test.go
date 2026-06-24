@@ -5,9 +5,12 @@
 package routing
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
@@ -43,6 +46,28 @@ func setupMSC3861Routers(t *testing.T) (httputil.Routers, *config.Zendrite, func
 	}
 	// WellKnownClientName needed for well-known endpoint registration
 	cfg.Global.WellKnownClientName = "https://matrix.example.com"
+
+	// Register a dummy application service so we can verify that
+	// m.login.application_service registrations remain available.
+	asRegex := regexp.MustCompile(`@_appservice_.*:test`)
+	cfg.ClientAPI.Derived.ApplicationServices = []config.ApplicationService{
+		{
+			ID:              "fake-as",
+			ASToken:         "fake-as-token",
+			HSToken:         "fake-hs-token",
+			URL:             "null",
+			SenderLocalpart: "_appservice_bot",
+			NamespaceMap: map[string][]config.ApplicationServiceNamespace{
+				"users": {
+					{
+						Exclusive:    true,
+						Regex:        asRegex.String(),
+						RegexpObject: asRegex,
+					},
+				},
+			},
+		},
+	}
 
 	natsInstance := jetstream.NATSInstance{}
 	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
@@ -263,5 +288,68 @@ func TestMSC3861_DevicesGETStillWorks(t *testing.T) {
 	routers.Client.ServeHTTP(rec, req)
 	if rec.Code == http.StatusForbidden {
 		t.Error("GET /devices should not be forbidden when MSC3861 is enabled")
+	}
+}
+
+func TestMSC3861_ApplicationServiceRegisterStillWorks(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	body, err := json.Marshal(map[string]any{
+		"type":     "m.login.application_service",
+		"username": "_appservice_alice",
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal request body: %v", err)
+	}
+
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/register?access_token=fake-as-token")
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+
+	// A 200/401 response means the request reached the real registration handler
+	// and was NOT rejected by the MSC3861 forbidden handler.
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("application service registration should not be forbidden under MSC3861: %s", rec.Body.String())
+	}
+	if rec.Code != http.StatusOK && rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 200 or 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMSC3861_AuthMetadataDisabled(t *testing.T) {
+	t.Parallel()
+
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	defer closeDB()
+	cfg.ClientAPI.RateLimiting.Enabled = false
+	// MSC3861 intentionally not enabled.
+	cfg.Global.WellKnownClientName = "https://matrix.example.com"
+
+	natsInstance := jetstream.NATSInstance{}
+	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+	caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+	rsAPI.SetFederationAPI(nil, nil)
+	userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, &natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+
+	routers := httputil.NewRouters()
+	Setup(routers, cfg, nil, nil, userAPI, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v1/auth_metadata")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when MSC3861 is disabled, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if errcode, ok := body["errcode"].(string); !ok || errcode != string(spec.ErrorUnrecognized) {
+		t.Errorf("expected errcode %s, got %v", spec.ErrorUnrecognized, body["errcode"])
 	}
 }

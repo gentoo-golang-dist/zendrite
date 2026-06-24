@@ -665,7 +665,7 @@ func Setup(
 	).Methods(http.MethodGet, http.MethodOptions)
 
 	if oidcEnabled {
-		v3mux.Handle("/register", msc3861ForbiddenHandler("register")).Methods(http.MethodPost, http.MethodOptions)
+		v3mux.Handle("/register", msc3861RegisterHandler(cfg, userAPI, rateLimits)).Methods(http.MethodPost, http.MethodOptions)
 	} else {
 		v3mux.Handle("/register", httputil.MakeExternalAPI("register", func(req *http.Request) util.JSONResponse {
 			if r := rateLimits.Limit(req, nil); r != nil {
