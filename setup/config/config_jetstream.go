@@ -58,10 +58,10 @@ func (c *JetStream) Verify(configErrs *ConfigErrors) {
 		configErrs.Add("global.jetstream.storage_path must not be empty when using the built-in NATS server")
 	}
 
-	// If a credentials file is configured, check that it exists at startup so
-	// that the operator gets a clear config error rather than a runtime auth
-	// failure.
-	if string(c.Credentials) != "" {
+	// The credentials file is only used when connecting to an external NATS
+	// server. Check that it exists at startup so that the operator gets a clear
+	// config error rather than a runtime auth failure.
+	if len(c.Addresses) > 0 && string(c.Credentials) != "" {
 		if _, err := os.Stat(string(c.Credentials)); err != nil {
 			configErrs.Add(fmt.Sprintf("global.jetstream.credentials_path: %v", err))
 		}
