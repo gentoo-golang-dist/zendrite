@@ -84,7 +84,7 @@ func (s *LocalFileStore) Store(_ context.Context, tmpPath types.Path, hash types
 		return false, err
 	}
 
-	if stat, err := os.Stat(finalPath); !os.IsNotExist(err) {
+	if stat, err := os.Stat(finalPath); err == nil {
 		if stat.Size() == int64(size) {
 			return true, nil
 		}

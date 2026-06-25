@@ -350,9 +350,6 @@ func (r *downloadRequest) respondFromStore(
 			ctx, r.MediaMetadata.Base64Hash, activeThumbnailGeneration, maxThumbnailGenerators,
 			db, dynamicThumbnails, thumbnailSizes, fileStore,
 		)
-		if thumbFile != nil {
-			defer thumbFile.Close()
-		}
 		if resErr != nil {
 			return nil, resErr
 		}

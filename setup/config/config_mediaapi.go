@@ -136,7 +136,7 @@ func (c *MediaAPI) Verify(configErrs *ConfigErrors) {
 		checkNotEmpty(configErrs, "media_api.storage.local.base_path", basePath)
 	case "s3":
 		checkNotEmpty(configErrs, "media_api.storage.s3.bucket", c.Storage.S3.Bucket)
-		checkNotEmpty(configErrs, "media_api.storage.s3.region", c.Storage.S3.Region)
+		// Region is optional and defaults to us-east-1 in NewS3FileStore.
 	default:
 		configErrs.Add(fmt.Sprintf("invalid media_api.storage.type: %q", c.Storage.Type))
 	}

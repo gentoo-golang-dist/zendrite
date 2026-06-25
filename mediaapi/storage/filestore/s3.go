@@ -130,7 +130,10 @@ func (s *S3FileStore) WriteTemp(_ context.Context, r io.Reader) (types.Base64Has
 func (s *S3FileStore) Store(ctx context.Context, tmpPath types.Path, hash types.Base64Hash, size types.FileSizeBytes) (bool, error) {
 	defer RemoveDir(tmpPath)
 
-	key := s.objectKey(hash)
+	key, err := s.objectKey(hash)
+	if err != nil {
+		return false, err
+	}
 	existingSize, exists, err := s.headObject(ctx, key)
 	if err != nil {
 		return false, err
@@ -163,7 +166,10 @@ func (s *S3FileStore) Store(ctx context.Context, tmpPath types.Path, hash types.
 
 // Open returns a reader for the object identified by hash.
 func (s *S3FileStore) Open(ctx context.Context, hash types.Base64Hash) (io.ReadCloser, types.FileSizeBytes, error) {
-	key := s.objectKey(hash)
+	key, err := s.objectKey(hash)
+	if err != nil {
+		return nil, 0, err
+	}
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -184,14 +190,22 @@ func (s *S3FileStore) Open(ctx context.Context, hash types.Base64Hash) (io.ReadC
 
 // Stat returns the size of the object and whether it exists.
 func (s *S3FileStore) Stat(ctx context.Context, hash types.Base64Hash) (types.FileSizeBytes, bool, error) {
-	return s.headObject(ctx, s.objectKey(hash))
+	key, err := s.objectKey(hash)
+	if err != nil {
+		return 0, false, err
+	}
+	return s.headObject(ctx, key)
 }
 
 // Delete removes the object identified by hash.
 func (s *S3FileStore) Delete(ctx context.Context, hash types.Base64Hash) error {
-	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	key, err := s.objectKey(hash)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(s.objectKey(hash)),
+		Key:    aws.String(key),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete object: %w", err)
@@ -236,7 +250,10 @@ func (s *S3FileStore) LocalPath(ctx context.Context, hash types.Base64Hash) (str
 
 // OpenThumbnail returns a reader for the requested thumbnail.
 func (s *S3FileStore) OpenThumbnail(ctx context.Context, mediaHash types.Base64Hash, size types.ThumbnailSize) (io.ReadCloser, types.FileSizeBytes, error) {
-	key := s.thumbnailKey(mediaHash, size)
+	key, err := s.thumbnailKey(mediaHash, size)
+	if err != nil {
+		return nil, 0, err
+	}
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -257,7 +274,11 @@ func (s *S3FileStore) OpenThumbnail(ctx context.Context, mediaHash types.Base64H
 
 // StatThumbnail returns the size and existence of the requested thumbnail.
 func (s *S3FileStore) StatThumbnail(ctx context.Context, mediaHash types.Base64Hash, size types.ThumbnailSize) (types.FileSizeBytes, bool, error) {
-	return s.headObject(ctx, s.thumbnailKey(mediaHash, size))
+	key, err := s.thumbnailKey(mediaHash, size)
+	if err != nil {
+		return 0, false, err
+	}
+	return s.headObject(ctx, key)
 }
 
 // StoreThumbnail uploads a thumbnail from a local temporary file.
@@ -269,9 +290,13 @@ func (s *S3FileStore) StoreThumbnail(ctx context.Context, mediaHash types.Base64
 	}
 	defer file.Close()
 
+	key, err := s.thumbnailKey(mediaHash, size)
+	if err != nil {
+		return err
+	}
 	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
-		Key:           aws.String(s.thumbnailKey(mediaHash, size)),
+		Key:           aws.String(key),
 		Body:          file,
 		ContentLength: aws.Int64(int64(fileSize)),
 	})
@@ -283,9 +308,13 @@ func (s *S3FileStore) StoreThumbnail(ctx context.Context, mediaHash types.Base64
 
 // DeleteThumbnail removes the requested thumbnail.
 func (s *S3FileStore) DeleteThumbnail(ctx context.Context, mediaHash types.Base64Hash, size types.ThumbnailSize) error {
-	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	key, err := s.thumbnailKey(mediaHash, size)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(s.thumbnailKey(mediaHash, size)),
+		Key:    aws.String(key),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete thumbnail object: %w", err)
@@ -312,20 +341,26 @@ func (s *S3FileStore) headObject(ctx context.Context, key string) (types.FileSiz
 	return types.FileSizeBytes(size), true, nil
 }
 
-func (s *S3FileStore) objectKey(hash types.Base64Hash) string {
+func (s *S3FileStore) objectKey(hash types.Base64Hash) (string, error) {
+	if len(hash) < 3 { //nolint:mnd
+		return "", fmt.Errorf("invalid hash (too short - min 3 characters): %q", hash)
+	}
 	key := fmt.Sprintf("media/%s/%s/%s/file", string(hash[0:1]), string(hash[1:2]), string(hash[2:]))
 	if s.prefix != "" {
 		key = s.prefix + "/" + key
 	}
-	return key
+	return key, nil
 }
 
-func (s *S3FileStore) thumbnailKey(mediaHash types.Base64Hash, size types.ThumbnailSize) string {
+func (s *S3FileStore) thumbnailKey(mediaHash types.Base64Hash, size types.ThumbnailSize) (string, error) {
+	if len(mediaHash) < 3 { //nolint:mnd
+		return "", fmt.Errorf("invalid hash (too short - min 3 characters): %q", mediaHash)
+	}
 	key := fmt.Sprintf("media/%s/%s/%s/thumbnail-%dx%d-%s",
 		string(mediaHash[0:1]), string(mediaHash[1:2]), string(mediaHash[2:]),
 		size.Width, size.Height, size.ResizeMethod)
 	if s.prefix != "" {
 		key = s.prefix + "/" + key
 	}
-	return key
+	return key, nil
 }
