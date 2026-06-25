@@ -38,6 +38,7 @@ type IntrospectionResponse struct {
 // oidcDiscoveryResponse represents the relevant fields from an OIDC discovery document.
 type oidcDiscoveryResponse struct {
 	IntrospectionEndpoint string `json:"introspection_endpoint"`
+	UserinfoEndpoint      string `json:"userinfo_endpoint"`
 }
 
 // cachedIntrospection holds a cached introspection result.
@@ -192,7 +193,114 @@ func resolveIntrospectionEndpoint(ctx context.Context, msc3861 *config.MSC3861Co
 	return msc3861.IntrospectionEndpointOrDefault()
 }
 
+// discoverUserinfoEndpoint fetches the OIDC discovery document and returns the
+// userinfo_endpoint, falling back to the configured or default issuer value.
+func discoverUserinfoEndpoint(ctx context.Context, msc3861 *config.MSC3861Config, httpClient *http.Client) string {
+	if msc3861.UserinfoEndpoint != "" {
+		return msc3861.UserinfoEndpoint
+	}
+
+	if msc3861.Issuer == "" {
+		return ""
+	}
+
+	discoveryURL := strings.TrimSuffix(msc3861.Issuer, "/") + "/.well-known/openid-configuration"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	if err != nil {
+		logrus.WithError(err).Warn("MSC3861: failed to create OIDC discovery request for userinfo")
+		return msc3861.UserinfoEndpointOrDefault()
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		logrus.WithError(err).Warn("MSC3861: OIDC discovery request for userinfo failed")
+		return msc3861.UserinfoEndpointOrDefault()
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.WithField("status", resp.StatusCode).Warn("MSC3861: OIDC discovery for userinfo returned non-200 status")
+		return msc3861.UserinfoEndpointOrDefault()
+	}
+
+	var discovery oidcDiscoveryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
+		logrus.WithError(err).Warn("MSC3861: failed to decode OIDC discovery response for userinfo")
+		return msc3861.UserinfoEndpointOrDefault()
+	}
+
+	if discovery.UserinfoEndpoint != "" {
+		return discovery.UserinfoEndpoint
+	}
+
+	return msc3861.UserinfoEndpointOrDefault()
+}
+
+// userinfoToken validates an access token by calling the OIDC UserInfo endpoint.
+// This is used as a fallback when RFC 7662 token introspection is unavailable.
+func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token string, httpClient *http.Client) (*IntrospectionResponse, error) {
+	endpoint := discoverUserinfoEndpoint(ctx, msc3861, httpClient)
+	if endpoint == "" {
+		return nil, fmt.Errorf("msc3861: no userinfo endpoint available")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("msc3861: failed to create userinfo request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("msc3861: userinfo request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("msc3861: userinfo returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var userinfo struct {
+		Sub               string `json:"sub"`
+		PreferredUsername string `json:"preferred_username"`
+		Name              string `json:"name"`
+		Nickname          string `json:"nickname"`
+		Email             string `json:"email"`
+		Username          string `json:"username"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&userinfo); err != nil {
+		return nil, fmt.Errorf("msc3861: failed to decode userinfo response: %w", err)
+	}
+	if userinfo.Sub == "" {
+		return nil, fmt.Errorf("msc3861: userinfo response missing sub")
+	}
+
+	username := userinfo.PreferredUsername
+	if username == "" {
+		username = userinfo.Name
+	}
+	if username == "" {
+		username = userinfo.Nickname
+	}
+	if username == "" {
+		username = userinfo.Email
+	}
+	if username == "" {
+		username = userinfo.Username
+	}
+
+	return &IntrospectionResponse{
+		Active:   true,
+		Sub:      userinfo.Sub,
+		Username: username,
+	}, nil
+}
+
 // introspectToken calls the OIDC introspection endpoint to validate an access token.
+// If introspection is unavailable, it falls back to the OIDC UserInfo endpoint.
 func introspectToken(ctx context.Context, msc3861 *config.MSC3861Config, token string, httpClient *http.Client) (*IntrospectionResponse, error) {
 	// Check cache first.
 	cache := getIntrospectionCache()
@@ -232,18 +340,24 @@ func introspectToken(ctx context.Context, msc3861 *config.MSC3861Config, token s
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("msc3861: introspection request failed: %w", err)
+		logrus.WithError(err).Warn("MSC3861: introspection request failed, trying userinfo fallback")
+		return userinfoToken(ctx, msc3861, token, httpClient)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("msc3861: introspection returned status %d: %s", resp.StatusCode, string(body))
+		logrus.WithFields(logrus.Fields{
+			"status":   resp.StatusCode,
+			"response": string(body),
+		}).Warn("MSC3861: introspection returned non-200 status, trying userinfo fallback")
+		return userinfoToken(ctx, msc3861, token, httpClient)
 	}
 
 	var introspection IntrospectionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&introspection); err != nil {
-		return nil, fmt.Errorf("msc3861: failed to decode introspection response: %w", err)
+		logrus.WithError(err).Warn("MSC3861: failed to decode introspection response, trying userinfo fallback")
+		return userinfoToken(ctx, msc3861, token, httpClient)
 	}
 
 	// Cache the result (only cache active tokens and inactive responses, not errors).

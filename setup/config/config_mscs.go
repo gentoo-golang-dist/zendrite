@@ -52,6 +52,10 @@ type MSC3861Config struct {
 	// If empty, defaults to {Issuer}/oauth2/introspect.
 	IntrospectionEndpoint string `yaml:"introspection_endpoint"`
 
+	// UserinfoEndpoint overrides the OIDC UserInfo endpoint URL.
+	// If empty, defaults to {Issuer}/userinfo.
+	UserinfoEndpoint string `yaml:"userinfo_endpoint"`
+
 	// AuthorizationEndpoint overrides the OIDC authorization endpoint URL.
 	// If empty, defaults to {Issuer}/oauth2/auth.
 	AuthorizationEndpoint string `yaml:"authorization_endpoint"`
@@ -67,6 +71,10 @@ type MSC3861Config struct {
 	// RevocationEndpoint overrides the OIDC token revocation endpoint URL.
 	// If empty, defaults to {Issuer}/oauth2/revoke.
 	RevocationEndpoint string `yaml:"revocation_endpoint"`
+
+	// EndSessionEndpoint overrides the OIDC end session (RP-initiated logout)
+	// endpoint URL advertised to clients.
+	EndSessionEndpoint string `yaml:"end_session_endpoint"`
 
 	// JWKSURI overrides the JWKS URI advertised in authorization server metadata.
 	// If empty, defaults to {Issuer}/oauth2/keys.
@@ -114,6 +122,11 @@ func (c *MSC3861Config) JWKSURIOrDefault() string {
 // IntrospectionEndpointOrDefault returns the token introspection endpoint to use.
 func (c *MSC3861Config) IntrospectionEndpointOrDefault() string {
 	return c.msc3861Endpoint(c.IntrospectionEndpoint, "/oauth2/introspect")
+}
+
+// UserinfoEndpointOrDefault returns the OIDC UserInfo endpoint to use.
+func (c *MSC3861Config) UserinfoEndpointOrDefault() string {
+	return c.msc3861Endpoint(c.UserinfoEndpoint, "/userinfo")
 }
 
 func (c *MSCs) Defaults(opts DefaultOpts) {

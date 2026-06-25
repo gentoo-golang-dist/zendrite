@@ -254,13 +254,9 @@ func (h *ssoCompatHandler) serveCallback(req *http.Request) util.JSONResponse {
 		}
 	}
 
-	userID, err := h.provisionUser(req.Context(), tokens.AccessToken)
-	if err != nil {
-		logrus.WithError(err).Error("MSC3861 SSO compat: user provisioning failed")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
+	userID, errRes := h.provisionUser(req.Context(), tokens.AccessToken)
+	if errRes != nil {
+		return *errRes
 	}
 
 	var tokenRes userapi.PerformLoginTokenCreationResponse
@@ -413,15 +409,34 @@ func (h *ssoCompatHandler) exchangeCode(ctx context.Context, code, callbackURL, 
 	return &tokens, nil
 }
 
-func (h *ssoCompatHandler) provisionUser(ctx context.Context, accessToken string) (string, error) {
+// provisionUser validates the OIDC access token and returns the Matrix user ID
+// it represents. It uses QueryAccessToken which performs RFC 7662 token
+// introspection (with a userinfo fallback) and auto-provisions the user account
+// if necessary.
+func (h *ssoCompatHandler) provisionUser(ctx context.Context, accessToken string) (string, *util.JSONResponse) {
 	var res userapi.QueryAccessTokenResponse
 	if err := h.userAPI.QueryAccessToken(ctx, &userapi.QueryAccessTokenRequest{
 		AccessToken: accessToken,
 	}, &res); err != nil {
-		return "", err
+		logrus.WithError(err).Error("MSC3861 SSO compat: QueryAccessToken failed")
+		return "", &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{Err: "failed to look up user"},
+		}
+	}
+	if res.Err != "" {
+		logrus.WithField("query_access_token_err", res.Err).Error("MSC3861 SSO compat: QueryAccessToken returned error")
+		return "", &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{Err: "failed to look up user"},
+		}
 	}
 	if res.Device == nil {
-		return "", fmt.Errorf("OIDC access token is not active")
+		logrus.Error("MSC3861 SSO compat: OIDC access token is not active")
+		return "", &util.JSONResponse{
+			Code: http.StatusUnauthorized,
+			JSON: spec.UnknownToken("OIDC access token is not active"),
+		}
 	}
 	return res.Device.UserID, nil
 }

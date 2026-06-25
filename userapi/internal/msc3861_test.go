@@ -178,6 +178,62 @@ func TestIntrospectToken_DefaultEndpoint(t *testing.T) {
 	}
 }
 
+func TestIntrospectToken_UserinfoFallback(t *testing.T) {
+	t.Parallel()
+
+	var gotUserinfo bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/introspect":
+			w.WriteHeader(http.StatusNotFound)
+		case "/.well-known/openid-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"userinfo_endpoint": "http://" + r.Host + "/userinfo",
+			})
+		case "/userinfo":
+			gotUserinfo = true
+			auth := r.Header.Get("Authorization")
+			if auth != "Bearer fallback-token" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"sub":                "fallback-sub",
+				"preferred_username": "fallback-user",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	msc3861 := &config.MSC3861Config{
+		Issuer:                srv.URL,
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		IntrospectionEndpoint: srv.URL + "/introspect",
+	}
+
+	resp, err := introspectToken(context.Background(), msc3861, "fallback-token", srv.Client())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !gotUserinfo {
+		t.Fatal("expected userinfo endpoint to be called")
+	}
+	if !resp.Active {
+		t.Error("expected token to be active")
+	}
+	if resp.Sub != "fallback-sub" {
+		t.Errorf("expected sub fallback-sub, got %s", resp.Sub)
+	}
+	if resp.Username != "fallback-user" {
+		t.Errorf("expected username fallback-user, got %s", resp.Username)
+	}
+}
+
 func TestIntrospectToken_BasicAuth(t *testing.T) {
 	t.Parallel()
 	var gotUser, gotPass string

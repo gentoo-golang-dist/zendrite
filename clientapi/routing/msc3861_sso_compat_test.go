@@ -585,8 +585,12 @@ func TestMSC3861SSOCompat_CallbackInactiveToken(t *testing.T) {
 	}))
 	rec := httptest.NewRecorder()
 	routers.Client.ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 for inactive token, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for inactive token, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "M_UNKNOWN_TOKEN") {
+		t.Fatalf("expected M_UNKNOWN_TOKEN in response body, got %s", body)
 	}
 }
 

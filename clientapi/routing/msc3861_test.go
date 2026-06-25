@@ -248,6 +248,87 @@ func TestMSC3861_AuthMetadata(t *testing.T) {
 	}
 }
 
+func TestMSC3861_AuthMetadataDiscoversEndpoints(t *testing.T) {
+	t.Parallel()
+
+	var discoveryHits int
+	discoverySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			discoveryHits++
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"issuer":                 "http://" + r.Host,
+				"jwks_uri":               "http://" + r.Host + "/.well-known/jwks.json",
+				"authorization_endpoint": "http://" + r.Host + "/oauth2/auth",
+				"token_endpoint":         "http://" + r.Host + "/oauth2/token",
+				"registration_endpoint":  "http://" + r.Host + "/oauth2/register",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer discoverySrv.Close()
+
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	defer closeDB()
+	cfg.ClientAPI.RateLimiting.Enabled = false
+	cfg.MSCs.MSCs = []string{"msc3861"}
+	cfg.MSCs.MSC3861 = config.MSC3861Config{
+		Issuer:       discoverySrv.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}
+	cfg.Global.WellKnownClientName = "https://matrix.example.com"
+
+	natsInstance := jetstream.NATSInstance{}
+	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+	caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+	rsAPI.SetFederationAPI(nil, nil)
+	userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, &natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+
+	routers := httputil.NewRouters()
+	Setup(routers, cfg, nil, nil, userAPI, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v1/auth_metadata")
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp AuthMetadataResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.JWKSURI != "http://localhost/_matrix/client/v1/auth_metadata/jwks" {
+		t.Errorf("expected jwks_uri to be the homeserver JWKS proxy, got %s", resp.JWKSURI)
+	}
+	if resp.RegistrationEndpoint != discoverySrv.URL+"/oauth2/register" {
+		t.Errorf("expected registration_endpoint from discovery, got %s", resp.RegistrationEndpoint)
+	}
+	if resp.AuthorizationEndpoint != discoverySrv.URL+"/oauth2/auth" {
+		t.Errorf("expected authorization_endpoint from discovery, got %s", resp.AuthorizationEndpoint)
+	}
+	if resp.TokenEndpoint != discoverySrv.URL+"/oauth2/token" {
+		t.Errorf("expected token_endpoint from discovery, got %s", resp.TokenEndpoint)
+	}
+	if discoveryHits != 1 {
+		t.Errorf("expected exactly one discovery request, got %d", discoveryHits)
+	}
+
+	// A second request should be served from cache.
+	rec2 := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 on second request, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if discoveryHits != 1 {
+		t.Errorf("expected discovery to be cached, got %d hits", discoveryHits)
+	}
+}
+
 func TestMSC3861_MASAdminRoutesRequireAdminToken(t *testing.T) {
 	t.Parallel()
 
@@ -404,5 +485,99 @@ func TestMSC3861_AuthMetadataDisabled(t *testing.T) {
 	}
 	if errcode, ok := body["errcode"].(string); !ok || errcode != string(spec.ErrorUnrecognized) {
 		t.Errorf("expected errcode %s, got %v", spec.ErrorUnrecognized, body["errcode"])
+	}
+}
+
+func TestMSC3861_AuthIssuer(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		"/_matrix/client/v1/auth_issuer",
+		"/_matrix/client/unstable/org.matrix.msc2965/auth_issuer",
+	} {
+		t.Run(path, func(t *testing.T) {
+			routers, cfg, closeDB := setupMSC3861Routers(t)
+			defer closeDB()
+
+			req := test.NewRequest(t, http.MethodGet, path)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+
+			var resp authIssuerResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+			if resp.Issuer != cfg.MSCs.MSC3861.Issuer {
+				t.Errorf("expected issuer %s, got %s", cfg.MSCs.MSC3861.Issuer, resp.Issuer)
+			}
+		})
+	}
+}
+
+func TestMSC3861_AuthJWKSProxy(t *testing.T) {
+	t.Parallel()
+
+	jwksBody := []byte(`{"keys":[{"kty":"RSA","kid":"test","n":"abc","e":"AQAB"}]}`)
+	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"issuer":                 "http://" + r.Host,
+				"jwks_uri":               "http://" + r.Host + "/.well-known/jwks.json",
+				"authorization_endpoint": "http://" + r.Host + "/oauth2/auth",
+				"token_endpoint":         "http://" + r.Host + "/oauth2/token",
+			})
+		case "/.well-known/jwks.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(jwksBody)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer jwksSrv.Close()
+
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	defer closeDB()
+	cfg.ClientAPI.RateLimiting.Enabled = false
+	cfg.MSCs.MSCs = []string{"msc3861"}
+	cfg.MSCs.MSC3861 = config.MSC3861Config{
+		Issuer:       jwksSrv.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}
+	cfg.Global.WellKnownClientName = "https://matrix.example.com"
+
+	natsInstance := jetstream.NATSInstance{}
+	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+	caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+	rsAPI.SetFederationAPI(nil, nil)
+	userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, &natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+
+	routers := httputil.NewRouters()
+	Setup(routers, cfg, nil, nil, userAPI, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
+
+	for _, path := range []string{
+		"/_matrix/client/v1/auth_metadata/jwks",
+		"/_matrix/client/unstable/org.matrix.msc2965/auth_metadata/jwks",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := test.NewRequest(t, http.MethodGet, path)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+				t.Errorf("expected Content-Type application/json, got %s", ct)
+			}
+			if !bytes.Equal(rec.Body.Bytes(), jwksBody) {
+				t.Errorf("unexpected JWKS body: %s", rec.Body.String())
+			}
+		})
 	}
 }

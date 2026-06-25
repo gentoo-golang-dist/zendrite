@@ -154,7 +154,7 @@ func Setup(
 				Code: http.StatusOK,
 				JSON: response,
 			}
-		})).Methods(http.MethodGet, http.MethodOptions)
+		})).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 	}
 
 	publicAPIMux.Handle(
@@ -906,24 +906,57 @@ func Setup(
 		v3mux.Handle(
 			"/login/sso/redirect",
 			httputil.MakeExternalAPI("sso_redirect", ssoHandler.serveRedirect),
-		).Methods(http.MethodGet, http.MethodOptions)
+		).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
+
+		v3mux.Handle(
+			"/login/sso/redirect/{idpId}",
+			httputil.MakeExternalAPI("sso_redirect_idp", ssoHandler.serveRedirect),
+		).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 
 		v3mux.Handle(
 			"/login/sso/callback",
 			httputil.MakeExternalAPI("sso_callback", ssoHandler.serveCallback),
-		).Methods(http.MethodGet, http.MethodOptions)
+		).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 
 		v1mux.Handle(
 			"/auth_metadata",
 			httputil.MakeExternalAPI("auth_metadata", func(req *http.Request) util.JSONResponse {
-				return msc3861AuthMetadata(mscCfg)
+				return msc3861AuthMetadata(req, mscCfg)
+			}),
+		).Methods(http.MethodGet, http.MethodOptions)
+
+		v1mux.Handle(
+			"/auth_metadata/jwks",
+			httputil.MakeExternalAPI("auth_metadata_jwks", func(req *http.Request) util.JSONResponse {
+				return msc3861JWKSProxy(req, mscCfg)
+			}),
+		).Methods(http.MethodGet, http.MethodOptions)
+
+		v1mux.Handle(
+			"/auth_issuer",
+			httputil.MakeExternalAPI("auth_issuer", func(req *http.Request) util.JSONResponse {
+				return msc3861AuthIssuer(mscCfg)
 			}),
 		).Methods(http.MethodGet, http.MethodOptions)
 
 		unstableMux.Handle(
 			"/org.matrix.msc2965/auth_metadata",
 			httputil.MakeExternalAPI("auth_metadata_unstable", func(req *http.Request) util.JSONResponse {
-				return msc3861AuthMetadata(mscCfg)
+				return msc3861AuthMetadata(req, mscCfg)
+			}),
+		).Methods(http.MethodGet, http.MethodOptions)
+
+		unstableMux.Handle(
+			"/org.matrix.msc2965/auth_metadata/jwks",
+			httputil.MakeExternalAPI("auth_metadata_jwks_unstable", func(req *http.Request) util.JSONResponse {
+				return msc3861JWKSProxy(req, mscCfg)
+			}),
+		).Methods(http.MethodGet, http.MethodOptions)
+
+		unstableMux.Handle(
+			"/org.matrix.msc2965/auth_issuer",
+			httputil.MakeExternalAPI("auth_issuer_unstable", func(req *http.Request) util.JSONResponse {
+				return msc3861AuthIssuer(mscCfg)
 			}),
 		).Methods(http.MethodGet, http.MethodOptions)
 	} else {
