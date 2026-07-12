@@ -280,6 +280,27 @@ func (s *OutputRoomEventConsumer) onNewRoomEvent(
 	}
 
 	if msg.RewritesState {
+		// A RewritesState event replaces the room's entire current state in the
+		// sync API: purge, then repopulate from AddsStateEventIDs below. If a stale
+		// event carrying a small state reaches here after a faster-join resync
+		// already populated the full membership (e.g. a partial-state join or an
+		// out-of-order event whose /state_ids response predates the resync), this
+		// silently collapses the joined member count. Log it so the regression is
+		// traceable (issue #247).
+		memberAdds := 0
+		for _, se := range addsStateEvents {
+			if se.Type() == "m.room.member" {
+				memberAdds++
+			}
+		}
+		log.WithFields(log.Fields{
+			"room_id":     ev.RoomID().String(),
+			"event_id":    ev.EventID(),
+			"event_type":  ev.Type(),
+			"adds_state":  len(msg.AddsStateEventIDs),
+			"member_adds": memberAdds,
+			"trace":       "current_state_rewrite",
+		}).Warn("Rewriting sync API current room state (purge + repopulate)")
 		if err = s.db.PurgeRoomState(ctx, ev.RoomID().String()); err != nil {
 			return fmt.Errorf("s.db.PurgeRoom: %w", err)
 		}
