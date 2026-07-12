@@ -224,22 +224,6 @@ func (u *latestEventsUpdater) doUpdateLatestEvents() error {
 // When both returned slices are empty the whole delta is suppressed, matching
 // the original guard behavior (genuine out-of-order events that do not author
 // any of the dropped state).
-// removesCollateralMembers reports whether the removed state delta drops any
-// m.room.member event for a state key *other* than ownKey (the triggering
-// event's own (type, state-key) tuple). After a partial-state resync a single
-// event never legitimately evicts other users from the current state, so a
-// collateral member removal is a reliable signal that an out-of-order event is
-// regressing resync-authoritative membership — one the content-addressed
-// snapshot-NID heuristic can miss (issue #247).
-func removesCollateralMembers(ownKey types.StateKeyTuple, removed []types.StateEntry) bool {
-	for _, e := range removed {
-		if e.EventTypeNID == types.MRoomMemberNID && e.StateKeyTuple != ownKey {
-			return true
-		}
-	}
-	return false
-}
-
 func reconcileStateEpoch(ownKey types.StateKeyTuple, eventIsStateEvent bool, removed, added []types.StateEntry) (keepRemoved, keepAdded []types.StateEntry) {
 	if !eventIsStateEvent {
 		return nil, nil
@@ -255,6 +239,22 @@ func reconcileStateEpoch(ownKey types.StateKeyTuple, eventIsStateEvent bool, rem
 		}
 	}
 	return keepRemoved, keepAdded
+}
+
+// removesCollateralMembers reports whether the removed state delta drops a
+// membership event for a state key other than ownKey (the triggering event's
+// own state-key tuple). After a partial-state resync a single event never
+// legitimately evicts other users from the current state, so a collateral
+// member removal reliably signals that an out-of-order event is regressing
+// resync-authoritative membership, which the content-addressed snapshot-NID
+// heuristic can miss (issue #247).
+func removesCollateralMembers(ownKey types.StateKeyTuple, removed []types.StateEntry) bool {
+	for _, e := range removed {
+		if e.EventTypeNID == types.MRoomMemberNID && e.StateKeyTuple != ownKey {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *latestEventsUpdater) latestState() error {

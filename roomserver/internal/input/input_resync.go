@@ -72,7 +72,7 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 		"loaded_type_nid_counts": loadedEventTypeNIDCounts,
 	}).Debug("Loaded state entries from event IDs with EventTypeNID breakdown")
 
-	// A resync must materialise every state event that /state_ids advertised
+	// A resync must materialize every state event that /state_ids advertised
 	// before we replace the room's current state with it. StateEntriesForEventIDs
 	// silently drops IDs that are missing from the DB (fetch/store failure) or
 	// marked rejected, so loading fewer entries than were requested means the new
@@ -312,13 +312,14 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 }
 
 // resyncStateIncomplete reports whether the state entries loaded for a resync
-// fail to cover every distinct requested state event ID. loaded is the number
-// of entries StateEntriesForEventIDs returned for requestedIDs; because that
-// query returns at most one row per (present, non-rejected) event ID, a loaded
-// count below the number of *distinct* requested IDs means some events were
-// missing from the DB or rejected. requestedIDs is deduplicated first so that a
-// repeated ID in the /state_ids response cannot be mistaken for a shortfall.
-// It also returns the distinct requested count for logging. See issue #247.
+// fail to cover every distinct requested state event ID. The loaded argument is
+// the number of entries StateEntriesForEventIDs returned for requestedIDs;
+// because that query returns at most one row per (present, non-rejected) event
+// ID, a loaded count below the number of *distinct* requested IDs means some
+// events were missing from the DB or rejected. The requestedIDs slice is
+// deduplicated first so that a repeated ID in the /state_ids response cannot be
+// mistaken for a shortfall. It also returns the distinct requested count for
+// logging. See issue #247.
 func resyncStateIncomplete(requestedIDs []string, loaded int) (distinctRequested int, incomplete bool) {
 	seen := make(map[string]struct{}, len(requestedIDs))
 	for _, id := range requestedIDs {
