@@ -32,6 +32,9 @@ type flows struct {
 
 type flow struct {
 	Type string `json:"type"`
+	// OAuthAwarePreferred indicates the m.login.sso flow is preferred over
+	// other flows, as defined for OAuth 2.0 aware clients (spec v1.18).
+	OAuthAwarePreferred bool `json:"oauth_aware_preferred,omitempty"`
 }
 
 // Login implements GET and POST /login.

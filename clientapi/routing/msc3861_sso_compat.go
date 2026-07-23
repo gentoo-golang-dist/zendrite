@@ -36,6 +36,7 @@ import (
 type ssoCompatSession struct {
 	redirectURL  string
 	codeVerifier string
+	deviceID     string
 	expiresAt    time.Time
 }
 
@@ -55,6 +56,10 @@ type ssoCompatHandler struct {
 const (
 	ssoSessionTTL      = 10 * time.Minute
 	ssoCleanupInterval = 5 * time.Minute
+	// Device IDs allocated for legacy SSO logins are random strings of this
+	// length; 16 alphanumeric characters is comfortably unique per user, per
+	// the device ID allocation guidance in the OAuth 2.0 API spec.
+	ssoDeviceIDLength = 16
 )
 
 func newSSOCompatHandler(
@@ -98,24 +103,30 @@ func (h *ssoCompatHandler) cleanupExpiredSessions() {
 	}
 }
 
-func (h *ssoCompatHandler) registerRedirect(redirectURL string) (state, codeVerifier string, err error) {
+func (h *ssoCompatHandler) registerRedirect(redirectURL string) (state, codeVerifier, deviceID string, err error) {
 	state, err = auth.GenerateAccessToken()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to generate SSO state: %w", err)
+		return "", "", "", fmt.Errorf("failed to generate SSO state: %w", err)
 	}
 	codeVerifier, err = generatePKCEVerifier()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to generate PKCE verifier: %w", err)
+		return "", "", "", fmt.Errorf("failed to generate PKCE verifier: %w", err)
 	}
+	deviceID = util.RandomString(ssoDeviceIDLength)
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.sessions[state] = &ssoCompatSession{
 		redirectURL:  redirectURL,
 		codeVerifier: codeVerifier,
-		expiresAt:    time.Now().Add(ssoSessionTTL),
+		// The device ID is allocated up front so it can be requested via the
+		// urn:matrix:client:device: scope, as native OAuth 2.0 clients do. Each
+		// SSO login therefore gets its own device instead of sharing the
+		// fallback "OIDC" device.
+		deviceID:  deviceID,
+		expiresAt: time.Now().Add(ssoSessionTTL),
 	}
-	return state, codeVerifier, nil
+	return state, codeVerifier, deviceID, nil
 }
 
 func (h *ssoCompatHandler) getSession(state string) *ssoCompatSession {
@@ -182,7 +193,7 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 		}
 	}
 
-	state, codeVerifier, err := h.registerRedirect(redirectURL)
+	state, codeVerifier, deviceID, err := h.registerRedirect(redirectURL)
 	if err != nil {
 		logrus.WithError(err).Error("MSC3861 SSO compat: failed to create session")
 		return util.JSONResponse{
@@ -205,9 +216,14 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 		"client_id":             {h.cfg.ClientID},
 		"redirect_uri":          {h.callbackURL(req)},
 		"state":                 {state},
-		"scope":                 {"openid urn:matrix:client:api:*"},
+		"scope":                 {"openid urn:matrix:client:api:* urn:matrix:client:device:" + deviceID},
 		"code_challenge":        {pkceChallenge(codeVerifier)},
 		"code_challenge_method": {"S256"},
+	}
+	// OAuth 2.0 aware clients signal the user's intent with the action
+	// parameter; registration maps to prompt=create at the provider.
+	if req.URL.Query().Get("action") == "register" {
+		q.Set("prompt", "create")
 	}
 	authURL := endpoints.authorizationEndpoint + "?" + q.Encode()
 
@@ -444,13 +460,14 @@ func (h *ssoCompatHandler) provisionUser(ctx context.Context, accessToken string
 // msc3861LoginFlows returns the login flows response when MSC3861 is active.
 // When the legacy SSO compat layer is enabled we advertise m.login.sso and
 // m.login.token so that clients which do not yet implement native OIDC can
-// still log in via the OIDC provider.
+// still log in via the OIDC provider. The SSO flow is marked as
+// oauth_aware_preferred so OAuth 2.0 aware clients only offer that flow.
 func msc3861LoginFlows(_ *config.MSCs) util.JSONResponse {
 	return util.JSONResponse{
 		Code: http.StatusOK,
 		JSON: flows{
 			Flows: []flow{
-				{Type: authtypes.LoginTypeSSO},
+				{Type: authtypes.LoginTypeSSO, OAuthAwarePreferred: true},
 				{Type: authtypes.LoginTypeToken},
 			},
 		},

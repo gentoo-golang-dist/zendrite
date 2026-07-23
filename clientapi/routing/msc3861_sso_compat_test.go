@@ -79,6 +79,9 @@ func TestMSC3861SSOCompat_LoginFlowsAdvertiseSSOAndToken(t *testing.T) {
 	got := make(map[string]bool)
 	for _, f := range resp.Flows {
 		got[f.Type] = true
+		if f.Type == authtypes.LoginTypeSSO && !f.OAuthAwarePreferred {
+			t.Errorf("expected SSO flow to be marked oauth_aware_preferred")
+		}
 	}
 	if !got[authtypes.LoginTypeSSO] {
 		t.Errorf("expected %s flow", authtypes.LoginTypeSSO)
@@ -225,6 +228,64 @@ func TestMSC3861SSOCompat_RedirectUsesConfiguredEndpoints(t *testing.T) {
 	}
 	if q.Get("state") == "" {
 		t.Error("expected state")
+	}
+	// A device ID must be allocated and requested via the stable device scope.
+	scope := q.Get("scope")
+	if !strings.HasPrefix(scope, "openid urn:matrix:client:api:* urn:matrix:client:device:") {
+		t.Errorf("expected scope to request a device ID, got %q", scope)
+	}
+	if strings.HasSuffix(scope, "urn:matrix:client:device:") {
+		t.Error("expected a non-empty device ID in the scope")
+	}
+}
+
+func TestMSC3861SSOCompat_RedirectActionRegisterSetsPromptCreate(t *testing.T) {
+	t.Parallel()
+
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                "https://auth.example.com",
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: "https://auth.example.com/custom/auth",
+		TokenEndpoint:         "https://auth.example.com/custom/token",
+		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+	})
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
+		"redirectUrl": "element://vector/webapp",
+		"action":      "register",
+	}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("failed to parse Location: %v", err)
+	}
+	if got := u.Query().Get("prompt"); got != "create" {
+		t.Errorf("expected prompt=create for action=register, got %q", got)
+	}
+
+	// action=login (or no action) must not set prompt.
+	req = test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
+		"redirectUrl": "element://vector/webapp",
+		"action":      "login",
+	}))
+	rec = httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", rec.Code, rec.Body.String())
+	}
+	u, err = url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("failed to parse Location: %v", err)
+	}
+	if got := u.Query().Get("prompt"); got != "" {
+		t.Errorf("expected no prompt for action=login, got %q", got)
 	}
 }
 
