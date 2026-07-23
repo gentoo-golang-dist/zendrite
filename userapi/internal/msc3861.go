@@ -66,6 +66,7 @@ const (
 	introspectionCacheTTL     = 30 * time.Second
 	introspectionCacheMaxSize = 10_000
 	discoveryEndpointCacheTTL = 1 * time.Hour
+	stableDeviceScopePrefix   = "urn:matrix:client:device:"
 	deviceScopePrefix         = "urn:matrix:device:"
 	legacyDeviceScopePrefix   = "urn:matrix:org.matrix.msc2967.client:device:"
 )
@@ -88,10 +89,14 @@ func hashToken(token string) string {
 }
 
 // extractDeviceIDFromScope parses the OAuth scope string for a device ID
-// encoded as urn:matrix:device:DEVICEID (or the legacy unstable prefix).
+// encoded as urn:matrix:client:device:DEVICEID (the stable scope token from
+// the OAuth 2.0 API), urn:matrix:device:DEVICEID, or the legacy unstable
+// MSC2967 prefix.
 func extractDeviceIDFromScope(scope string) string {
 	for _, part := range strings.Fields(scope) {
 		switch {
+		case strings.HasPrefix(part, stableDeviceScopePrefix):
+			return strings.TrimPrefix(part, stableDeviceScopePrefix)
 		case strings.HasPrefix(part, deviceScopePrefix):
 			return strings.TrimPrefix(part, deviceScopePrefix)
 		case strings.HasPrefix(part, legacyDeviceScopePrefix):

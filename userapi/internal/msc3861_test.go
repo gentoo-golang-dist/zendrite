@@ -277,9 +277,14 @@ func TestExtractDeviceIDFromScope(t *testing.T) {
 		scope    string
 		expected string
 	}{
+		{"openid urn:matrix:client:device:ABCDEF", "ABCDEF"},
+		{"openid urn:matrix:client:api:* urn:matrix:client:device:ABCDEF", "ABCDEF"},
+		{"urn:matrix:client:device:MyDevice openid", "MyDevice"},
+		{"urn:matrix:client:device:", ""},
 		{"openid urn:matrix:device:ABCDEF", "ABCDEF"},
 		{"openid urn:matrix:org.matrix.msc2967.client:device:ABCDEF", "ABCDEF"},
 		{"openid urn:matrix:org.matrix.msc2967.client:api:*", ""},
+		{"openid urn:matrix:client:api:*", ""},
 		{"urn:matrix:device:MyDevice openid", "MyDevice"},
 		{"urn:matrix:org.matrix.msc2967.client:device:MyDevice openid", "MyDevice"},
 		{"", ""},
