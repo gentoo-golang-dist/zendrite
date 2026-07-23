@@ -76,6 +76,17 @@ type MSC3861Config struct {
 	// endpoint URL advertised to clients.
 	EndSessionEndpoint string `yaml:"end_session_endpoint"`
 
+	// DeviceAuthorizationEndpoint overrides the OAuth 2.0 device authorization
+	// endpoint URL (RFC 8628) advertised in the auth metadata. If empty, the
+	// value discovered from the issuer is used, falling back to
+	// {Issuer}/oauth2/device/auth.
+	DeviceAuthorizationEndpoint string `yaml:"device_authorization_endpoint"`
+
+	// AccountManagementActions lists the account management actions supported by
+	// the AccountManagementURL, advertised as account_management_actions_supported
+	// in the auth metadata (e.g. "org.matrix.profile", "org.matrix.devices_list").
+	AccountManagementActions []string `yaml:"account_management_actions"`
+
 	// JWKSURI overrides the JWKS URI advertised in authorization server metadata.
 	// If empty, defaults to {Issuer}/oauth2/keys.
 	JWKSURI string `yaml:"jwks_uri"`
@@ -129,6 +140,12 @@ func (c *MSC3861Config) UserinfoEndpointOrDefault() string {
 	return c.msc3861Endpoint(c.UserinfoEndpoint, "/userinfo")
 }
 
+// DeviceAuthorizationEndpointOrDefault returns the device authorization
+// endpoint to advertise.
+func (c *MSC3861Config) DeviceAuthorizationEndpointOrDefault() string {
+	return c.msc3861Endpoint(c.DeviceAuthorizationEndpoint, "/oauth2/device/auth")
+}
+
 func (c *MSCs) Defaults(opts DefaultOpts) {
 	if opts.Generate {
 		if !opts.SingleDatabase {
@@ -173,6 +190,9 @@ func (c *MSCs) Verify(configErrs *ConfigErrors) {
 
 		if c.MSC3861.AdminToken == "" {
 			logrus.Warn("mscs.msc3861.admin_token is empty; MAS admin API endpoints will reject all requests")
+		}
+		if c.MSC3861.AccountManagementURL == "" {
+			logrus.Warn("mscs.msc3861.account_management_url is empty; account management discovery and m.oauth UIA (e.g. cross-signing reset) will not work")
 		}
 	}
 }

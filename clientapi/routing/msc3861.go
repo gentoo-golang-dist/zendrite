@@ -89,6 +89,7 @@ type AuthMetadataResponse struct {
 	RevocationEndpoint                string   `json:"revocation_endpoint"`
 	UserinfoEndpoint                  string   `json:"userinfo_endpoint,omitempty"`
 	EndSessionEndpoint                string   `json:"end_session_endpoint,omitempty"`
+	DeviceAuthorizationEndpoint       string   `json:"device_authorization_endpoint,omitempty"`
 	JWKSURI                           string   `json:"jwks_uri"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported"`
@@ -98,6 +99,9 @@ type AuthMetadataResponse struct {
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported"`
 	SubjectTypesSupported             []string `json:"subject_types_supported,omitempty"`
 	ScopesSupported                   []string `json:"scopes_supported"`
+	PromptValuesSupported             []string `json:"prompt_values_supported,omitempty"`
+	AccountManagementURI              string   `json:"account_management_uri,omitempty"`
+	AccountManagementActionsSupported []string `json:"account_management_actions_supported,omitempty"`
 }
 
 // oidcAuthMetadataDoc holds the subset of the OIDC discovery document that we
@@ -109,11 +113,13 @@ type oidcAuthMetadataDoc struct {
 	RegistrationEndpoint              string   `json:"registration_endpoint"`
 	RevocationEndpoint                string   `json:"revocation_endpoint"`
 	EndSessionEndpoint                string   `json:"end_session_endpoint"`
+	DeviceAuthorizationEndpoint       string   `json:"device_authorization_endpoint"`
 	JWKSURI                           string   `json:"jwks_uri"`
 	UserinfoEndpoint                  string   `json:"userinfo_endpoint"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported"`
 	SubjectTypesSupported             []string `json:"subject_types_supported"`
+	PromptValuesSupported             []string `json:"prompt_values_supported"`
 }
 
 const oidcDiscoveryTimeout = 10 * time.Second
@@ -198,6 +204,12 @@ func msc3861AuthMetadata(req *http.Request, mscCfg *config.MSCs) util.JSONRespon
 	registrationEndpoint := firstNonEmpty(cfg.RegistrationEndpoint, doc.RegistrationEndpoint, cfg.RegistrationEndpointOrDefault())
 	userinfoEndpoint := firstNonEmpty(cfg.UserinfoEndpoint, doc.UserinfoEndpoint, cfg.UserinfoEndpointOrDefault())
 	endSessionEndpoint := firstNonEmpty(cfg.EndSessionEndpoint, doc.EndSessionEndpoint)
+	deviceAuthorizationEndpoint := firstNonEmpty(cfg.DeviceAuthorizationEndpoint, doc.DeviceAuthorizationEndpoint, cfg.DeviceAuthorizationEndpointOrDefault())
+
+	grantTypes := []string{"authorization_code", "refresh_token"}
+	if deviceAuthorizationEndpoint != "" {
+		grantTypes = append(grantTypes, "urn:ietf:params:oauth:grant-type:device_code")
+	}
 
 	tokenEndpointAuthMethods := doc.TokenEndpointAuthMethodsSupported
 	if len(tokenEndpointAuthMethods) == 0 {
@@ -229,14 +241,18 @@ func msc3861AuthMetadata(req *http.Request, mscCfg *config.MSCs) util.JSONRespon
 			RevocationEndpoint:                firstNonEmpty(cfg.RevocationEndpoint, doc.RevocationEndpoint, cfg.RevocationEndpointOrDefault()),
 			UserinfoEndpoint:                  userinfoEndpoint,
 			EndSessionEndpoint:                endSessionEndpoint,
+			DeviceAuthorizationEndpoint:       deviceAuthorizationEndpoint,
 			JWKSURI:                           jwksProxyURL,
 			ResponseTypesSupported:            []string{"code"},
-			GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
+			GrantTypesSupported:               grantTypes,
 			ResponseModesSupported:            []string{"query", "fragment"},
 			CodeChallengeMethodsSupported:     []string{"S256"},
 			TokenEndpointAuthMethodsSupported: tokenEndpointAuthMethods,
 			IDTokenSigningAlgValuesSupported:  idTokenSigningAlgs,
 			SubjectTypesSupported:             subjectTypes,
+			PromptValuesSupported:             doc.PromptValuesSupported,
+			AccountManagementURI:              cfg.AccountManagementURL,
+			AccountManagementActionsSupported: cfg.AccountManagementActions,
 			ScopesSupported: []string{
 				"openid",
 				"offline_access",
