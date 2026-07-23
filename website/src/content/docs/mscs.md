@@ -113,10 +113,15 @@ When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection
 **What changes when MSC3861 is enabled:**
 
 - Password-based registration and login are disabled.
-- `GET /login` returns the legacy `m.login.sso` and `m.login.token` flows, so older Element Web/Desktop clients can sign in via the OIDC provider without native OIDC support.
+- `GET /login` returns the legacy `m.login.sso` and `m.login.token` flows, so older Element Web/Desktop clients can sign in via the OIDC provider without native OIDC support. The SSO flow is marked `oauth_aware_preferred`, and `/login/sso/redirect` honours the `action=login|register` parameter (`register` maps to `prompt=create` at the provider).
 - `POST /login` accepts only `m.login.token` (used to redeem a login token issued by the SSO callback); other login types return `403 M_FORBIDDEN`.
 - `POST /register`, `/account/password`, `/account/deactivate`, `/logout`, `/logout/all`, `/delete_devices`, and device modification endpoints return `403 M_FORBIDDEN`.
 - `/.well-known/matrix/client` includes an `m.authentication` section with the OIDC issuer.
+- `GET /_matrix/client/v1/auth_metadata` advertises the OAuth 2.0 authorization server metadata, including the account management URL/actions, device authorization endpoint, and supported prompt values discovered from the provider.
+- `GET /capabilities` reports `m.change_password` and `m.3pid_changes` as disabled.
+- `/keys/device_signing/upload` uses the `m.oauth` user-interactive auth type, deep-linking to the account management UI to confirm cross-signing resets.
+- Device IDs are taken from the stable `urn:matrix:client:device:<id>` scope token (the `urn:matrix:device:` and unstable MSC2967 prefixes are still accepted).
+- Expired access tokens return `401 M_UNKNOWN_TOKEN` with `soft_logout: true` so clients refresh at the provider instead of logging out.
 - New users are auto-provisioned on first token introspection.
 
 **Configuration:**
@@ -137,7 +142,9 @@ mscs:
     token_endpoint: ""                         # optional: defaults to {issuer}/oauth2/token
     registration_endpoint: ""                  # optional: defaults to {issuer}/oauth2/clients/register
     revocation_endpoint: ""                    # optional: defaults to {issuer}/oauth2/revoke
+    device_authorization_endpoint: ""          # optional: defaults to {issuer}/oauth2/device/auth
     jwks_uri: ""                               # optional: defaults to {issuer}/oauth2/keys
+    account_management_actions: []             # optional: e.g. ["org.matrix.profile", "org.matrix.devices_list"]
     sso_callback_url: ""                       # optional: defaults to {scheme}://{host}/_matrix/client/v3/login/sso/callback
 ```
 
@@ -148,5 +155,7 @@ mscs:
 | `client_secret` | Yes | OAuth 2.0 client secret for introspection. |
 | `client_auth_method` | No | Authentication method: `client_secret_basic` (default) or `client_secret_post`. |
 | `admin_token` | No | A static bearer token that grants admin access, bypassing OIDC introspection. Useful for service-to-service calls. |
-| `account_management_url` | No | URL where users can manage their account (shown in well-known response). |
+| `account_management_url` | No | URL where users can manage their account (shown in well-known response and advertised as `account_management_uri` in the auth metadata). |
+| `account_management_actions` | No | Account management actions supported by the account management URL, advertised as `account_management_actions_supported`. |
+| `device_authorization_endpoint` | No | Override the OAuth 2.0 device authorization endpoint (RFC 8628). Defaults to the discovered value, then `{issuer}/oauth2/device/auth`. |
 | `introspection_endpoint` | No | Override the introspection endpoint URL. Defaults to `{issuer}/oauth2/introspect`. |
