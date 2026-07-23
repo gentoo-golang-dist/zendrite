@@ -9,6 +9,8 @@ package routing
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"slices"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
@@ -37,6 +39,7 @@ func UploadCrossSigningDeviceKeys(
 	req *http.Request,
 	keyserverAPI UploadKeysAPI, device *api.Device,
 	accountAPI auth.GetAccountByPassword, cfg *config.ClientAPI,
+	mscCfg *config.MSCs,
 ) util.JSONResponse {
 	uploadReq := &crossSigningRequest{}
 	uploadRes := &api.PerformUploadDeviceKeysResponse{}
@@ -75,28 +78,55 @@ func UploadCrossSigningDeviceKeys(
 		if sessionID == "" {
 			sessionID = util.RandomString(sessionIDLength)
 		}
-		if uploadReq.Auth.Type != authtypes.LoginTypePassword {
-			return util.JSONResponse{
-				Code: http.StatusUnauthorized,
-				JSON: newUserInteractiveResponse(
-					sessionID,
-					[]authtypes.Flow{
-						{
-							Stages: []authtypes.LoginType{authtypes.LoginTypePassword},
+		if mscCfg.Enabled("msc3861") {
+			// With delegated authentication there is no password to re-check.
+			// The OAuth 2.0 API uses the m.oauth UIA type instead: the client
+			// opens the params URL so the user can confirm the action in the
+			// account management web UI, then resubmits the session to complete
+			// the stage.
+			if !slices.Contains(sessions.getCompletedStages(sessionID), authtypes.LoginTypeOAuth) {
+				sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeOAuth)
+				return util.JSONResponse{
+					Code: http.StatusUnauthorized,
+					JSON: newUserInteractiveResponse(
+						sessionID,
+						[]authtypes.Flow{
+							{
+								Stages: []authtypes.LoginType{authtypes.LoginTypeOAuth},
+							},
 						},
-					},
-					nil,
-				),
+						map[string]any{
+							"m.oauth": map[string]any{
+								"url": msc3861OAuthUIAURL(mscCfg.MSC3861.AccountManagementURL, device.ID),
+							},
+						},
+					),
+				}
 			}
+		} else {
+			if uploadReq.Auth.Type != authtypes.LoginTypePassword {
+				return util.JSONResponse{
+					Code: http.StatusUnauthorized,
+					JSON: newUserInteractiveResponse(
+						sessionID,
+						[]authtypes.Flow{
+							{
+								Stages: []authtypes.LoginType{authtypes.LoginTypePassword},
+							},
+						},
+						nil,
+					),
+				}
+			}
+			typePassword := auth.LoginTypePassword{
+				GetAccountByPassword: accountAPI,
+				Config:               cfg,
+			}
+			if _, authErr := typePassword.Login(req.Context(), &uploadReq.Auth.PasswordRequest); authErr != nil {
+				return *authErr
+			}
+			sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypePassword)
 		}
-		typePassword := auth.LoginTypePassword{
-			GetAccountByPassword: accountAPI,
-			Config:               cfg,
-		}
-		if _, authErr := typePassword.Login(req.Context(), &uploadReq.Auth.PasswordRequest); authErr != nil {
-			return *authErr
-		}
-		sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypePassword)
 	}
 
 	uploadReq.UserID = device.UserID
@@ -131,6 +161,23 @@ func UploadCrossSigningDeviceKeys(
 		Code: http.StatusOK,
 		JSON: struct{}{},
 	}
+}
+
+// msc3861OAuthUIAURL builds the URL for the m.oauth UIA params, pointing at the
+// account management web UI with the cross-signing reset action, as described
+// in the OAuth 2.0 API account management section.
+func msc3861OAuthUIAURL(accountManagementURL, deviceID string) string {
+	u, err := url.Parse(accountManagementURL)
+	if err != nil {
+		return accountManagementURL
+	}
+	q := u.Query()
+	q.Set("action", "org.matrix.cross_signing_reset")
+	if deviceID != "" {
+		q.Set("device_id", deviceID)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func keysDiffer(existingMasterKey fclient.CrossSigningKey, keyResp api.QueryKeysResponse, uploadReq *crossSigningRequest, userID string) bool {
