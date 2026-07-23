@@ -413,6 +413,9 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 	// 5. Validate token expiry if present.
 	if introspection.Exp > 0 && time.Now().Unix() > introspection.Exp {
 		logrus.WithField("exp", introspection.Exp).Warn("MSC3861: access token has expired")
+		// Tell the client it can refresh the token at the OIDC provider rather
+		// than treating the session as destroyed.
+		res.SoftLogout = true
 		return nil
 	}
 
