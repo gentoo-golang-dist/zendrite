@@ -435,6 +435,18 @@ func (d *Database) GetAccountByLocalpart(ctx context.Context, localpart string, 
 	return acc, err
 }
 
+// IsAccountDeactivated returns whether the account with the given localpart is deactivated.
+// Returns sql.ErrNoRows if no account exists which matches the given localpart.
+func (d *Database) IsAccountDeactivated(ctx context.Context, localpart string, serverName spec.ServerName,
+) (bool, error) {
+	// try the lowercase localpart first (majority), mirroring GetAccountByLocalpart
+	deactivated, err := d.Accounts.SelectIsDeactivated(ctx, strings.ToLower(localpart), serverName)
+	if errors.Is(err, sql.ErrNoRows) {
+		deactivated, err = d.Accounts.SelectIsDeactivated(ctx, localpart, serverName) // try with localpart as passed by the request
+	}
+	return deactivated, err
+}
+
 // SearchProfiles returns all profiles where the provided localpart or display name
 // match any part of the profiles in the database.
 func (d *Database) SearchProfiles(ctx context.Context, searchString string, limit int,
@@ -891,7 +903,8 @@ func (d *Database) UpsertPusher(
 			p.Language,
 			string(data),
 			localpart,
-			serverName)
+			serverName,
+		)
 	})
 }
 

@@ -7,6 +7,8 @@ package internal
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/sirupsen/logrus"
 
@@ -53,27 +56,49 @@ type cachedIntrospection struct {
 }
 
 var (
-	// IntrospectionCache caches token introspection results for 30 seconds.
+	// IntrospectionCache caches token introspection results.
 	introspectionCache     *ttlcache.Cache[string, *cachedIntrospection]
 	introspectionCacheOnce sync.Once
 
-	// DiscoveredEndpoints caches the discovered introspection endpoint per issuer.
+	// DiscoveredEndpoints caches the discovered OIDC endpoints per issuer.
+	// Entries are immutable once published: readers copy the pointer while
+	// holding the mutex and may then read the fields without it.
 	discoveredEndpoints   = make(map[string]*oidcDiscoveryCache)
 	discoveredEndpointsMu sync.Mutex
 )
 
+// oidcDiscoveryCache holds the endpoints discovered from an issuer's OIDC
+// discovery document. Each endpoint has its own timestamp so that a missing
+// endpoint can be negative-cached for a shorter period than a found one.
 type oidcDiscoveryCache struct {
-	endpoint string
-	cachedAt time.Time
+	introspectionEndpoint string
+	introspectionCachedAt time.Time
+	userinfoEndpoint      string
+	userinfoCachedAt      time.Time
 }
 
 const (
-	introspectionCacheTTL     = 30 * time.Second
-	introspectionCacheMaxSize = 10_000
+	// Introspection results are cached for 30 seconds. This knowingly accepts
+	// a ~30s post-revocation window in which a token that was invalidated at
+	// the provider may still be treated as valid here, in exchange for
+	// bounding the load on the provider.
+	introspectionCacheTTL = 30 * time.Second
+	// Failed introspections are cached briefly so that clients polling with a
+	// bad or expired token don't hammer the provider.
+	introspectionErrorCacheTTL = 5 * time.Second
+	introspectionCacheMaxSize  = 10_000
+	// Discovery endpoints found in the issuer's discovery document are cached
+	// for an hour.
 	discoveryEndpointCacheTTL = 1 * time.Hour
-	stableDeviceScopePrefix   = "urn:matrix:client:device:"
-	deviceScopePrefix         = "urn:matrix:device:"
-	legacyDeviceScopePrefix   = "urn:matrix:org.matrix.msc2967.client:device:"
+	// Missing discovery endpoints are negative-cached for a minute, so a
+	// provider that adds an endpoint later is picked up quickly while a
+	// misconfigured issuer isn't queried on every token validation.
+	discoveryMissingEndpointCacheTTL = 1 * time.Minute
+	stableDeviceScopePrefix          = "urn:matrix:client:device:"
+	deviceScopePrefix                = "urn:matrix:device:"
+	legacyDeviceScopePrefix          = "urn:matrix:org.matrix.msc2967.client:device:"
+	// DeviceID used when the token scope carries no device ID.
+	defaultOIDCDeviceID = "OIDC"
 )
 
 func getIntrospectionCache() *ttlcache.Cache[string, *cachedIntrospection] {
@@ -164,54 +189,88 @@ func deriveLocalpart(introspection *IntrospectionResponse, serverName string) st
 	return sanitizeLocalpart(introspection.Sub)
 }
 
-// discoverIntrospectionEndpoint fetches the OIDC discovery document from the issuer
-// and returns the introspection_endpoint. Results are cached for 1 hour per issuer.
-func discoverIntrospectionEndpoint(ctx context.Context, issuer string, httpClient *http.Client) string {
-	discoveredEndpointsMu.Lock()
-	defer discoveredEndpointsMu.Unlock()
-
-	issuer = strings.TrimSuffix(issuer, "/")
-	if cached, ok := discoveredEndpoints[issuer]; ok && cached.endpoint != "" && time.Since(cached.cachedAt) < discoveryEndpointCacheTTL {
-		return cached.endpoint
+// discoveryEntryFresh reports whether a cached discovery result is still
+// valid: found endpoints are cached for an hour, missing endpoints are only
+// negative-cached for a minute.
+func discoveryEntryFresh(cachedAt time.Time, found bool) bool {
+	if cachedAt.IsZero() {
+		return false
 	}
+	if found {
+		return time.Since(cachedAt) < discoveryEndpointCacheTTL
+	}
+	return time.Since(cachedAt) < discoveryMissingEndpointCacheTTL
+}
 
-	discoveryURL := issuer + "/.well-known/openid-configuration"
+// fetchOIDCDiscovery retrieves and decodes the OIDC discovery document of the
+// given issuer.
+func fetchOIDCDiscovery(ctx context.Context, issuer string, httpClient *http.Client) (*oidcDiscoveryResponse, error) {
+	discoveryURL := strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
-		logrus.WithError(err).Warn("MSC3861: failed to create OIDC discovery request")
-		return ""
+		return nil, fmt.Errorf("msc3861: failed to create OIDC discovery request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		logrus.WithError(err).Warn("MSC3861: OIDC discovery request failed")
-		return ""
+		return nil, fmt.Errorf("msc3861: OIDC discovery request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		logrus.WithField("status", resp.StatusCode).Warn("MSC3861: OIDC discovery returned non-200 status")
-		return ""
+		return nil, fmt.Errorf("msc3861: OIDC discovery returned status %d", resp.StatusCode)
 	}
 
 	var discovery oidcDiscoveryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
-		logrus.WithError(err).Warn("MSC3861: failed to decode OIDC discovery response")
+		return nil, fmt.Errorf("msc3861: failed to decode OIDC discovery response: %w", err)
+	}
+	return &discovery, nil
+}
+
+// updateDiscoveryCache records the endpoints from a fetched discovery
+// document, including the absence of an endpoint (negative cache). The entry
+// is replaced wholesale so published entries stay immutable.
+func updateDiscoveryCache(issuer string, discovery *oidcDiscoveryResponse) {
+	now := time.Now()
+	discoveredEndpointsMu.Lock()
+	defer discoveredEndpointsMu.Unlock()
+	discoveredEndpoints[issuer] = &oidcDiscoveryCache{
+		introspectionEndpoint: discovery.IntrospectionEndpoint,
+		introspectionCachedAt: now,
+		userinfoEndpoint:      discovery.UserinfoEndpoint,
+		userinfoCachedAt:      now,
+	}
+}
+
+// discoverIntrospectionEndpoint fetches the OIDC discovery document from the issuer
+// and returns the introspection_endpoint. Found endpoints are cached for 1 hour
+// per issuer, missing endpoints for 1 minute.
+func discoverIntrospectionEndpoint(ctx context.Context, issuer string, httpClient *http.Client) string {
+	issuer = strings.TrimSuffix(issuer, "/")
+
+	discoveredEndpointsMu.Lock()
+	cached := discoveredEndpoints[issuer]
+	discoveredEndpointsMu.Unlock()
+	if cached != nil && discoveryEntryFresh(cached.introspectionCachedAt, cached.introspectionEndpoint != "") {
+		return cached.introspectionEndpoint
+	}
+
+	// The HTTP fetch happens outside the mutex: a slow provider must not stall
+	// unrelated token validations. Concurrent duplicate fetches are harmless.
+	discovery, err := fetchOIDCDiscovery(ctx, issuer, httpClient)
+	if err != nil {
+		logrus.WithError(err).Warn("MSC3861: OIDC discovery failed")
 		return ""
 	}
 
+	updateDiscoveryCache(issuer, discovery)
 	if discovery.IntrospectionEndpoint != "" {
-		discoveredEndpoints[issuer] = &oidcDiscoveryCache{
-			endpoint: discovery.IntrospectionEndpoint,
-			cachedAt: time.Now(),
-		}
 		logrus.WithField("endpoint", discovery.IntrospectionEndpoint).Info("MSC3861: discovered introspection endpoint")
-		return discovery.IntrospectionEndpoint
 	}
-
-	return ""
+	return discovery.IntrospectionEndpoint
 }
 
 // resolveIntrospectionEndpoint returns the introspection endpoint to use,
@@ -230,6 +289,7 @@ func resolveIntrospectionEndpoint(ctx context.Context, msc3861 *config.MSC3861Co
 
 // discoverUserinfoEndpoint fetches the OIDC discovery document and returns the
 // userinfo_endpoint, falling back to the configured or default issuer value.
+// Results are cached with the same TTLs as the introspection endpoint.
 func discoverUserinfoEndpoint(ctx context.Context, msc3861 *config.MSC3861Config, httpClient *http.Client) string {
 	if msc3861.UserinfoEndpoint != "" {
 		return msc3861.UserinfoEndpoint
@@ -238,33 +298,26 @@ func discoverUserinfoEndpoint(ctx context.Context, msc3861 *config.MSC3861Config
 	if msc3861.Issuer == "" {
 		return ""
 	}
+	issuer := strings.TrimSuffix(msc3861.Issuer, "/")
 
-	discoveryURL := strings.TrimSuffix(msc3861.Issuer, "/") + "/.well-known/openid-configuration"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	discoveredEndpointsMu.Lock()
+	cached := discoveredEndpoints[issuer]
+	discoveredEndpointsMu.Unlock()
+	if cached != nil && discoveryEntryFresh(cached.userinfoCachedAt, cached.userinfoEndpoint != "") {
+		if cached.userinfoEndpoint != "" {
+			return cached.userinfoEndpoint
+		}
+		return msc3861.UserinfoEndpointOrDefault()
+	}
+
+	// The HTTP fetch happens outside the mutex, see discoverIntrospectionEndpoint.
+	discovery, err := fetchOIDCDiscovery(ctx, issuer, httpClient)
 	if err != nil {
-		logrus.WithError(err).Warn("MSC3861: failed to create OIDC discovery request for userinfo")
-		return msc3861.UserinfoEndpointOrDefault()
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		logrus.WithError(err).Warn("MSC3861: OIDC discovery request for userinfo failed")
-		return msc3861.UserinfoEndpointOrDefault()
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		logrus.WithField("status", resp.StatusCode).Warn("MSC3861: OIDC discovery for userinfo returned non-200 status")
+		logrus.WithError(err).Warn("MSC3861: OIDC discovery for userinfo failed")
 		return msc3861.UserinfoEndpointOrDefault()
 	}
 
-	var discovery oidcDiscoveryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
-		logrus.WithError(err).Warn("MSC3861: failed to decode OIDC discovery response for userinfo")
-		return msc3861.UserinfoEndpointOrDefault()
-	}
-
+	updateDiscoveryCache(issuer, discovery)
 	if discovery.UserinfoEndpoint != "" {
 		return discovery.UserinfoEndpoint
 	}
@@ -278,12 +331,42 @@ func discoverUserinfoEndpoint(ctx context.Context, msc3861 *config.MSC3861Config
 // instead of destroying the session.
 var errTokenExpired = fmt.Errorf("msc3861: access token expired")
 
+// parseBearerChallengeParams parses the auth-param list of a Bearer
+// WWW-Authenticate challenge (RFC 6750 section 3) into a lowercase-keyed map.
+// It returns false if the header is not a Bearer challenge with parameters.
+func parseBearerChallengeParams(header string) (map[string]string, bool) {
+	scheme, rest, found := strings.Cut(header, " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return nil, false
+	}
+	params := make(map[string]string)
+	for _, part := range strings.Split(rest, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		params[strings.ToLower(strings.TrimSpace(key))] = strings.Trim(strings.TrimSpace(value), `"`)
+	}
+	return params, true
+}
+
 // isExpiredBearerToken reports whether an RFC 6750 rejection indicates an
-// expired (rather than unknown or malformed) token, checking both the
-// WWW-Authenticate challenge and the response body for an invalid_token error
-// that mentions expiry.
+// expired (rather than unknown or malformed) token. The WWW-Authenticate
+// challenge is authoritative when present: error="invalid_token" combined
+// with an error_description mentioning expiry means the token expired. The
+// response body is only consulted as a fallback when no challenge was sent.
 func isExpiredBearerToken(wwwAuthenticate string, body []byte) bool {
-	haystack := strings.ToLower(wwwAuthenticate + " " + string(body))
+	if wwwAuthenticate != "" {
+		params, ok := parseBearerChallengeParams(wwwAuthenticate)
+		if !ok {
+			return false
+		}
+		if !strings.EqualFold(params["error"], "invalid_token") {
+			return false
+		}
+		return strings.Contains(strings.ToLower(params["error_description"]), "expir")
+	}
+	haystack := strings.ToLower(string(body))
 	return strings.Contains(haystack, "invalid_token") && strings.Contains(haystack, "expired")
 }
 
@@ -355,8 +438,8 @@ func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token str
 	}, nil
 }
 
-// introspectToken calls the OIDC introspection endpoint to validate an access token.
-// If introspection is unavailable, it falls back to the OIDC UserInfo endpoint.
+// introspectToken calls the OIDC introspection endpoint to validate an access
+// token, returning a cached result when one is available.
 func introspectToken(ctx context.Context, msc3861 *config.MSC3861Config, token string, httpClient *http.Client) (*IntrospectionResponse, error) {
 	// Check cache first.
 	cache := getIntrospectionCache()
@@ -366,6 +449,21 @@ func introspectToken(ctx context.Context, msc3861 *config.MSC3861Config, token s
 		return cached.response, cached.err
 	}
 
+	introspection, err := doIntrospectToken(ctx, msc3861, token, httpClient)
+	if err != nil {
+		// Cache failures briefly: clients polling with an invalid or expired
+		// token would otherwise hit the provider on every single request.
+		cache.Set(tokenHash, &cachedIntrospection{err: err}, introspectionErrorCacheTTL)
+		return nil, err
+	}
+
+	cache.Set(tokenHash, &cachedIntrospection{response: introspection}, introspectionCacheTTL)
+	return introspection, nil
+}
+
+// doIntrospectToken calls the OIDC introspection endpoint to validate an access token.
+// If introspection is unavailable, it falls back to the OIDC UserInfo endpoint.
+func doIntrospectToken(ctx context.Context, msc3861 *config.MSC3861Config, token string, httpClient *http.Client) (*IntrospectionResponse, error) {
 	endpoint := resolveIntrospectionEndpoint(ctx, msc3861, httpClient)
 
 	form := url.Values{"token": {token}}
@@ -416,18 +514,101 @@ func introspectToken(ctx context.Context, msc3861 *config.MSC3861Config, token s
 		return userinfoToken(ctx, msc3861, token, httpClient)
 	}
 
-	// Cache the result (only cache active tokens and inactive responses, not errors).
-	cache.Set(tokenHash, &cachedIntrospection{response: &introspection}, introspectionCacheTTL)
-
 	return &introspection, nil
+}
+
+// localpartTaken reports whether an account with the given localpart already
+// exists on this server.
+func (a *UserInternalAPI) localpartTaken(ctx context.Context, localpart string, serverName spec.ServerName) (bool, error) {
+	_, err := a.DB.GetAccountByLocalpart(ctx, localpart, serverName)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
+}
+
+// provisionMSC3861Localpart determines the Matrix localpart for a previously
+// unseen OIDC subject and persists the external ID mapping. It returns an
+// empty localpart (and no error) when no safe localpart can be assigned, in
+// which case the caller must refuse the login without linking any account.
+func (a *UserInternalAPI) provisionMSC3861Localpart(ctx context.Context, introspection *IntrospectionResponse, issuer, sub string, serverName spec.ServerName) (string, error) {
+	localpart := deriveLocalpart(introspection, string(serverName))
+	if localpart == "" {
+		logrus.WithField("sub", sub).Warn("MSC3861: introspection response has no email, no username, no sub, and no existing external ID mapping")
+		return "", nil
+	}
+
+	// Validate before persisting the mapping: a stored localpart that fails
+	// validation would lock the user out of every future login.
+	if err := zinternal.ValidateUsername(localpart, serverName); err != nil {
+		logrus.WithError(err).WithField("localpart", localpart).Warn("MSC3861: derived localpart is not valid")
+		return "", nil
+	}
+
+	// Never attach an OIDC identity to a pre-existing account that merely
+	// happens to share the derived localpart (e.g. a password-registered
+	// account); fall back to the subject claim instead.
+	taken, err := a.localpartTaken(ctx, localpart, serverName)
+	if err != nil {
+		return "", err
+	}
+	if taken {
+		localpart = sanitizeLocalpart(introspection.Sub)
+		if err := zinternal.ValidateUsername(localpart, serverName); err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"localpart": localpart,
+				"sub":       sub,
+			}).Warn("MSC3861: subject-derived localpart is not valid")
+			return "", nil
+		}
+		taken, err = a.localpartTaken(ctx, localpart, serverName)
+		if err != nil {
+			return "", err
+		}
+		if taken {
+			logrus.WithFields(logrus.Fields{
+				"localpart": localpart,
+				"sub":       sub,
+			}).Warn("MSC3861: derived and subject localparts both collide with existing accounts, refusing to link")
+			return "", nil
+		}
+	}
+
+	if err := a.DB.CreateExternalIDMapping(ctx, localpart, serverName, issuer, sub); err != nil {
+		// A concurrent first login for the same subject may have won the
+		// insert; adopt its mapping instead of failing the request.
+		mapped, _, lookupErr := a.DB.GetLocalpartByExternalID(ctx, issuer, sub)
+		if lookupErr == nil && mapped != "" {
+			logrus.WithFields(logrus.Fields{
+				"localpart": mapped,
+				"sub":       sub,
+			}).Info("MSC3861: adopting concurrently created external ID mapping")
+			return mapped, nil
+		}
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"localpart": localpart,
+			"sub":       sub,
+		}).Error("MSC3861: failed to create external ID mapping")
+		return "", err
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"localpart": localpart,
+		"sub":       sub,
+	}).Info("MSC3861: created external ID mapping")
+	return localpart, nil
 }
 
 // queryAccessTokenMSC3861 handles token validation when MSC3861 OIDC delegation is enabled.
 func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.QueryAccessTokenRequest, res *api.QueryAccessTokenResponse) error {
 	msc3861 := &a.Config.MSCs.MSC3861
 
-	// 1. Check static admin token.
-	if msc3861.AdminToken != "" && req.AccessToken == msc3861.AdminToken {
+	// 1. Check static admin token using a constant-time comparison. An empty
+	// configured admin token never matches.
+	if msc3861.AdminToken != "" && subtle.ConstantTimeCompare([]byte(req.AccessToken), []byte(msc3861.AdminToken)) == 1 {
 		res.Device = &api.Device{
 			ID:          "admin",
 			UserID:      fmt.Sprintf("@admin:%s", a.Config.Matrix.ServerName),
@@ -463,17 +644,17 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		return nil
 	}
 
-	// 4. Inactive token -> return nil device (M_UNKNOWN_TOKEN).
-	if !introspection.Active {
+	// 4. Validate token expiry before the active check: providers that answer
+	// active:false for expired tokens must still trigger a soft logout so the
+	// client refreshes instead of destroying the session.
+	if introspection.Exp > 0 && time.Now().Unix() > introspection.Exp {
+		logrus.WithField("exp", introspection.Exp).Warn("MSC3861: access token has expired")
+		res.SoftLogout = true
 		return nil
 	}
 
-	// 5. Validate token expiry if present.
-	if introspection.Exp > 0 && time.Now().Unix() > introspection.Exp {
-		logrus.WithField("exp", introspection.Exp).Warn("MSC3861: access token has expired")
-		// Tell the client it can refresh the token at the OIDC provider rather
-		// than treating the session as destroyed.
-		res.SoftLogout = true
+	// 5. Inactive token -> return nil device (M_UNKNOWN_TOKEN).
+	if !introspection.Active {
 		return nil
 	}
 
@@ -495,41 +676,44 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 	}
 
 	if localpart == "" {
-		// No mapping exists yet. Derive one from the introspected claims.
-		localpart = deriveLocalpart(introspection, string(serverName))
-		if localpart == "" {
-			logrus.WithField("sub", sub).Warn("MSC3861: introspection response has no email, no username, no sub, and no existing external ID mapping")
-			return nil
-		}
-
-		// Create the external ID mapping.
-		if err := a.DB.CreateExternalIDMapping(ctx, localpart, serverName, issuer, sub); err != nil {
-			logrus.WithError(err).WithFields(logrus.Fields{
-				"localpart": localpart,
-				"sub":       sub,
-			}).Error("MSC3861: failed to create external ID mapping")
+		// No mapping exists yet. Derive one from the introspected claims and
+		// persist it, refusing to link to colliding pre-existing accounts.
+		localpart, err = a.provisionMSC3861Localpart(ctx, introspection, issuer, sub, serverName)
+		if err != nil {
 			return err
 		}
-
-		logrus.WithFields(logrus.Fields{
-			"localpart": localpart,
-			"sub":       sub,
-		}).Info("MSC3861: created external ID mapping")
+		if localpart == "" {
+			return nil
+		}
 	}
 
-	// 6. Validate the localpart before it is used for account provisioning.
+	// 7. Validate the resolved localpart before account provisioning.
 	if err := zinternal.ValidateUsername(localpart, serverName); err != nil {
 		logrus.WithError(err).WithField("localpart", localpart).Warn("MSC3861: localpart is not valid")
 		return nil
 	}
 
-	// 7. Determine account type from scope.
+	// 8. Refuse tokens for deactivated accounts. PerformAccountCreation with
+	// ConflictUpdate would otherwise silently re-attach the session to the
+	// deactivated account. A missing account is fine; it is provisioned below.
+	deactivated, err := a.DB.IsAccountDeactivated(ctx, localpart, serverName)
+	switch {
+	case err == nil && deactivated:
+		logrus.WithField("localpart", localpart).Warn("MSC3861: refusing token for deactivated account")
+		return nil
+	case err == nil || errors.Is(err, sql.ErrNoRows):
+	default:
+		logrus.WithError(err).WithField("localpart", localpart).Error("MSC3861: failed to check account deactivation")
+		return err
+	}
+
+	// 9. Determine account type from scope.
 	accountType := api.AccountTypeUser
 	if strings.Contains(introspection.Scope, "urn:synapse:admin:*") {
 		accountType = api.AccountTypeAdmin
 	}
 
-	// 8. Auto-provision user account if it doesn't exist.
+	// 10. Auto-provision user account if it doesn't exist.
 	var createRes api.PerformAccountCreationResponse
 	if err := a.PerformAccountCreation(ctx, &api.PerformAccountCreationRequest{
 		AccountType: accountType,
@@ -541,10 +725,40 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		return err
 	}
 
-	// 8. Extract device ID from scope and create a real device.
+	// 11. Extract device ID from scope and ensure a device row exists. The row
+	// is only (re)created when it is missing or the stored access token differs
+	// from the presented one (token rotation). Recreating it on every request
+	// would bump the session ID, break /send transaction deduplication and wipe
+	// the display name.
 	deviceID := extractDeviceIDFromScope(introspection.Scope)
 	if deviceID == "" {
-		deviceID = "OIDC"
+		deviceID = defaultOIDCDeviceID
+	}
+
+	existingDevice, err := a.DB.GetDeviceByID(ctx, localpart, serverName, deviceID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"localpart": localpart,
+			"device_id": deviceID,
+		}).Error("MSC3861: failed to look up device")
+		return err
+	}
+	if err == nil {
+		tokenDevice, tokenErr := a.DB.GetDeviceByAccessToken(ctx, req.AccessToken)
+		if tokenErr != nil && !errors.Is(tokenErr, sql.ErrNoRows) {
+			logrus.WithError(tokenErr).WithFields(logrus.Fields{
+				"localpart": localpart,
+				"device_id": deviceID,
+			}).Error("MSC3861: failed to look up device by access token")
+			return tokenErr
+		}
+		if tokenErr == nil && tokenDevice.ID == deviceID && tokenDevice.UserID == existingDevice.UserID {
+			// Device and token are unchanged; reuse the row as-is.
+			tokenDevice.DisplayName = existingDevice.DisplayName
+			tokenDevice.AccountType = accountType
+			res.Device = tokenDevice
+			return nil
+		}
 	}
 
 	var deviceRes api.PerformDeviceCreationResponse

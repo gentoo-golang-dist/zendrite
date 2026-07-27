@@ -364,6 +364,78 @@ func TestExtractDeviceIDFromScope(t *testing.T) {
 	}
 }
 
+func TestIsExpiredBearerToken(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		wwwAuthenticate string
+		body            string
+		expected        bool
+	}{
+		{
+			name:            "header invalid_token with expiry description",
+			wwwAuthenticate: `Bearer error="invalid_token", error_description="The access token expired"`,
+			expected:        true,
+		},
+		{
+			name:            "header invalid_token revoked",
+			wwwAuthenticate: `Bearer error="invalid_token", error_description="Token revoked"`,
+			expected:        false,
+		},
+		{
+			name:            "header case-insensitive",
+			wwwAuthenticate: `bearer Error="invalid_token", error_description="Expired"`,
+			expected:        true,
+		},
+		{
+			name:            "header invalid_token without description",
+			wwwAuthenticate: `Bearer realm="example", error="invalid_token"`,
+			expected:        false,
+		},
+		{
+			name:            "header takes precedence over body (revoked in header, expired in body)",
+			wwwAuthenticate: `Bearer error="invalid_token", error_description="Token revoked"`,
+			body:            `{"error":"invalid_token","error_description":"expired"}`,
+			expected:        false,
+		},
+		{
+			name:            "header insufficient_scope is not an expired token",
+			wwwAuthenticate: `Bearer error="insufficient_scope"`,
+			body:            `{"error":"invalid_token","error_description":"expired"}`,
+			expected:        false,
+		},
+		{
+			name:     "body fallback when header absent, expired",
+			body:     `{"error":"invalid_token","error_description":"The token expired"}`,
+			expected: true,
+		},
+		{
+			name:     "body fallback when header absent, revoked",
+			body:     `{"error":"invalid_token","error_description":"The token was revoked"}`,
+			expected: false,
+		},
+		{
+			name:            "non-bearer challenge",
+			wwwAuthenticate: `Basic realm="example"`,
+			expected:        false,
+		},
+		{
+			name:            "bare Bearer scheme without params",
+			wwwAuthenticate: `Bearer`,
+			expected:        false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isExpiredBearerToken(tc.wwwAuthenticate, []byte(tc.body))
+			if got != tc.expected {
+				t.Errorf("isExpiredBearerToken(%q, %q) = %v, want %v", tc.wwwAuthenticate, tc.body, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestDeriveLocalpart(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -817,6 +889,228 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			expectedUserID := "@opaque-uuid-nousername:test"
 			if res.Device.UserID != expectedUserID {
 				t.Errorf("expected user ID %s, got %s", expectedUserID, res.Device.UserID)
+			}
+		})
+
+		t.Run("LocalpartCollisionFallsBackToSub", func(t *testing.T) {
+			sub := "opaque-uuid-collision"
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      sub,
+					"scope":    "openid",
+					"username": "alice",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			// A pre-existing (e.g. password-registered) account already owns the
+			// localpart the OIDC identity would derive from its username claim.
+			ctx := context.Background()
+			serverName := userAPI.Config.Matrix.ServerName
+			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "secret", "", api.AccountTypeUser); err != nil {
+				t.Fatalf("failed to create colliding account: %v", err)
+			}
+
+			req := &api.QueryAccessTokenRequest{AccessToken: "collision-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device == nil {
+				t.Fatal("expected device when falling back to sub-derived localpart")
+			}
+			// The OIDC identity must not be attached to the existing @alice:test
+			// account; it falls back to the subject claim instead.
+			expectedUserID := "@" + sub + ":test"
+			if res.Device.UserID != expectedUserID {
+				t.Errorf("expected user ID %s, got %s", expectedUserID, res.Device.UserID)
+			}
+
+			issuer := userAPI.Config.MSCs.MSC3861.Issuer
+			localpart, _, err := userAPI.DB.GetLocalpartByExternalID(ctx, issuer, sub)
+			if err != nil {
+				t.Fatalf("failed to look up external ID: %v", err)
+			}
+			if localpart != sub {
+				t.Errorf("expected mapping to sub-derived localpart %q, got %q", sub, localpart)
+			}
+		})
+
+		t.Run("LocalpartCollisionHardFail", func(t *testing.T) {
+			sub := "opaque-uuid-taken"
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      sub,
+					"scope":    "openid",
+					"username": "alice",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			// Both the derived localpart and the subject-derived fallback are
+			// already taken by different accounts.
+			ctx := context.Background()
+			serverName := userAPI.Config.Matrix.ServerName
+			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "secret", "", api.AccountTypeUser); err != nil {
+				t.Fatalf("failed to create colliding account: %v", err)
+			}
+			if _, err := userAPI.DB.CreateAccount(ctx, sub, serverName, "secret", "", api.AccountTypeUser); err != nil {
+				t.Fatalf("failed to create colliding sub account: %v", err)
+			}
+
+			req := &api.QueryAccessTokenRequest{AccessToken: "hardfail-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device != nil {
+				t.Errorf("expected nil device when all localparts collide, got %+v", res.Device)
+			}
+
+			// No mapping must have been persisted.
+			issuer := userAPI.Config.MSCs.MSC3861.Issuer
+			localpart, _, err := userAPI.DB.GetLocalpartByExternalID(ctx, issuer, sub)
+			if err != nil {
+				t.Fatalf("failed to look up external ID: %v", err)
+			}
+			if localpart != "" {
+				t.Errorf("expected no external ID mapping, got %q", localpart)
+			}
+		})
+
+		t.Run("DeactivatedAccountRejected", func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      "opaque-uuid-deact",
+					"scope":    "openid",
+					"username": "deactuser",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			ctx := context.Background()
+			req := &api.QueryAccessTokenRequest{AccessToken: "deact-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device == nil {
+				t.Fatal("expected device on first login")
+			}
+
+			serverName := userAPI.Config.Matrix.ServerName
+			if err := userAPI.DB.DeactivateAccount(ctx, "deactuser", serverName); err != nil {
+				t.Fatalf("failed to deactivate account: %v", err)
+			}
+
+			res2 := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res2); err != nil {
+				t.Fatalf("unexpected error on second call: %v", err)
+			}
+			if res2.Device != nil {
+				t.Errorf("expected nil device for deactivated account, got %+v", res2.Device)
+			}
+		})
+
+		t.Run("DeviceNotRecreatedForSameToken", func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      "opaque-uuid-session",
+					"scope":    "openid urn:matrix:org.matrix.msc2967.client:device:MYDEV",
+					"username": "sessionuser",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			ctx := context.Background()
+			req := &api.QueryAccessTokenRequest{AccessToken: "session-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device == nil {
+				t.Fatal("expected device on first login")
+			}
+			if res.Device.ID != "MYDEV" {
+				t.Errorf("expected device ID MYDEV, got %s", res.Device.ID)
+			}
+
+			// Give the device a display name; it must survive subsequent
+			// token validations.
+			serverName := userAPI.Config.Matrix.ServerName
+			displayName := "My Device"
+			if err := userAPI.DB.UpdateDevice(ctx, "sessionuser", serverName, "MYDEV", &displayName); err != nil {
+				t.Fatalf("failed to update device display name: %v", err)
+			}
+
+			res2 := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res2); err != nil {
+				t.Fatalf("unexpected error on second call: %v", err)
+			}
+			if res2.Device == nil {
+				t.Fatal("expected device on second call")
+			}
+			if res2.Device.SessionID != res.Device.SessionID {
+				t.Errorf("expected session ID to be preserved (%d), got %d", res.Device.SessionID, res2.Device.SessionID)
+			}
+			if res2.Device.DisplayName != displayName {
+				t.Errorf("expected display name %q to be preserved, got %q", displayName, res2.Device.DisplayName)
+			}
+
+			stored, err := userAPI.DB.GetDeviceByID(ctx, "sessionuser", serverName, "MYDEV")
+			if err != nil {
+				t.Fatalf("failed to look up device: %v", err)
+			}
+			if stored.DisplayName != displayName {
+				t.Errorf("expected stored display name %q, got %q", displayName, stored.DisplayName)
+			}
+		})
+
+		t.Run("ExpiredActiveFalseSetsSoftLogout", func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					// Providers following RFC 7662 answer active:false for
+					// expired tokens but still return the exp claim.
+					"active": false,
+					"exp":    time.Now().Add(-time.Hour).Unix(),
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			req := &api.QueryAccessTokenRequest{AccessToken: "expired-inactive-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(context.Background(), req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device != nil {
+				t.Errorf("expected nil device for expired token, got %+v", res.Device)
+			}
+			if !res.SoftLogout {
+				t.Error("expected SoftLogout for expired token with active:false")
 			}
 		})
 	})
