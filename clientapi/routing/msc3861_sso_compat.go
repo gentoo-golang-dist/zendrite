@@ -269,7 +269,7 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 		"client_id":             {h.cfg.ClientID},
 		"redirect_uri":          {h.callbackURL(req)},
 		"state":                 {state},
-		"scope":                 {"openid offline_access urn:matrix:client:api:* urn:matrix:client:device:" + deviceID},
+		"scope":                 {"openid offline_access email profile urn:matrix:client:api:* urn:matrix:client:device:" + deviceID},
 		"code_challenge":        {pkceChallenge(codeVerifier)},
 		"code_challenge_method": {"S256"},
 	}

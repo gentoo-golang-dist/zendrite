@@ -34,6 +34,10 @@ type IntrospectionResponse struct {
 	Scope    string `json:"scope"`
 	Exp      int64  `json:"exp"`
 	Username string `json:"username"`
+	// Email is a non-standard but RFC 7662-permitted member some providers
+	// inject so the homeserver can derive a friendlier localpart than the
+	// subject claim.
+	Email string `json:"email"`
 }
 
 // oidcDiscoveryResponse represents the relevant fields from an OIDC discovery document.
@@ -133,6 +137,31 @@ func sanitizeLocalpart(input string) string {
 	}
 
 	return s
+}
+
+// stripEmailDomain removes the domain from an email address when it matches
+// the server name, so that sienna@example.com provisions as @sienna:example.com
+// rather than @sienna_example.com:example.com. Addresses on other domains are
+// returned whole to keep localparts unique.
+func stripEmailDomain(email, serverName string) string {
+	local, domain, found := strings.Cut(email, "@")
+	if found && strings.EqualFold(domain, serverName) {
+		return local
+	}
+	return email
+}
+
+// deriveLocalpart picks the best Matrix localpart for an OIDC identity,
+// preferring the email claim, then the username claim, then the subject
+// claim for providers like Ory Hydra that don't expose a username.
+func deriveLocalpart(introspection *IntrospectionResponse, serverName string) string {
+	if localpart := sanitizeLocalpart(stripEmailDomain(introspection.Email, serverName)); localpart != "" {
+		return localpart
+	}
+	if localpart := sanitizeLocalpart(introspection.Username); localpart != "" {
+		return localpart
+	}
+	return sanitizeLocalpart(introspection.Sub)
 }
 
 // discoverIntrospectionEndpoint fetches the OIDC discovery document from the issuer
@@ -322,6 +351,7 @@ func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token str
 		Active:   true,
 		Sub:      userinfo.Sub,
 		Username: username,
+		Email:    userinfo.Email,
 	}, nil
 }
 
@@ -465,15 +495,10 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 	}
 
 	if localpart == "" {
-		// No mapping exists yet. Use the username claim from the introspection response,
-		// falling back to the subject claim for providers like Ory Hydra that don't
-		// expose a username.
-		localpart = sanitizeLocalpart(introspection.Username)
+		// No mapping exists yet. Derive one from the introspected claims.
+		localpart = deriveLocalpart(introspection, string(serverName))
 		if localpart == "" {
-			localpart = sanitizeLocalpart(introspection.Sub)
-		}
-		if localpart == "" {
-			logrus.WithField("sub", sub).Warn("MSC3861: introspection response has no username, no sub, and no existing external ID mapping")
+			logrus.WithField("sub", sub).Warn("MSC3861: introspection response has no email, no username, no sub, and no existing external ID mapping")
 			return nil
 		}
 

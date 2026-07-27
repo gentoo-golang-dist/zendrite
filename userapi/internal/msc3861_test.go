@@ -364,6 +364,41 @@ func TestExtractDeviceIDFromScope(t *testing.T) {
 	}
 }
 
+func TestDeriveLocalpart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		email        string
+		username     string
+		sub          string
+		serverName   string
+		expectedPart string
+	}{
+		{"email matching server domain", "alice@example.com", "ignored", "sub-1", "example.com", "alice"},
+		{"email matching server domain case-insensitively", "alice@Example.COM", "ignored", "sub-1", "example.com", "alice"},
+		{"email on foreign domain kept whole", "alice@other.com", "ignored", "sub-1", "example.com", "alice_other.com"},
+		{"username when no email", "", "bob", "sub-1", "example.com", "bob"},
+		{"sub when no email or username", "", "", "sub-1", "example.com", "sub-1"},
+		{"email preferred over username", "alice@example.com", "bob", "sub-1", "example.com", "alice"},
+		{"empty everything", "", "", "", "example.com", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := deriveLocalpart(&IntrospectionResponse{
+				Email:    tc.email,
+				Username: tc.username,
+				Sub:      tc.sub,
+			}, tc.serverName)
+			if got != tc.expectedPart {
+				t.Errorf("deriveLocalpart(email=%q, username=%q, sub=%q, server=%q) = %q, want %q",
+					tc.email, tc.username, tc.sub, tc.serverName, got, tc.expectedPart)
+			}
+		})
+	}
+}
+
 func TestDiscoverIntrospectionEndpoint(t *testing.T) {
 	// Not parallel: this test relies on the package-level discovery cache.
 	discoveredEndpointsMu.Lock()
@@ -540,6 +575,37 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			}
 			if res.Device.AccountType != api.AccountTypeUser {
 				t.Errorf("expected user account type, got %d", res.Device.AccountType)
+			}
+		})
+
+		t.Run("EmailPreferredAndDomainStripped", func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      "01HULID000000000000000000",
+					"scope":    "openid",
+					"username": "uliduser",
+					"email":    "alice@test",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			req := &api.QueryAccessTokenRequest{AccessToken: "email-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(context.Background(), req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device == nil {
+				t.Fatal("expected device for active token")
+			}
+			// The email claim wins over the username/sub, and the domain is
+			// stripped because it matches the server name.
+			if res.Device.UserID != "@alice:test" {
+				t.Errorf("expected user ID @alice:test, got %s", res.Device.UserID)
 			}
 		})
 

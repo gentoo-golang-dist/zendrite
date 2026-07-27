@@ -382,10 +382,11 @@ func TestMSC3861SSOCompat_RedirectUsesConfiguredEndpoints(t *testing.T) {
 		t.Error("expected state")
 	}
 	// A device ID must be allocated and requested via the stable device scope,
-	// alongside offline_access so the provider issues a refresh token.
+	// alongside offline_access so the provider issues a refresh token, and
+	// email/profile so the homeserver can derive a friendly localpart.
 	scope := q.Get("scope")
-	if !strings.HasPrefix(scope, "openid offline_access urn:matrix:client:api:* urn:matrix:client:device:") {
-		t.Errorf("expected scope to request offline_access and a device ID, got %q", scope)
+	if !strings.HasPrefix(scope, "openid offline_access email profile urn:matrix:client:api:* urn:matrix:client:device:") {
+		t.Errorf("expected scope to request offline_access, email, profile and a device ID, got %q", scope)
 	}
 	if strings.HasSuffix(scope, "urn:matrix:client:device:") {
 		t.Error("expected a non-empty device ID in the scope")
