@@ -6,11 +6,13 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -514,6 +516,317 @@ func TestMSC3861_AuthIssuer(t *testing.T) {
 				t.Errorf("expected issuer %s, got %s", cfg.MSCs.MSC3861.Issuer, resp.Issuer)
 			}
 		})
+	}
+}
+
+// TestMSC3861_AuthMetadataPublicBaseURL verifies that the advertised jwks_uri
+// is built from the configured public base URL when set, and only falls back
+// to the request Host otherwise.
+func TestMSC3861_AuthMetadataPublicBaseURL(t *testing.T) {
+	t.Parallel()
+
+	mscCfg := &config.MSCs{
+		MSCs: []string{"msc3861"},
+		MSC3861: config.MSC3861Config{
+			Issuer:        "https://auth.example.com",
+			PublicBaseURL: "https://matrix.example.com/",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://forged-host.example.org/_matrix/client/v1/auth_metadata", nil)
+	res := msc3861AuthMetadata(req, mscCfg)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	resp, ok := res.JSON.(AuthMetadataResponse)
+	if !ok {
+		t.Fatalf("expected AuthMetadataResponse, got %T", res.JSON)
+	}
+	want := "https://matrix.example.com/_matrix/client/v1/auth_metadata/jwks"
+	if resp.JWKSURI != want {
+		t.Errorf("expected jwks_uri %q, got %q", want, resp.JWKSURI)
+	}
+
+	// Without a configured public base URL the request Host is used.
+	mscCfg.MSC3861.PublicBaseURL = ""
+	res = msc3861AuthMetadata(req, mscCfg)
+	resp, ok = res.JSON.(AuthMetadataResponse)
+	if !ok {
+		t.Fatalf("expected AuthMetadataResponse, got %T", res.JSON)
+	}
+	want = "http://forged-host.example.org/_matrix/client/v1/auth_metadata/jwks"
+	if resp.JWKSURI != want {
+		t.Errorf("expected jwks_uri %q, got %q", want, resp.JWKSURI)
+	}
+}
+
+// TestMSC3861_DiscoveryCacheExpiry verifies that cached discovery documents
+// expire instead of being pinned for the process lifetime.
+func TestMSC3861_DiscoveryCacheExpiry(t *testing.T) {
+	t.Parallel()
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"issuer":         "http://" + r.Host,
+			"token_endpoint": "http://" + r.Host + "/oauth2/token",
+		})
+	}))
+	defer srv.Close()
+
+	// Entries stored with a zero TTL expire immediately, so every lookup
+	// revalidates instead of being pinned for the process lifetime.
+	_ = discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, 0)
+	_ = discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, 0)
+	if hits != 2 {
+		t.Fatalf("expected expired cache entries to be revalidated, got %d hits", hits)
+	}
+
+	// A long-lived entry is served from cache on subsequent lookups.
+	doc := discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, time.Hour)
+	if doc.TokenEndpoint == "" {
+		t.Fatal("expected discovery document to be used")
+	}
+	doc = discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, time.Hour)
+	if doc.TokenEndpoint == "" {
+		t.Fatal("expected cached discovery document to be used")
+	}
+	if hits != 3 {
+		t.Fatalf("expected the second lookup to be served from cache, got %d hits", hits)
+	}
+}
+
+// TestMSC3861_DiscoveryIssuerMismatch verifies that a discovery document whose
+// issuer does not match the configured issuer is neither cached nor used.
+func TestMSC3861_DiscoveryIssuerMismatch(t *testing.T) {
+	t.Parallel()
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"issuer":         "https://attacker.example.org",
+			"token_endpoint": "https://attacker.example.org/oauth2/token",
+		})
+	}))
+	defer srv.Close()
+
+	doc := discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, time.Hour)
+	if doc.TokenEndpoint != "" {
+		t.Fatalf("expected mismatched issuer document to be ignored, got %+v", doc)
+	}
+	// Not cached: a second lookup hits the server again.
+	_ = discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, time.Hour)
+	if hits != 2 {
+		t.Fatalf("expected mismatched issuer document to not be cached, got %d hits", hits)
+	}
+}
+
+func jwksProxyTestConfig(jwksURI string) *config.MSCs {
+	return &config.MSCs{
+		MSCs: []string{"msc3861"},
+		MSC3861: config.MSC3861Config{
+			Issuer:  "https://auth.example.com",
+			JWKSURI: jwksURI,
+		},
+	}
+}
+
+// TestMSC3861_JWKSProxyRejectsInvalidPayload verifies that an upstream payload
+// that is not a valid JWKS document yields a 502 and is not cached.
+func TestMSC3861_JWKSProxyRejectsInvalidPayload(t *testing.T) {
+	t.Parallel()
+
+	jwksBody := []byte(`{"keys":[{"kty":"RSA","kid":"test","n":"abc","e":"AQAB"}]}`)
+	var serveValid atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if serveValid.Load() {
+			_, _ = w.Write(jwksBody)
+			return
+		}
+		_, _ = w.Write([]byte(`<html>error page</html>`))
+	}))
+	defer srv.Close()
+
+	mscCfg := jwksProxyTestConfig(srv.URL + "/jwks")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	res := jwksProxyWithTTL(req, mscCfg, time.Minute)
+	if res.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 for an invalid JWKS payload, got %d", res.Code)
+	}
+
+	// The invalid payload must not have been cached: once the upstream
+	// recovers, the proxy serves the valid document.
+	serveValid.Store(true)
+	res = jwksProxyWithTTL(req, mscCfg, time.Minute)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 after upstream recovery, got %d", res.Code)
+	}
+	raw, ok := res.JSON.(jsonRaw)
+	if !ok {
+		t.Fatalf("expected jsonRaw, got %T", res.JSON)
+	}
+	if !bytes.Equal([]byte(raw), jwksBody) {
+		t.Errorf("unexpected JWKS body: %s", string(raw))
+	}
+}
+
+// TestMSC3861_JWKSProxyServesStaleOnError verifies that a failed revalidation
+// serves the expired cache entry with a short max-age instead of a 502.
+func TestMSC3861_JWKSProxyServesStaleOnError(t *testing.T) {
+	t.Parallel()
+
+	jwksBody := []byte(`{"keys":[{"kty":"RSA","kid":"test","n":"abc","e":"AQAB"}]}`)
+	var fail atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(jwksBody)
+	}))
+	defer srv.Close()
+
+	mscCfg := jwksProxyTestConfig(srv.URL + "/jwks")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	// Prime the cache with an entry that expires immediately.
+	res := jwksProxyWithTTL(req, mscCfg, -time.Second)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+
+	// Revalidation fails; the stale entry is served with a short max-age.
+	fail.Store(true)
+	res = jwksProxyWithTTL(req, mscCfg, -time.Second)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected stale entry to be served, got %d", res.Code)
+	}
+	if cc := res.Headers["Cache-Control"]; cc != "public, max-age=60" {
+		t.Errorf("expected short stale max-age, got %q", cc)
+	}
+	raw, ok := res.JSON.(jsonRaw)
+	if !ok {
+		t.Fatalf("expected jsonRaw, got %T", res.JSON)
+	}
+	if !bytes.Equal([]byte(raw), jwksBody) {
+		t.Errorf("unexpected stale JWKS body: %s", string(raw))
+	}
+}
+
+// TestMSC3861_MASAdminUserLifecycle exercises user creation and retrieval
+// through the MAS admin endpoints, including the admin flag mapping.
+func TestMSC3861_MASAdminUserLifecycle(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	// An unknown user maps to 404.
+	req := test_masAdminRequest(t, http.MethodGet, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", "")
+	rec := httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown user, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Create a regular user.
+	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", `{"displayname": "Alice"}`)
+	rec = httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 creating user, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Retrieval reports the account record.
+	req = test_masAdminRequest(t, http.MethodGet, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", "")
+	rec = httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 getting user, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var userResp struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"displayname"`
+		Admin       bool   `json:"admin"`
+		Deactivated bool   `json:"deactivated"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &userResp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if userResp.Name != "@alice:test" {
+		t.Errorf("expected name @alice:test, got %q", userResp.Name)
+	}
+	if userResp.Admin {
+		t.Error("expected admin=false for a regular user")
+	}
+
+	// Create an admin user and verify the flag comes from the account record.
+	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@admin-user:test", "test-admin-token", `{"admin": true}`)
+	rec = httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 creating admin user, got %d: %s", rec.Code, rec.Body.String())
+	}
+	req = test_masAdminRequest(t, http.MethodGet, "/_synapse/admin/v1/users/@admin-user:test", "test-admin-token", "")
+	rec = httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 getting admin user, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &userResp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if !userResp.Admin {
+		t.Error("expected admin=true to be reported from the account record")
+	}
+}
+
+// TestMSC3861_MASAdminDeviceIdempotent verifies that creating an existing
+// device returns it unchanged instead of clobbering it.
+func TestMSC3861_MASAdminDeviceIdempotent(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	req := test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", `{}`)
+	rec := httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 creating user, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test/devices/DEVICEONE", "test-admin-token", `{"display_name": "First name"}`)
+	rec = httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 creating device, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// A second PUT for the same device returns the existing device untouched.
+	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test/devices/DEVICEONE", "test-admin-token", `{"display_name": "Second name"}`)
+	rec = httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for idempotent device creation, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var deviceResp struct {
+		DeviceID    string `json:"device_id"`
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &deviceResp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if deviceResp.DeviceID != "DEVICEONE" {
+		t.Errorf("expected device_id DEVICEONE, got %q", deviceResp.DeviceID)
+	}
+	if deviceResp.DisplayName != "First name" {
+		t.Errorf("expected existing display name to be preserved, got %q", deviceResp.DisplayName)
 	}
 }
 

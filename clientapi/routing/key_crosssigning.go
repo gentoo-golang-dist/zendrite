@@ -83,9 +83,26 @@ func UploadCrossSigningDeviceKeys(
 			// The OAuth 2.0 API uses the m.oauth UIA type instead: the client
 			// opens the params URL so the user can confirm the action in the
 			// account management web UI, then resubmits the session to complete
-			// the stage.
-			if !slices.Contains(sessions.getCompletedStages(sessionID), authtypes.LoginTypeOAuth) {
-				sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeOAuth)
+			// the stage. m.oauth is a UX confirmation, not an auth factor; the
+			// real guard is the valid access token on the request. We therefore
+			// only complete the stage when the client resubmits a session that
+			// was issued by this server for the same user, or when the OIDC
+			// provider confirmed the web flow via the MAS admin API.
+			completed := slices.Contains(sessions.getCompletedStages(sessionID), authtypes.LoginTypeOAuth)
+			if !completed && sessionID != "" {
+				if sessions.completeOAuthSession(sessionID, device.UserID) || consumeMASCrossSigningConfirmation(device.UserID) {
+					sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeOAuth)
+					completed = true
+				}
+			}
+			if !completed {
+				// Always generate the session ID server-side. A client-supplied
+				// session that we never issued (or that was issued for another
+				// user) gets a fresh challenge with a new session ID rather
+				// than being honored. The stage is only recorded as completed
+				// once the resubmission checks above pass.
+				sessionID = util.RandomString(sessionIDLength)
+				sessions.addOAuthSession(sessionID, device.UserID)
 				return util.JSONResponse{
 					Code: http.StatusUnauthorized,
 					JSON: newUserInteractiveResponse(

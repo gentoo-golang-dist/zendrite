@@ -122,18 +122,35 @@ type oidcAuthMetadataDoc struct {
 	PromptValuesSupported             []string `json:"prompt_values_supported"`
 }
 
-const oidcDiscoveryTimeout = 10 * time.Second
+const (
+	oidcDiscoveryTimeout = 10 * time.Second
+	// The auth metadata cache TTL mirrors the userapi discovery cache TTL so
+	// the auth_metadata endpoint picks up provider changes within an hour.
+	oidcAuthMetadataCacheTTL = time.Hour
+)
+
+// oidcAuthMetadataCacheEntry holds a cached discovery document.
+type oidcAuthMetadataCacheEntry struct {
+	doc       oidcAuthMetadataDoc
+	expiresAt time.Time
+}
 
 var (
-	oidcAuthMetadataCache   = map[string]oidcAuthMetadataDoc{}
+	oidcAuthMetadataCache   = map[string]oidcAuthMetadataCacheEntry{}
 	oidcAuthMetadataCacheMu sync.RWMutex
 )
 
 // discoverOIDCAuthServerMetadata fetches the OIDC discovery document and returns
 // the fields needed for the Matrix auth_metadata response. Results are cached
-// for the lifetime of the process so that the auth_metadata endpoint does not
+// for oidcAuthMetadataCacheTTL so that the auth_metadata endpoint does not
 // need to perform an outbound request on every hit.
 func discoverOIDCAuthServerMetadata(ctx context.Context, issuer string) oidcAuthMetadataDoc {
+	return discoverOIDCAuthServerMetadataWithTTL(ctx, issuer, oidcAuthMetadataCacheTTL)
+}
+
+// discoverOIDCAuthServerMetadataWithTTL is the testable core of
+// discoverOIDCAuthServerMetadata with an explicit cache TTL.
+func discoverOIDCAuthServerMetadataWithTTL(ctx context.Context, issuer string, cacheTTL time.Duration) oidcAuthMetadataDoc {
 	if issuer == "" {
 		return oidcAuthMetadataDoc{}
 	}
@@ -141,8 +158,8 @@ func discoverOIDCAuthServerMetadata(ctx context.Context, issuer string) oidcAuth
 	oidcAuthMetadataCacheMu.RLock()
 	cached, ok := oidcAuthMetadataCache[issuer]
 	oidcAuthMetadataCacheMu.RUnlock()
-	if ok {
-		return cached
+	if ok && time.Now().Before(cached.expiresAt) {
+		return cached.doc
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, oidcDiscoveryTimeout)
@@ -170,8 +187,22 @@ func discoverOIDCAuthServerMetadata(ctx context.Context, issuer string) oidcAuth
 		return oidcAuthMetadataDoc{}
 	}
 
+	// A discovery document whose issuer does not match the configured issuer
+	// is not trustworthy: neither cache nor use it. The caller still serves
+	// the config-derived values in that case.
+	if doc.Issuer != issuer {
+		logrus.WithFields(logrus.Fields{
+			"configured_issuer": issuer,
+			"discovered_issuer": doc.Issuer,
+		}).Warn("MSC3861: discovered issuer does not match configured issuer")
+		return oidcAuthMetadataDoc{}
+	}
+
 	oidcAuthMetadataCacheMu.Lock()
-	oidcAuthMetadataCache[issuer] = doc
+	oidcAuthMetadataCache[issuer] = oidcAuthMetadataCacheEntry{
+		doc:       doc,
+		expiresAt: time.Now().Add(cacheTTL),
+	}
 	oidcAuthMetadataCacheMu.Unlock()
 
 	return doc
@@ -226,7 +257,18 @@ func msc3861AuthMetadata(req *http.Request, mscCfg *config.MSCs) util.JSONRespon
 		subjectTypes = []string{"public"}
 	}
 
-	jwksProxyURL := requestScheme(req) + "://" + req.Host + "/_matrix/client/v1/auth_metadata/jwks"
+	var jwksProxyBase string
+	if cfg.PublicBaseURL != "" {
+		// Prefer the configured public base URL so that a forged Host header
+		// cannot poison shared caches of the auth metadata document.
+		jwksProxyBase = strings.TrimSuffix(cfg.PublicBaseURL, "/")
+	} else {
+		// Fall back to the incoming request's Host. This trusts the Host and
+		// X-Forwarded-Proto headers, which a reverse proxy must sanitize;
+		// set public_base_url to drop that assumption.
+		jwksProxyBase = requestScheme(req) + "://" + req.Host
+	}
+	jwksProxyURL := jwksProxyBase + "/_matrix/client/v1/auth_metadata/jwks"
 
 	return util.JSONResponse{
 		Code: http.StatusOK,
@@ -294,9 +336,50 @@ func (r jsonRaw) MarshalJSON() ([]byte, error) {
 	return []byte(r), nil
 }
 
+const (
+	// Bound on the upstream JWKS response body that we read (1 MiB).
+	jwksMaxBodySize = 1 << 20
+	// The max-age advertised when serving a stale cached JWKS after a failed
+	// revalidation, so clients retry soon.
+	jwksStaleMaxAgeSeconds = 60
+)
+
+// isValidJWKS reports whether body decodes as JSON with a top-level "keys"
+// array, as required by RFC 7517.
+func isValidJWKS(body []byte) bool {
+	if !json.Valid(body) {
+		return false
+	}
+	return gjson.GetBytes(body, "keys").IsArray()
+}
+
+// serveStaleJWKS serves an expired cache entry after a failed revalidation.
+func serveStaleJWKS(upstream string) (util.JSONResponse, bool) {
+	jwksProxyCacheMu.RLock()
+	cached, ok := jwksProxyCache[upstream]
+	jwksProxyCacheMu.RUnlock()
+	if !ok {
+		return util.JSONResponse{}, false
+	}
+	return util.JSONResponse{
+		Code: http.StatusOK,
+		Headers: map[string]string{
+			"Content-Type":  "application/json",
+			"Cache-Control": fmt.Sprintf("public, max-age=%d", jwksStaleMaxAgeSeconds),
+		},
+		JSON: jsonRaw(cached.body),
+	}, true
+}
+
 // msc3861JWKSProxy proxies the OIDC provider's JWKS through the homeserver so
 // that browser clients can fetch it without being blocked by CORS.
 func msc3861JWKSProxy(req *http.Request, mscCfg *config.MSCs) util.JSONResponse {
+	return jwksProxyWithTTL(req, mscCfg, jwksProxyCacheTTL)
+}
+
+// jwksProxyWithTTL is the testable core of msc3861JWKSProxy with an explicit
+// cache TTL.
+func jwksProxyWithTTL(req *http.Request, mscCfg *config.MSCs, cacheTTL time.Duration) util.JSONResponse {
 	cfg := &mscCfg.MSC3861
 	upstream := resolveJWKSUpstream(cfg, discoverOIDCAuthServerMetadata(req.Context(), cfg.Issuer))
 	if upstream == "" {
@@ -314,7 +397,7 @@ func msc3861JWKSProxy(req *http.Request, mscCfg *config.MSCs) util.JSONResponse 
 			Code: http.StatusOK,
 			Headers: map[string]string{
 				"Content-Type":  "application/json",
-				"Cache-Control": fmt.Sprintf("public, max-age=%d", int(jwksProxyCacheTTL.Seconds())),
+				"Cache-Control": fmt.Sprintf("public, max-age=%d", int(cacheTTL.Seconds())),
 			},
 			JSON: jsonRaw(cached.body),
 		}
@@ -335,6 +418,9 @@ func msc3861JWKSProxy(req *http.Request, mscCfg *config.MSCs) util.JSONResponse 
 	resp, err := http.DefaultClient.Do(discoveryReq)
 	if err != nil {
 		logrus.WithError(err).Error("MSC3861: failed to fetch upstream JWKS")
+		if stale, served := serveStaleJWKS(upstream); served {
+			return stale
+		}
 		return util.JSONResponse{
 			Code: http.StatusBadGateway,
 			JSON: spec.InternalServerError{Err: "failed to fetch upstream JWKS"},
@@ -343,22 +429,42 @@ func msc3861JWKSProxy(req *http.Request, mscCfg *config.MSCs) util.JSONResponse 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, jwksMaxBodySize))
 		logrus.WithFields(logrus.Fields{
 			"status":   resp.StatusCode,
 			"response": string(body),
 		}).Error("MSC3861: upstream JWKS returned non-200 status")
+		if stale, served := serveStaleJWKS(upstream); served {
+			return stale
+		}
 		return util.JSONResponse{
 			Code: http.StatusBadGateway,
 			JSON: spec.InternalServerError{Err: "upstream JWKS returned non-200 status"},
 		}
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, jwksMaxBodySize))
 	if err != nil {
+		logrus.WithError(err).Error("MSC3861: failed to read upstream JWKS")
+		if stale, served := serveStaleJWKS(upstream); served {
+			return stale
+		}
 		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
+			Code: http.StatusBadGateway,
 			JSON: spec.InternalServerError{Err: "failed to read upstream JWKS"},
+		}
+	}
+
+	// Sanity-check the payload before caching or serving it: an upstream
+	// returning an error page must not be cached as the JWKS.
+	if !isValidJWKS(body) {
+		logrus.Error("MSC3861: upstream JWKS payload is not a valid JWKS document")
+		if stale, served := serveStaleJWKS(upstream); served {
+			return stale
+		}
+		return util.JSONResponse{
+			Code: http.StatusBadGateway,
+			JSON: spec.InternalServerError{Err: "upstream JWKS payload is not a valid JWKS document"},
 		}
 	}
 
@@ -366,7 +472,7 @@ func msc3861JWKSProxy(req *http.Request, mscCfg *config.MSCs) util.JSONResponse 
 	jwksProxyCache[upstream] = jwksProxyCacheEntry{
 		body:      body,
 		cachedAt:  time.Now(),
-		expiresAt: time.Now().Add(jwksProxyCacheTTL),
+		expiresAt: time.Now().Add(cacheTTL),
 	}
 	jwksProxyCacheMu.Unlock()
 
@@ -374,7 +480,7 @@ func msc3861JWKSProxy(req *http.Request, mscCfg *config.MSCs) util.JSONResponse 
 		Code: http.StatusOK,
 		Headers: map[string]string{
 			"Content-Type":  "application/json",
-			"Cache-Control": fmt.Sprintf("public, max-age=%d", int(jwksProxyCacheTTL.Seconds())),
+			"Cache-Control": fmt.Sprintf("public, max-age=%d", int(cacheTTL.Seconds())),
 		},
 		JSON: jsonRaw(body),
 	}

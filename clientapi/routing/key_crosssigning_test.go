@@ -13,6 +13,8 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/go-chi/chi/v5"
+	"github.com/matrix-org/util"
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -224,8 +226,41 @@ func Test_UploadCrossSigningDeviceKeys_OAuthUIA(t *testing.T) {
 	if uia.Session == "" {
 		t.Fatal("expected a session ID in the UIA response")
 	}
+	// The stage must not be listed as completed when the challenge is issued.
+	for _, stage := range uia.Completed {
+		if stage == authtypes.LoginTypeOAuth {
+			t.Fatal("m.oauth must not be listed as completed when the challenge is issued")
+		}
+	}
 
-	// Resubmitting with just the session completes the stage.
+	// Resubmitting a session that was never issued must not complete UIA; a
+	// fresh challenge with a new server-side session ID is returned instead.
+	req = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{
+		"auth": {"session": "never-issued-session"},
+		"master_key": {"user_id": "@user:example.com", "usage": ["master"], "keys": {"ed25519:1": "key1"}},
+		"self_signing_key": {"user_id": "@user:example.com", "usage": ["self_signing"], "keys": {"ed25519:2": "key2"}},
+		"user_signing_key": {"user_id": "@user:example.com", "usage": ["user_signing"], "keys": {"ed25519:3": "key3"}}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	res = UploadCrossSigningDeviceKeys(req, keyserverAPI, device, getAccountByPassword, cfg, mscCfg)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	reissued, ok := res.JSON.(userInteractiveResponse)
+	if !ok {
+		t.Fatalf("expected userInteractiveResponse, got %T", res.JSON)
+	}
+	if reissued.Session == "never-issued-session" {
+		t.Fatal("client-supplied session ID must not be honored; expected a server-generated one")
+	}
+	for _, stage := range reissued.Completed {
+		if stage == authtypes.LoginTypeOAuth {
+			t.Fatal("m.oauth must not be listed as completed for a never-issued session")
+		}
+	}
+
+	// Resubmitting with just the issued session completes the stage.
 	req = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{
 		"auth": {"session": "`+uia.Session+`"},
 		"master_key": {"user_id": "@user:example.com", "usage": ["master"], "keys": {"ed25519:1": "key1"}},
@@ -237,6 +272,145 @@ func Test_UploadCrossSigningDeviceKeys_OAuthUIA(t *testing.T) {
 	res = UploadCrossSigningDeviceKeys(req, keyserverAPI, device, getAccountByPassword, cfg, mscCfg)
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+	}
+}
+
+// oauthUIATestKeyAPI returns a key API where every given user has an existing
+// master key that differs from the uploaded keys, so UIA is always required.
+func oauthUIATestKeyAPI(userIDs ...string) *mockKeyAPI {
+	m := &mockKeyAPI{userResponses: map[string]api.QueryKeysResponse{}}
+	for _, userID := range userIDs {
+		m.userResponses[userID] = api.QueryKeysResponse{
+			MasterKeys: map[string]fclient.CrossSigningKey{
+				userID: {UserID: userID, Usage: []fclient.CrossSigningKeyPurpose{"master"}, Keys: map[gomatrixserverlib.KeyID]spec.Base64Bytes{"ed25519:1": spec.Base64Bytes("different_key")}},
+			},
+		}
+	}
+	return m
+}
+
+func oauthUIAMSCConfig() *config.MSCs {
+	return &config.MSCs{
+		MSCs: []string{"msc3861"},
+		MSC3861: config.MSC3861Config{
+			AccountManagementURL: "https://account.example.com/manage",
+		},
+	}
+}
+
+func crossSigningUploadBody(t *testing.T, userID, session string) *strings.Reader {
+	t.Helper()
+	auth := ""
+	if session != "" {
+		auth = fmt.Sprintf(`"auth": {"session": %q},`, session)
+	}
+	return strings.NewReader(fmt.Sprintf(`{
+		%s
+		"master_key": {"user_id": %q, "usage": ["master"], "keys": {"ed25519:1": "key1"}},
+		"self_signing_key": {"user_id": %q, "usage": ["self_signing"], "keys": {"ed25519:2": "key2"}},
+		"user_signing_key": {"user_id": %q, "usage": ["user_signing"], "keys": {"ed25519:3": "key3"}}
+	}`, auth, userID, userID, userID))
+}
+
+func uploadCrossSigning(t *testing.T, keyserverAPI UploadKeysAPI, device *api.Device, session string, mscCfg *config.MSCs) util.JSONResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/", crossSigningUploadBody(t, device.UserID, session))
+	req.Header.Set("Content-Type", "application/json")
+	return UploadCrossSigningDeviceKeys(req, keyserverAPI, device, getAccountByPassword, &config.ClientAPI{}, mscCfg)
+}
+
+// A session issued for one user must not complete the m.oauth stage for
+// another user, and a failed attempt must not consume the issued session.
+func Test_UploadCrossSigningDeviceKeys_OAuthUIA_SessionUserBound(t *testing.T) {
+	userA := "@alice-oauth:example.com"
+	userB := "@bob-oauth:example.com"
+	mscCfg := oauthUIAMSCConfig()
+	keyserverAPI := oauthUIATestKeyAPI(userA, userB)
+	deviceA := &api.Device{UserID: userA, ID: "deviceA"}
+	deviceB := &api.Device{UserID: userB, ID: "deviceB"}
+
+	// User A gets an m.oauth challenge.
+	res := uploadCrossSigning(t, keyserverAPI, deviceA, "", mscCfg)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	uia, ok := res.JSON.(userInteractiveResponse)
+	if !ok {
+		t.Fatalf("expected userInteractiveResponse, got %T", res.JSON)
+	}
+	if uia.Session == "" {
+		t.Fatal("expected a session ID in the UIA response")
+	}
+
+	// User B cannot complete the stage with user A's session.
+	res = uploadCrossSigning(t, keyserverAPI, deviceB, uia.Session, mscCfg)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	reissued, ok := res.JSON.(userInteractiveResponse)
+	if !ok {
+		t.Fatalf("expected userInteractiveResponse, got %T", res.JSON)
+	}
+	if reissued.Session == uia.Session {
+		t.Fatal("a session issued for another user must not be honored")
+	}
+
+	// The failed attempt must not have consumed user A's session.
+	res = uploadCrossSigning(t, keyserverAPI, deviceA, uia.Session, mscCfg)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+	}
+}
+
+// A confirmation recorded through the MAS admin endpoint completes the m.oauth
+// stage as an alternative signal, and is consumed on use.
+func Test_UploadCrossSigningDeviceKeys_OAuthUIA_MASConfirmation(t *testing.T) {
+	userID := "@carol-oauth:example.com"
+	mscCfg := oauthUIAMSCConfig()
+	keyserverAPI := oauthUIATestKeyAPI(userID)
+	device := &api.Device{UserID: userID, ID: "device"}
+
+	cfg, _, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	defer closeDB()
+	cfg.Global.ServerName = "example.com"
+
+	// The MAS admin endpoint records the confirmation for the user.
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("userId", userID)
+	masReq := httptest.NewRequest(http.MethodPost, "/", nil)
+	masReq = masReq.WithContext(context.WithValue(masReq.Context(), chi.RouteCtxKey, rctx))
+	res := MASAllowCrossSigningReplacement(masReq, &cfg.ClientAPI)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d from MAS admin endpoint, got %d", http.StatusOK, res.Code)
+	}
+
+	// The confirmation completes the stage even without a server-issued
+	// session, as the provider confirmed the user did the web flow.
+	uploadRes := uploadCrossSigning(t, keyserverAPI, device, "some-client-session", mscCfg)
+	if uploadRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, uploadRes.Code)
+	}
+
+	// The confirmation is single-use: the next attempt gets a fresh challenge.
+	uploadRes = uploadCrossSigning(t, keyserverAPI, device, "another-client-session", mscCfg)
+	if uploadRes.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, uploadRes.Code)
+	}
+}
+
+// The MAS admin endpoint rejects user IDs that are not local.
+func Test_MASAllowCrossSigningReplacement_RejectsRemoteUser(t *testing.T) {
+	cfg, _, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	defer closeDB()
+	cfg.Global.ServerName = "example.com"
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("userId", "@user:remote.example.org")
+	masReq := httptest.NewRequest(http.MethodPost, "/", nil)
+	masReq = masReq.WithContext(context.WithValue(masReq.Context(), chi.RouteCtxKey, rctx))
+	res := MASAllowCrossSigningReplacement(masReq, &cfg.ClientAPI)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
 	}
 }
 
