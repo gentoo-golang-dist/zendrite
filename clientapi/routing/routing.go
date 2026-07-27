@@ -900,7 +900,7 @@ func Setup(
 
 		v3mux.Handle(
 			"/login",
-			msc3861LoginHandler(cfg, userAPI, rateLimits),
+			ssoHandler.serveLogin(cfg),
 		).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 
 		v3mux.Handle(

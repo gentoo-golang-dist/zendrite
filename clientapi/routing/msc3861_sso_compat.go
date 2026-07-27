@@ -5,7 +5,6 @@
 package routing
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -40,6 +39,19 @@ type ssoCompatSession struct {
 	expiresAt    time.Time
 }
 
+// ssoCompatOIDCTokens holds the provider-issued credentials for a completed
+// SSO login, keyed by the Matrix login token handed to the client. They are
+// returned verbatim when the client redeems the login token via
+// POST /login m.login.token: under MSC3861 a homeserver-local access token
+// would never validate, since token validation is delegated to the OIDC
+// provider.
+type ssoCompatOIDCTokens struct {
+	accessToken string
+	deviceID    string
+	userID      string
+	expiresAt   time.Time
+}
+
 // ssoCompatHandler bridges Element's legacy m.login.sso flow to the OIDC
 // provider configured for MSC3861.
 type ssoCompatHandler struct {
@@ -49,8 +61,9 @@ type ssoCompatHandler struct {
 	httpClient *http.Client
 	rateLimits *httputil.RateLimits
 
-	mu       sync.Mutex
-	sessions map[string]*ssoCompatSession
+	mu           sync.Mutex
+	sessions     map[string]*ssoCompatSession
+	oidcByLogTok map[string]*ssoCompatOIDCTokens
 }
 
 const (
@@ -73,12 +86,13 @@ func newSSOCompatHandler(
 		httpClient = http.DefaultClient
 	}
 	h := &ssoCompatHandler{
-		cfg:        cfg,
-		matrixCfg:  matrixCfg,
-		userAPI:    userAPI,
-		httpClient: httpClient,
-		rateLimits: rateLimits,
-		sessions:   make(map[string]*ssoCompatSession),
+		cfg:          cfg,
+		matrixCfg:    matrixCfg,
+		userAPI:      userAPI,
+		httpClient:   httpClient,
+		rateLimits:   rateLimits,
+		sessions:     make(map[string]*ssoCompatSession),
+		oidcByLogTok: make(map[string]*ssoCompatOIDCTokens),
 	}
 	go h.cleanupLoop()
 	return h
@@ -99,6 +113,11 @@ func (h *ssoCompatHandler) cleanupExpiredSessions() {
 	for k, v := range h.sessions {
 		if now.After(v.expiresAt) {
 			delete(h.sessions, k)
+		}
+	}
+	for k, v := range h.oidcByLogTok {
+		if now.After(v.expiresAt) {
+			delete(h.oidcByLogTok, k)
 		}
 	}
 }
@@ -142,6 +161,32 @@ func (h *ssoCompatHandler) deleteSession(state string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.sessions, state)
+}
+
+// stashOIDCTokens records the provider-issued credentials for a completed SSO
+// login, keyed by the Matrix login token the client will redeem.
+func (h *ssoCompatHandler) stashOIDCTokens(loginToken, accessToken, deviceID, userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.oidcByLogTok[loginToken] = &ssoCompatOIDCTokens{
+		accessToken: accessToken,
+		deviceID:    deviceID,
+		userID:      userID,
+		expiresAt:   time.Now().Add(ssoSessionTTL),
+	}
+}
+
+// takeOIDCTokens returns and removes the stashed credentials for a login
+// token, or nil if the token is unknown or expired.
+func (h *ssoCompatHandler) takeOIDCTokens(loginToken string) *ssoCompatOIDCTokens {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	t, ok := h.oidcByLogTok[loginToken]
+	if !ok || time.Now().After(t.expiresAt) {
+		return nil
+	}
+	delete(h.oidcByLogTok, loginToken)
+	return t
 }
 
 // generatePKCEVerifier creates a 32-byte URL-safe base64 string (43 chars),
@@ -270,14 +315,14 @@ func (h *ssoCompatHandler) serveCallback(req *http.Request) util.JSONResponse {
 		}
 	}
 
-	userID, errRes := h.provisionUser(req.Context(), tokens.AccessToken)
+	device, errRes := h.provisionUser(req.Context(), tokens.AccessToken)
 	if errRes != nil {
 		return *errRes
 	}
 
 	var tokenRes userapi.PerformLoginTokenCreationResponse
 	if err := h.userAPI.PerformLoginTokenCreation(req.Context(), &userapi.PerformLoginTokenCreationRequest{
-		Data: userapi.LoginTokenData{UserID: userID},
+		Data: userapi.LoginTokenData{UserID: device.UserID},
 	}, &tokenRes); err != nil {
 		logrus.WithError(err).Error("MSC3861 SSO compat: failed to create login token")
 		return util.JSONResponse{
@@ -285,6 +330,11 @@ func (h *ssoCompatHandler) serveCallback(req *http.Request) util.JSONResponse {
 			JSON: spec.InternalServerError{},
 		}
 	}
+
+	// Stash the provider-issued credentials against the login token so that
+	// redeeming it via m.login.token returns the OIDC access token rather
+	// than a homeserver-local one, which would never introspect.
+	h.stashOIDCTokens(tokenRes.Metadata.Token, tokens.AccessToken, device.ID, device.UserID)
 
 	clientURL, err := url.Parse(session.redirectURL)
 	if err != nil {
@@ -425,36 +475,36 @@ func (h *ssoCompatHandler) exchangeCode(ctx context.Context, code, callbackURL, 
 	return &tokens, nil
 }
 
-// provisionUser validates the OIDC access token and returns the Matrix user ID
+// provisionUser validates the OIDC access token and returns the Matrix device
 // it represents. It uses QueryAccessToken which performs RFC 7662 token
 // introspection (with a userinfo fallback) and auto-provisions the user account
-// if necessary.
-func (h *ssoCompatHandler) provisionUser(ctx context.Context, accessToken string) (string, *util.JSONResponse) {
+// and device if necessary.
+func (h *ssoCompatHandler) provisionUser(ctx context.Context, accessToken string) (*userapi.Device, *util.JSONResponse) {
 	var res userapi.QueryAccessTokenResponse
 	if err := h.userAPI.QueryAccessToken(ctx, &userapi.QueryAccessTokenRequest{
 		AccessToken: accessToken,
 	}, &res); err != nil {
 		logrus.WithError(err).Error("MSC3861 SSO compat: QueryAccessToken failed")
-		return "", &util.JSONResponse{
+		return nil, &util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{Err: "failed to look up user"},
 		}
 	}
 	if res.Err != "" {
 		logrus.WithField("query_access_token_err", res.Err).Error("MSC3861 SSO compat: QueryAccessToken returned error")
-		return "", &util.JSONResponse{
+		return nil, &util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{Err: "failed to look up user"},
 		}
 	}
 	if res.Device == nil {
 		logrus.Error("MSC3861 SSO compat: OIDC access token is not active")
-		return "", &util.JSONResponse{
+		return nil, &util.JSONResponse{
 			Code: http.StatusUnauthorized,
 			JSON: spec.UnknownToken("OIDC access token is not active"),
 		}
 	}
-	return res.Device.UserID, nil
+	return res.Device, nil
 }
 
 // msc3861LoginFlows returns the login flows response when MSC3861 is active.
@@ -474,14 +524,13 @@ func msc3861LoginFlows(_ *config.MSCs) util.JSONResponse {
 	}
 }
 
-// msc3861LoginHandler returns a handler for /_matrix/client/v3/login when
-// MSC3861 is enabled. GET returns the OIDC-aware flow list; POST only accepts
-// m.login.token (used to redeem a login token issued by the SSO callback).
-func msc3861LoginHandler(
-	cfg *config.ClientAPI,
-	userAPI userapi.ClientUserAPI,
-	rateLimits *httputil.RateLimits,
-) http.Handler {
+// serveLogin handles /_matrix/client/v3/login when MSC3861 is enabled. GET
+// returns the OIDC-aware flow list; POST only accepts m.login.token and
+// redeems it against the provider-issued credentials stashed by the SSO
+// callback. Login tokens unknown to the SSO compat layer are rejected:
+// redeeming them through the legacy login path would mint a homeserver-local
+// access token that can never validate against the OIDC provider.
+func (h *ssoCompatHandler) serveLogin(cfg *config.ClientAPI) http.Handler {
 	return httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
 		if req.Method == http.MethodGet || req.Method == http.MethodOptions {
 			return msc3861LoginFlows(cfg.MSCs)
@@ -498,7 +547,6 @@ func msc3861LoginHandler(
 			}
 		}
 		_ = req.Body.Close()
-		req.Body = io.NopCloser(bytes.NewReader(body))
 
 		// Only m.login.token is allowed under MSC3861; everything else is delegated.
 		if gjson.GetBytes(body, "type").String() != authtypes.LoginTypeToken {
@@ -508,9 +556,50 @@ func msc3861LoginHandler(
 			}
 		}
 
-		if r := rateLimits.Limit(req, nil); r != nil {
+		if r := h.rateLimits.Limit(req, nil); r != nil {
 			return *r
 		}
-		return Login(req, userAPI, cfg)
+
+		loginToken := gjson.GetBytes(body, "token").String()
+		if loginToken == "" {
+			return util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.MissingParam("Missing token"),
+			}
+		}
+
+		oidcTokens := h.takeOIDCTokens(loginToken)
+		if oidcTokens == nil {
+			return util.JSONResponse{
+				Code: http.StatusForbidden,
+				JSON: spec.Forbidden("Invalid or expired login token"),
+			}
+		}
+
+		// Validate and consume the login token so it cannot be replayed.
+		var queryRes userapi.QueryLoginTokenResponse
+		if err := h.userAPI.QueryLoginToken(req.Context(), &userapi.QueryLoginTokenRequest{
+			Token: loginToken,
+		}, &queryRes); err != nil || queryRes.Data == nil {
+			return util.JSONResponse{
+				Code: http.StatusForbidden,
+				JSON: spec.Forbidden("Invalid or expired login token"),
+			}
+		}
+		var delRes userapi.PerformLoginTokenDeletionResponse
+		if err := h.userAPI.PerformLoginTokenDeletion(req.Context(), &userapi.PerformLoginTokenDeletionRequest{
+			Token: loginToken,
+		}, &delRes); err != nil {
+			logrus.WithError(err).Error("MSC3861 SSO compat: failed to delete login token")
+		}
+
+		return util.JSONResponse{
+			Code: http.StatusOK,
+			JSON: loginResponse{
+				UserID:      oidcTokens.userID,
+				AccessToken: oidcTokens.accessToken,
+				DeviceID:    oidcTokens.deviceID,
+			},
+		}
 	})
 }

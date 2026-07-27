@@ -112,7 +112,10 @@ func TestMSC3861SSOCompat_LoginPOSTPasswordForbidden(t *testing.T) {
 	}
 }
 
-func TestMSC3861SSOCompat_LoginPOSTTokenAllowed(t *testing.T) {
+// A login token that was not issued by the SSO callback must be rejected:
+// redeeming it through the legacy login path would mint a homeserver-local
+// access token that can never validate against the OIDC provider.
+func TestMSC3861SSOCompat_LoginPOSTTokenWithoutSSORejected(t *testing.T) {
 	t.Parallel()
 	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
 	defer closeDB()
@@ -142,7 +145,7 @@ func TestMSC3861SSOCompat_LoginPOSTTokenAllowed(t *testing.T) {
 		t.Fatalf("failed to create account: %v", err)
 	}
 
-	// Create a login token manually.
+	// Create a login token manually, bypassing the SSO callback.
 	var tokenRes userapiAPI.PerformLoginTokenCreationResponse
 	if err := uapi.PerformLoginTokenCreation(context.Background(), &userapiAPI.PerformLoginTokenCreationRequest{
 		Data: userapiAPI.LoginTokenData{UserID: "@alice:" + string(cfg.Global.ServerName)},
@@ -159,18 +162,8 @@ func TestMSC3861SSOCompat_LoginPOSTTokenAllowed(t *testing.T) {
 	}))
 	rec := httptest.NewRecorder()
 	routers.Client.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for token login, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var resp loginResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to parse login response: %v", err)
-	}
-	if !strings.HasPrefix(resp.UserID, "@alice:") {
-		t.Errorf("expected user_id @alice:..., got %s", resp.UserID)
-	}
-	if resp.AccessToken == "" {
-		t.Error("expected access_token")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a login token not issued via SSO, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -400,7 +393,7 @@ func TestMSC3861SSOCompat_CallbackSuccess(t *testing.T) {
 				"active":   true,
 				"sub":      "alice-oidc-sub",
 				"username": "alice",
-				"scope":    "openid urn:matrix:client:api:*",
+				"scope":    "openid urn:matrix:client:api:* urn:matrix:client:device:SSODEVDEVICE1",
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -489,8 +482,33 @@ func TestMSC3861SSOCompat_CallbackSuccess(t *testing.T) {
 	if loginResp.UserID != expectedUserID {
 		t.Errorf("expected user_id %s, got %s", expectedUserID, loginResp.UserID)
 	}
-	if loginResp.AccessToken == "" {
-		t.Error("expected access_token")
+	// The returned credentials must be the provider-issued ones: a
+	// homeserver-local access token would never introspect under MSC3861.
+	if loginResp.AccessToken != accessToken {
+		t.Errorf("expected the OIDC access token %q, got %q", accessToken, loginResp.AccessToken)
+	}
+	if loginResp.DeviceID != "SSODEVDEVICE1" {
+		t.Errorf("expected device_id SSODEVDEVICE1 from the token scope, got %q", loginResp.DeviceID)
+	}
+
+	// The returned access token must actually authenticate API requests.
+	whoamiReq := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/account/whoami")
+	whoamiReq.Header.Set("Authorization", "Bearer "+loginResp.AccessToken)
+	whoamiRec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(whoamiRec, whoamiReq)
+	if whoamiRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from whoami with the SSO-issued token, got %d: %s", whoamiRec.Code, whoamiRec.Body.String())
+	}
+
+	// Login tokens are single-use: replaying the redemption must fail.
+	replayReq := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/login", test.WithJSONBody(t, map[string]any{
+		"type":  authtypes.LoginTypeToken,
+		"token": loginToken,
+	}))
+	replayRec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(replayRec, replayReq)
+	if replayRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when replaying a login token, got %d: %s", replayRec.Code, replayRec.Body.String())
 	}
 }
 
