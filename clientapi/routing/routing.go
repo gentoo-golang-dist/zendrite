@@ -904,6 +904,11 @@ func Setup(
 		).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 
 		v3mux.Handle(
+			"/refresh",
+			httputil.MakeExternalAPI("refresh", ssoHandler.serveRefresh),
+		).Methods(http.MethodPost, http.MethodOptions)
+
+		v3mux.Handle(
 			"/login/sso/redirect",
 			httputil.MakeExternalAPI("sso_redirect", ssoHandler.serveRedirect),
 		).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)

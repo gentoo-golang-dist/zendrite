@@ -21,9 +21,11 @@ import (
 )
 
 type loginResponse struct {
-	UserID      string `json:"user_id"`
-	AccessToken string `json:"access_token"`
-	DeviceID    string `json:"device_id"`
+	UserID       string `json:"user_id"`
+	AccessToken  string `json:"access_token"`
+	DeviceID     string `json:"device_id"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresInMs  int    `json:"expires_in_ms,omitempty"`
 }
 
 type flows struct {

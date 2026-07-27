@@ -7,6 +7,7 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -231,6 +232,69 @@ func TestIntrospectToken_UserinfoFallback(t *testing.T) {
 	}
 	if resp.Username != "fallback-user" {
 		t.Errorf("expected username fallback-user, got %s", resp.Username)
+	}
+}
+
+func TestIntrospectToken_UserinfoExpiredToken(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/introspect":
+			w.WriteHeader(http.StatusNotFound)
+		case "/userinfo":
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="Token expired"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	msc3861 := &config.MSC3861Config{
+		Issuer:                srv.URL,
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		IntrospectionEndpoint: srv.URL + "/introspect",
+		UserinfoEndpoint:      srv.URL + "/userinfo",
+	}
+
+	_, err := introspectToken(context.Background(), msc3861, "expired-token", srv.Client())
+	if !errors.Is(err, errTokenExpired) {
+		t.Fatalf("expected errTokenExpired, got %v", err)
+	}
+}
+
+func TestIntrospectToken_UserinfoInvalidTokenNotExpired(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/introspect":
+			w.WriteHeader(http.StatusNotFound)
+		case "/userinfo":
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="Token revoked"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	msc3861 := &config.MSC3861Config{
+		Issuer:                srv.URL,
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		IntrospectionEndpoint: srv.URL + "/introspect",
+		UserinfoEndpoint:      srv.URL + "/userinfo",
+	}
+
+	_, err := introspectToken(context.Background(), msc3861, "revoked-token", srv.Client())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, errTokenExpired) {
+		t.Fatalf("expected a generic error, got errTokenExpired")
 	}
 }
 

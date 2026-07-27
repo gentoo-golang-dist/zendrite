@@ -167,6 +167,165 @@ func TestMSC3861SSOCompat_LoginPOSTTokenWithoutSSORejected(t *testing.T) {
 	}
 }
 
+func TestMSC3861SSOCompat_RefreshSuccess(t *testing.T) {
+	t.Parallel()
+
+	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/token" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse token form: %v", err)
+		}
+		if r.Form.Get("grant_type") != "refresh_token" {
+			t.Errorf("expected grant_type refresh_token, got %s", r.Form.Get("grant_type"))
+		}
+		if r.Form.Get("refresh_token") != "old-refresh-token" {
+			t.Errorf("unexpected refresh_token: %s", r.Form.Get("refresh_token"))
+		}
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "test-client-id" || pass != "test-client-secret" {
+			t.Errorf("expected basic auth test-client-id:test-client-secret, got ok=%v user=%s pass=%s", ok, user, pass)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "new-access-token",
+			"refresh_token": "rotated-refresh-token",
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	defer mockProvider.Close()
+
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                mockProvider.URL,
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: mockProvider.URL + "/auth",
+		TokenEndpoint:         mockProvider.URL + "/token",
+	})
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/refresh", test.WithJSONBody(t, map[string]any{
+		"refresh_token": "old-refresh-token",
+	}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp refreshResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse refresh response: %v", err)
+	}
+	if resp.AccessToken != "new-access-token" {
+		t.Errorf("expected new-access-token, got %q", resp.AccessToken)
+	}
+	if resp.RefreshToken != "rotated-refresh-token" {
+		t.Errorf("expected rotated refresh token, got %q", resp.RefreshToken)
+	}
+	if resp.ExpiresInMs != 3600*1000 {
+		t.Errorf("expected expires_in_ms 3600000, got %d", resp.ExpiresInMs)
+	}
+}
+
+func TestMSC3861SSOCompat_RefreshKeepsUnrotatedToken(t *testing.T) {
+	t.Parallel()
+
+	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "new-access-token",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+	}))
+	defer mockProvider.Close()
+
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                mockProvider.URL,
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: mockProvider.URL + "/auth",
+		TokenEndpoint:         mockProvider.URL + "/token",
+	})
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/refresh", test.WithJSONBody(t, map[string]any{
+		"refresh_token": "old-refresh-token",
+	}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp refreshResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse refresh response: %v", err)
+	}
+	if resp.RefreshToken != "old-refresh-token" {
+		t.Errorf("expected unrotated refresh token to be handed back, got %q", resp.RefreshToken)
+	}
+}
+
+func TestMSC3861SSOCompat_RefreshRejectedByProvider(t *testing.T) {
+	t.Parallel()
+
+	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":             "invalid_grant",
+			"error_description": "refresh token expired",
+		})
+	}))
+	defer mockProvider.Close()
+
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                mockProvider.URL,
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: mockProvider.URL + "/auth",
+		TokenEndpoint:         mockProvider.URL + "/token",
+	})
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/refresh", test.WithJSONBody(t, map[string]any{
+		"refresh_token": "dead-refresh-token",
+	}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var errResp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("failed to parse error response: %v", err)
+	}
+	if errResp["errcode"] != "M_UNKNOWN_TOKEN" {
+		t.Errorf("expected M_UNKNOWN_TOKEN, got %v", errResp["errcode"])
+	}
+}
+
+func TestMSC3861SSOCompat_RefreshMissingToken(t *testing.T) {
+	t.Parallel()
+
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:       "https://auth.example.com",
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	})
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/refresh", test.WithJSONBody(t, map[string]any{}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMSC3861SSOCompat_RedirectUsesConfiguredEndpoints(t *testing.T) {
 	t.Parallel()
 	authzEndpoint := "https://auth.example.com/custom/auth"
@@ -222,10 +381,11 @@ func TestMSC3861SSOCompat_RedirectUsesConfiguredEndpoints(t *testing.T) {
 	if q.Get("state") == "" {
 		t.Error("expected state")
 	}
-	// A device ID must be allocated and requested via the stable device scope.
+	// A device ID must be allocated and requested via the stable device scope,
+	// alongside offline_access so the provider issues a refresh token.
 	scope := q.Get("scope")
-	if !strings.HasPrefix(scope, "openid urn:matrix:client:api:* urn:matrix:client:device:") {
-		t.Errorf("expected scope to request a device ID, got %q", scope)
+	if !strings.HasPrefix(scope, "openid offline_access urn:matrix:client:api:* urn:matrix:client:device:") {
+		t.Errorf("expected scope to request offline_access and a device ID, got %q", scope)
 	}
 	if strings.HasSuffix(scope, "urn:matrix:client:device:") {
 		t.Error("expected a non-empty device ID in the scope")
@@ -348,6 +508,7 @@ func TestMSC3861SSOCompat_CallbackSuccess(t *testing.T) {
 	t.Parallel()
 
 	accessToken := "oidc-access-token-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	refreshToken := "oidc-refresh-token-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	var tokenEndpointHits, introspectionHits int32
 
 	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -377,8 +538,10 @@ func TestMSC3861SSOCompat_CallbackSuccess(t *testing.T) {
 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"access_token": accessToken,
-				"token_type":   "Bearer",
+				"access_token":  accessToken,
+				"refresh_token": refreshToken,
+				"token_type":    "Bearer",
+				"expires_in":    3600,
 			})
 		case "/introspect":
 			atomic.AddInt32(&introspectionHits, 1)
@@ -489,6 +652,14 @@ func TestMSC3861SSOCompat_CallbackSuccess(t *testing.T) {
 	}
 	if loginResp.DeviceID != "SSODEVDEVICE1" {
 		t.Errorf("expected device_id SSODEVDEVICE1 from the token scope, got %q", loginResp.DeviceID)
+	}
+	// The provider-issued refresh token and expiry must be handed through so
+	// the client can use POST /refresh when the access token expires.
+	if loginResp.RefreshToken != refreshToken {
+		t.Errorf("expected the OIDC refresh token %q, got %q", refreshToken, loginResp.RefreshToken)
+	}
+	if loginResp.ExpiresInMs != 3600*1000 {
+		t.Errorf("expected expires_in_ms 3600000, got %d", loginResp.ExpiresInMs)
 	}
 
 	// The returned access token must actually authenticate API requests.

@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -242,6 +243,21 @@ func discoverUserinfoEndpoint(ctx context.Context, msc3861 *config.MSC3861Config
 	return msc3861.UserinfoEndpointOrDefault()
 }
 
+// errTokenExpired is returned when the OIDC provider rejects a token because
+// it has expired, as opposed to being unknown or invalid for another reason.
+// Callers use it to signal a soft logout so clients attempt a token refresh
+// instead of destroying the session.
+var errTokenExpired = fmt.Errorf("msc3861: access token expired")
+
+// isExpiredBearerToken reports whether an RFC 6750 rejection indicates an
+// expired (rather than unknown or malformed) token, checking both the
+// WWW-Authenticate challenge and the response body for an invalid_token error
+// that mentions expiry.
+func isExpiredBearerToken(wwwAuthenticate string, body []byte) bool {
+	haystack := strings.ToLower(wwwAuthenticate + " " + string(body))
+	return strings.Contains(haystack, "invalid_token") && strings.Contains(haystack, "expired")
+}
+
 // userinfoToken validates an access token by calling the OIDC UserInfo endpoint.
 // This is used as a fallback when RFC 7662 token introspection is unavailable.
 func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token string, httpClient *http.Client) (*IntrospectionResponse, error) {
@@ -265,6 +281,11 @@ func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token str
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		// A 401 with an invalid_token error describing expiry (RFC 6750) means
+		// the session is intact but the token needs refreshing.
+		if resp.StatusCode == http.StatusUnauthorized && isExpiredBearerToken(resp.Header.Get("WWW-Authenticate"), body) {
+			return nil, errTokenExpired
+		}
 		return nil, fmt.Errorf("msc3861: userinfo returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -401,6 +422,13 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 	// 3. Introspect the token with the OIDC provider.
 	introspection, err := introspectToken(ctx, msc3861, req.AccessToken, a.HTTPClient)
 	if err != nil {
+		if errors.Is(err, errTokenExpired) {
+			// The provider rejected the token as expired; tell the client it
+			// can refresh instead of destroying the session.
+			logrus.Warn("MSC3861: access token has expired (userinfo fallback)")
+			res.SoftLogout = true
+			return nil
+		}
 		logrus.WithError(err).Warn("MSC3861: token introspection failed")
 		return nil
 	}

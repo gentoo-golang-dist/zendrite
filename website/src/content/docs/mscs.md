@@ -114,7 +114,8 @@ When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection
 
 - Password-based registration and login are disabled.
 - `GET /login` returns the legacy `m.login.sso` and `m.login.token` flows, so older Element Web/Desktop clients can sign in via the OIDC provider without native OIDC support. The SSO flow is marked `oauth_aware_preferred`, and `/login/sso/redirect` honours the `action=login|register` parameter (`register` maps to `prompt=create` at the provider).
-- `POST /login` accepts only `m.login.token`, redeeming a login token issued by the SSO callback; redemption returns the provider-issued OIDC access token and the device from its scope (a homeserver-local token would never introspect). Other login types return `403 M_FORBIDDEN`.
+- `POST /login` accepts only `m.login.token`, redeeming a login token issued by the SSO callback; redemption returns the provider-issued OIDC access token, refresh token and expiry, plus the device from its scope (a homeserver-local token would never introspect). Other login types return `403 M_FORBIDDEN`.
+- `POST /refresh` bridges to the provider's refresh token grant, so legacy clients can renew expiring OIDC access tokens. Expired tokens report `soft_logout: true`, including on the userinfo fallback path, so clients attempt a refresh instead of destroying the session.
 - `POST /register`, `/account/password`, `/account/deactivate`, `/logout`, `/logout/all`, `/delete_devices`, and device modification endpoints return `403 M_FORBIDDEN`.
 - `/.well-known/matrix/client` includes an `m.authentication` section with the OIDC issuer.
 - `GET /_matrix/client/v1/auth_metadata` advertises the OAuth 2.0 authorization server metadata, including the account management URL/actions, device authorization endpoint, and supported prompt values discovered from the provider.

@@ -25,6 +25,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
+	clienthttputil "codefloe.com/pat-s/zendrite/clientapi/httputil"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
@@ -46,10 +47,12 @@ type ssoCompatSession struct {
 // would never validate, since token validation is delegated to the OIDC
 // provider.
 type ssoCompatOIDCTokens struct {
-	accessToken string
-	deviceID    string
-	userID      string
-	expiresAt   time.Time
+	accessToken  string
+	refreshToken string
+	expiresInMs  int
+	deviceID     string
+	userID       string
+	expiresAt    time.Time
 }
 
 // ssoCompatHandler bridges Element's legacy m.login.sso flow to the OIDC
@@ -73,6 +76,9 @@ const (
 	// length; 16 alphanumeric characters is comfortably unique per user, per
 	// the device ID allocation guidance in the OAuth 2.0 API spec.
 	ssoDeviceIDLength = 16
+	// Converts the provider's expires_in seconds to the expires_in_ms
+	// milliseconds used by the Matrix client API.
+	millisPerSecond = 1000
 )
 
 func newSSOCompatHandler(
@@ -165,14 +171,16 @@ func (h *ssoCompatHandler) deleteSession(state string) {
 
 // stashOIDCTokens records the provider-issued credentials for a completed SSO
 // login, keyed by the Matrix login token the client will redeem.
-func (h *ssoCompatHandler) stashOIDCTokens(loginToken, accessToken, deviceID, userID string) {
+func (h *ssoCompatHandler) stashOIDCTokens(loginToken string, tokens *oidcTokenResponse, deviceID, userID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.oidcByLogTok[loginToken] = &ssoCompatOIDCTokens{
-		accessToken: accessToken,
-		deviceID:    deviceID,
-		userID:      userID,
-		expiresAt:   time.Now().Add(ssoSessionTTL),
+		accessToken:  tokens.AccessToken,
+		refreshToken: tokens.RefreshToken,
+		expiresInMs:  tokens.ExpiresIn * millisPerSecond,
+		deviceID:     deviceID,
+		userID:       userID,
+		expiresAt:    time.Now().Add(ssoSessionTTL),
 	}
 }
 
@@ -261,7 +269,7 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 		"client_id":             {h.cfg.ClientID},
 		"redirect_uri":          {h.callbackURL(req)},
 		"state":                 {state},
-		"scope":                 {"openid urn:matrix:client:api:* urn:matrix:client:device:" + deviceID},
+		"scope":                 {"openid offline_access urn:matrix:client:api:* urn:matrix:client:device:" + deviceID},
 		"code_challenge":        {pkceChallenge(codeVerifier)},
 		"code_challenge_method": {"S256"},
 	}
@@ -334,7 +342,7 @@ func (h *ssoCompatHandler) serveCallback(req *http.Request) util.JSONResponse {
 	// Stash the provider-issued credentials against the login token so that
 	// redeeming it via m.login.token returns the OIDC access token rather
 	// than a homeserver-local one, which would never introspect.
-	h.stashOIDCTokens(tokenRes.Metadata.Token, tokens.AccessToken, device.ID, device.UserID)
+	h.stashOIDCTokens(tokenRes.Metadata.Token, tokens, device.ID, device.UserID)
 
 	clientURL, err := url.Parse(session.redirectURL)
 	if err != nil {
@@ -408,25 +416,15 @@ func (h *ssoCompatHandler) discoverOIDCEndpoints(ctx context.Context) (*oidcProv
 }
 
 type oidcTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
 }
 
-func (h *ssoCompatHandler) exchangeCode(ctx context.Context, code, callbackURL, codeVerifier string) (*oidcTokenResponse, error) {
-	endpoints, err := h.discoverOIDCEndpoints(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {callbackURL},
-		"client_id":     {h.cfg.ClientID},
-		"code_verifier": {codeVerifier},
-	}
-
+// callTokenEndpoint POSTs a form to the provider's token endpoint,
+// authenticating with the configured client credentials.
+func (h *ssoCompatHandler) callTokenEndpoint(ctx context.Context, endpoint string, form url.Values) (*http.Response, error) {
 	authMethod := h.cfg.ClientAuthMethod
 	if authMethod == "" {
 		authMethod = "client_secret_basic"
@@ -444,7 +442,7 @@ func (h *ssoCompatHandler) exchangeCode(ctx context.Context, code, callbackURL, 
 		return nil, fmt.Errorf("unsupported client_auth_method %q", authMethod)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoints.tokenEndpoint, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +452,24 @@ func (h *ssoCompatHandler) exchangeCode(ctx context.Context, code, callbackURL, 
 		req.SetBasicAuth(url.QueryEscape(h.cfg.ClientID), url.QueryEscape(h.cfg.ClientSecret))
 	}
 
-	resp, err := h.httpClient.Do(req)
+	return h.httpClient.Do(req)
+}
+
+func (h *ssoCompatHandler) exchangeCode(ctx context.Context, code, callbackURL, codeVerifier string) (*oidcTokenResponse, error) {
+	endpoints, err := h.discoverOIDCEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {callbackURL},
+		"client_id":     {h.cfg.ClientID},
+		"code_verifier": {codeVerifier},
+	}
+
+	resp, err := h.callTokenEndpoint(ctx, endpoints.tokenEndpoint, form)
 	if err != nil {
 		return nil, err
 	}
@@ -473,6 +488,108 @@ func (h *ssoCompatHandler) exchangeCode(ctx context.Context, code, callbackURL, 
 		return nil, fmt.Errorf("token endpoint response did not contain access_token")
 	}
 	return &tokens, nil
+}
+
+// refreshRequest is the request body for POST /_matrix/client/v3/refresh.
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// refreshResponse is the response body for POST /_matrix/client/v3/refresh.
+type refreshResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresInMs  int    `json:"expires_in_ms,omitempty"`
+}
+
+// serveRefresh handles POST /_matrix/client/v3/refresh when MSC3861 is
+// enabled, bridging the legacy refresh endpoint to the provider's refresh
+// token grant. Without it, every legacy SSO session would die when the
+// provider-issued access token expires.
+func (h *ssoCompatHandler) serveRefresh(req *http.Request) util.JSONResponse {
+	if r := h.rateLimits.Limit(req, nil); r != nil {
+		return *r
+	}
+
+	var refreshReq refreshRequest
+	if resErr := clienthttputil.UnmarshalJSONRequest(req, &refreshReq); resErr != nil {
+		return *resErr
+	}
+	if refreshReq.RefreshToken == "" {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.MissingParam("Missing refresh_token"),
+		}
+	}
+
+	endpoints, err := h.discoverOIDCEndpoints(req.Context())
+	if err != nil {
+		logrus.WithError(err).Error("MSC3861: failed to discover OIDC endpoints for token refresh")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshReq.RefreshToken},
+		"client_id":     {h.cfg.ClientID},
+	}
+
+	resp, err := h.callTokenEndpoint(req.Context(), endpoints.tokenEndpoint, form)
+	if err != nil {
+		logrus.WithError(err).Error("MSC3861: refresh request to provider failed")
+		return util.JSONResponse{
+			Code: http.StatusBadGateway,
+			JSON: spec.InternalServerError{Err: "failed to reach the OIDC provider"},
+		}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
+		// The provider rejected the refresh token (e.g. invalid_grant); the
+		// session is gone.
+		return util.JSONResponse{
+			Code: http.StatusUnauthorized,
+			JSON: spec.UnknownToken("Refresh token was rejected by the OIDC provider"),
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		logrus.WithFields(logrus.Fields{
+			"status":   resp.StatusCode,
+			"response": string(body),
+		}).Error("MSC3861: provider token refresh returned non-200 status")
+		return util.JSONResponse{
+			Code: http.StatusBadGateway,
+			JSON: spec.InternalServerError{Err: "OIDC provider failed to refresh the token"},
+		}
+	}
+
+	var tokens oidcTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil || tokens.AccessToken == "" {
+		return util.JSONResponse{
+			Code: http.StatusBadGateway,
+			JSON: spec.InternalServerError{Err: "invalid token response from the OIDC provider"},
+		}
+	}
+
+	// Providers may rotate refresh tokens; if they don't, hand back the one
+	// the client sent.
+	newRefreshToken := tokens.RefreshToken
+	if newRefreshToken == "" {
+		newRefreshToken = refreshReq.RefreshToken
+	}
+
+	return util.JSONResponse{
+		Code: http.StatusOK,
+		JSON: refreshResponse{
+			AccessToken:  tokens.AccessToken,
+			RefreshToken: newRefreshToken,
+			ExpiresInMs:  tokens.ExpiresIn * millisPerSecond,
+		},
+	}
 }
 
 // provisionUser validates the OIDC access token and returns the Matrix device
@@ -596,9 +713,11 @@ func (h *ssoCompatHandler) serveLogin(cfg *config.ClientAPI) http.Handler {
 		return util.JSONResponse{
 			Code: http.StatusOK,
 			JSON: loginResponse{
-				UserID:      oidcTokens.userID,
-				AccessToken: oidcTokens.accessToken,
-				DeviceID:    oidcTokens.deviceID,
+				UserID:       oidcTokens.userID,
+				AccessToken:  oidcTokens.accessToken,
+				DeviceID:     oidcTokens.deviceID,
+				RefreshToken: oidcTokens.refreshToken,
+				ExpiresInMs:  oidcTokens.expiresInMs,
 			},
 		}
 	})
