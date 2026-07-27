@@ -49,11 +49,21 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 		return false, nil, fmt.Errorf("room %s not found", roomID)
 	}
 
-	// Convert state event IDs to StateEntry array
+	// Non-rejected state entries form the snapshot we actually apply.
 	var stateEntries []types.StateEntry
 	stateEntries, err = r.DB.StateEntriesForEventIDs(ctx, stateEventIDs, true)
 	if err != nil {
 		return false, nil, fmt.Errorf("r.DB.StateEntriesForEventIDs: %w", err)
+	}
+
+	// Present entries (rejected included) measure completeness. The resync fetch
+	// step guarantees every advertised state event is stored, so a shortfall
+	// here means events are genuinely absent from the DB (a truncated fetch
+	// worth retrying, issue #247) rather than merely rejected.
+	var presentEntries []types.StateEntry
+	presentEntries, err = r.DB.StateEntriesForEventIDs(ctx, stateEventIDs, false)
+	if err != nil {
+		return false, nil, fmt.Errorf("r.DB.StateEntriesForEventIDs (present): %w", err)
 	}
 
 	// Debug: Count EventTypeNIDs in loaded state entries
@@ -72,7 +82,44 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 		"loaded_type_nid_counts": loadedEventTypeNIDCounts,
 	}).Debug("Loaded state entries from event IDs with EventTypeNID breakdown")
 
+	// A resync must materialize every state event that /state_ids advertised
+	// before we replace the room's current state with it. If any requested ID is
+	// absent from the DB entirely (a fetch/store failure), the new snapshot (and
+	// every count derived from it, such as joined members) would be truncated.
+	// Committing that is exactly what leaves the member count stuck low and
+	// clears the partial-state flag so it never self-corrects (issue #247).
+	// Refuse to proceed: returning an error keeps the room in partial state and
+	// lets the federation resync worker retry (against another server, with
+	// backoff) instead of persisting a corrupt snapshot.
+	//
+	// Completeness is measured against *present* entries, not the non-rejected
+	// snapshot: an event that is stored but rejected (an unverifiable signature)
+	// is materialized as far as it ever will be, so it must not keep us looping.
+	if distinctRequested, incomplete := resyncStateIncomplete(stateEventIDs, len(presentEntries)); incomplete {
+		logger.WithFields(logrus.Fields{
+			"requested_state_events": distinctRequested,
+			"present_state_events":   len(presentEntries),
+			"loaded_state_events":    len(stateEntries),
+			"loaded_member_events":   loadedMemberCount,
+		}).Error("Resync is missing state events entirely; refusing to apply truncated state")
+		return false, roomInfo, fmt.Errorf(
+			"resync state incomplete: %d of %d requested state events absent from the database",
+			distinctRequested-len(presentEntries), distinctRequested,
+		)
+	}
+
+	// Any requested events that are present but rejected cannot enter a
+	// non-rejected snapshot. Step 2 of the resync already re-fetched them to
+	// retry verification; those still rejected have a signature we cannot verify
+	// (e.g. a signing key we cannot fetch) and are applied best-effort by
+	// excluding them rather than looping on them forever.
+	if rejectedExcluded := len(presentEntries) - len(stateEntries); rejectedExcluded > 0 {
+		logger.WithField("rejected_state_events_excluded", rejectedExcluded).
+			Warn("Applying resync state without locally-rejected state events; their signatures could not be verified")
+	}
+
 	if len(stateEntries) == 0 {
+		// Nothing was requested (uniqueRequested is also empty); genuine no-op.
 		logger.Warn("No state entries found for resync, skipping state update")
 		return false, roomInfo, nil
 	}
@@ -286,6 +333,23 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 	}).Info("Successfully updated current state after partial state resync")
 
 	return localLeftJoin, roomInfo, nil
+}
+
+// resyncStateIncomplete reports whether the state entries loaded for a resync
+// fail to cover every distinct requested state event ID. The loaded argument is
+// the number of entries StateEntriesForEventIDs returned for requestedIDs;
+// because that query returns at most one row per (present, non-rejected) event
+// ID, a loaded count below the number of *distinct* requested IDs means some
+// events were missing from the DB or rejected. The requestedIDs slice is
+// deduplicated first so that a repeated ID in the /state_ids response cannot be
+// mistaken for a shortfall. It also returns the distinct requested count for
+// logging. See issue #247.
+func resyncStateIncomplete(requestedIDs []string, loaded int) (distinctRequested int, incomplete bool) {
+	seen := make(map[string]struct{}, len(requestedIDs))
+	for _, id := range requestedIDs {
+		seen[id] = struct{}{}
+	}
+	return len(seen), loaded < len(seen)
 }
 
 // overlappingOldMembers returns the member events from oldState whose state key
