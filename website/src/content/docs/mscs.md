@@ -114,6 +114,7 @@ When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection
 
 - Password-based registration and login are disabled.
 - `GET /login` returns the legacy `m.login.sso` and `m.login.token` flows, so older Element Web/Desktop clients can sign in via the OIDC provider without native OIDC support. The SSO flow is marked `oauth_aware_preferred`, and `/login/sso/redirect` honours the `action=login|register` parameter (`register` maps to `prompt=create` at the provider).
+- The SSO flow is bound to the browser that started it: `/login/sso/redirect` issues an HttpOnly, `SameSite=Lax` cookie that the callback must present, which prevents login CSRF even when `sso_redirect_allowlist` is empty.
 - `POST /login` accepts only `m.login.token`, redeeming a login token issued by the SSO callback; redemption returns the provider-issued OIDC access token, refresh token and expiry, plus the device from its scope (a homeserver-local token would never introspect). Other login types return `403 M_FORBIDDEN`.
 - `POST /refresh` bridges to the provider's refresh token grant, so legacy clients can renew expiring OIDC access tokens. Expired tokens report `soft_logout: true`, including on the userinfo fallback path, so clients attempt a refresh instead of destroying the session.
 - `POST /register`, `/account/password`, `/account/deactivate`, `/logout`, `/logout/all`, `/delete_devices`, and device modification endpoints return `403 M_FORBIDDEN`.
@@ -146,7 +147,11 @@ mscs:
     device_authorization_endpoint: ""          # optional: defaults to {issuer}/oauth2/device/auth
     jwks_uri: ""                               # optional: defaults to {issuer}/oauth2/keys
     account_management_actions: []             # optional: e.g. ["org.matrix.profile", "org.matrix.devices_list"]
-    sso_callback_url: ""                       # optional: defaults to {scheme}://{host}/_matrix/client/v3/login/sso/callback
+    sso_callback_url: ""                       # optional: overrides the SSO callback URL
+    public_base_url: ""                        # optional: e.g. "https://matrix.example.com"; used to build client-facing URLs
+                                               # (including the SSO callback) instead of trusting request Host headers
+    sso_redirect_allowlist: []                 # optional: allowed redirectUrl prefixes for the legacy SSO flow;
+                                               # when empty, any redirectUrl is accepted (browser-binding cookie still applies)
 ```
 
 | Field | Required | Description |
@@ -160,3 +165,5 @@ mscs:
 | `account_management_actions` | No | Account management actions supported by the account management URL, advertised as `account_management_actions_supported`. |
 | `device_authorization_endpoint` | No | Override the OAuth 2.0 device authorization endpoint (RFC 8628). Defaults to the discovered value, then `{issuer}/oauth2/device/auth`. |
 | `introspection_endpoint` | No | Override the introspection endpoint URL. Defaults to `{issuer}/oauth2/introspect`. |
+| `public_base_url` | No | The public base URL of the homeserver (e.g. `https://matrix.example.com`). Used to build URLs advertised to clients, including the SSO callback URL when `sso_callback_url` is not set. |
+| `sso_redirect_allowlist` | No | Allowed `redirectUrl` prefixes for the legacy SSO flow (e.g. `["https://app.example.com/", "element://"]`). When empty, any `redirectUrl` is accepted; the flow is still bound to the browser that started it via an HttpOnly cookie. |

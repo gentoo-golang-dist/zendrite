@@ -53,6 +53,48 @@ func setupMSC3861SSORouters(t *testing.T, msc3861 config.MSC3861Config) (httputi
 	return routers, cfg, closeDB
 }
 
+// startSSOFlow performs GET /login/sso/redirect like a browser would and
+// returns the resulting state parameter and the browser-binding cookie, which
+// must be presented on the callback.
+func startSSOFlow(t *testing.T, routers httputil.Routers, redirectURL string) (string, *http.Cookie) {
+	t.Helper()
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
+		"redirectUrl": redirectURL,
+	}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected redirect 302, got %d: %s", rec.Code, rec.Body.String())
+	}
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("failed to parse redirect location: %v", err)
+	}
+	state := location.Query().Get("state")
+	if state == "" {
+		t.Fatal("expected state in redirect location")
+	}
+	var cookie *http.Cookie
+	for _, c := range (&http.Response{Header: rec.Header()}).Cookies() {
+		if c.Name == ssoCookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("expected SSO browser-binding cookie on the redirect response")
+	}
+	if !cookie.HttpOnly {
+		t.Error("expected SSO browser-binding cookie to be HttpOnly")
+	}
+	if cookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("expected SSO browser-binding cookie SameSite=Lax, got %v", cookie.SameSite)
+	}
+	if cookie.Path != ssoCookiePath {
+		t.Errorf("expected SSO browser-binding cookie path %q, got %q", ssoCookiePath, cookie.Path)
+	}
+	return state, cookie
+}
+
 func TestMSC3861SSOCompat_LoginFlowsAdvertiseSSOAndToken(t *testing.T) {
 	t.Parallel()
 	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
@@ -576,29 +618,17 @@ func TestMSC3861SSOCompat_CallbackSuccess(t *testing.T) {
 	})
 	defer closeDB()
 
-	// Start the SSO flow to obtain a valid state.
-	redirectReq := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
-		"redirectUrl": "element://vector/webapp?element-desktop-ssoid=abc",
-	}))
-	redirectRec := httptest.NewRecorder()
-	routers.Client.ServeHTTP(redirectRec, redirectReq)
-	if redirectRec.Code != http.StatusFound {
-		t.Fatalf("expected redirect 302, got %d: %s", redirectRec.Code, redirectRec.Body.String())
-	}
-	location, err := url.Parse(redirectRec.Header().Get("Location"))
-	if err != nil {
-		t.Fatalf("failed to parse redirect location: %v", err)
-	}
-	state := location.Query().Get("state")
-	if state == "" {
-		t.Fatal("expected state in redirect location")
-	}
+	// Start the SSO flow to obtain a valid state and the browser-binding
+	// cookie a real browser would carry through the flow.
+	state, cookie := startSSOFlow(t, routers, "element://vector/webapp?element-desktop-ssoid=abc")
 
-	// Invoke the callback as the OIDC provider would.
+	// Invoke the callback as the OIDC provider would, presenting the cookie
+	// issued by the redirect.
 	callbackReq := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/callback", test.WithQueryParams(map[string]string{
 		"state": state,
 		"code":  "mock-auth-code",
 	}))
+	callbackReq.AddCookie(cookie)
 	callbackRec := httptest.NewRecorder()
 	routers.Client.ServeHTTP(callbackRec, callbackReq)
 	if callbackRec.Code != http.StatusFound {
@@ -768,19 +798,14 @@ func TestMSC3861SSOCompat_CallbackTokenExchangeFailure(t *testing.T) {
 	})
 	defer closeDB()
 
-	// Obtain a valid state.
-	redirectReq := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
-		"redirectUrl": "element://vector/webapp",
-	}))
-	redirectRec := httptest.NewRecorder()
-	routers.Client.ServeHTTP(redirectRec, redirectReq)
-	location, _ := url.Parse(redirectRec.Header().Get("Location"))
-	state := location.Query().Get("state")
+	// Obtain a valid state and the browser-binding cookie.
+	state, cookie := startSSOFlow(t, routers, "element://vector/webapp")
 
 	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/callback", test.WithQueryParams(map[string]string{
 		"state": state,
 		"code":  "bad-code",
 	}))
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	routers.Client.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -822,18 +847,13 @@ func TestMSC3861SSOCompat_CallbackInactiveToken(t *testing.T) {
 	})
 	defer closeDB()
 
-	redirectReq := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
-		"redirectUrl": "element://vector/webapp",
-	}))
-	redirectRec := httptest.NewRecorder()
-	routers.Client.ServeHTTP(redirectRec, redirectReq)
-	location, _ := url.Parse(redirectRec.Header().Get("Location"))
-	state := location.Query().Get("state")
+	state, cookie := startSSOFlow(t, routers, "element://vector/webapp")
 
 	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/callback", test.WithQueryParams(map[string]string{
 		"state": state,
 		"code":  "mock-code",
 	}))
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	routers.Client.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -889,18 +909,13 @@ func TestMSC3861SSOCompat_CallbackClientSecretPost(t *testing.T) {
 	})
 	defer closeDB()
 
-	redirectReq := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
-		"redirectUrl": "element://vector/webapp",
-	}))
-	redirectRec := httptest.NewRecorder()
-	routers.Client.ServeHTTP(redirectRec, redirectReq)
-	location, _ := url.Parse(redirectRec.Header().Get("Location"))
-	state := location.Query().Get("state")
+	state, cookie := startSSOFlow(t, routers, "element://vector/webapp")
 
 	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/callback", test.WithQueryParams(map[string]string{
 		"state": state,
 		"code":  "mock-code",
 	}))
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	routers.Client.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
@@ -952,18 +967,13 @@ func TestMSC3861SSOCompat_CallbackReusesExistingUser(t *testing.T) {
 	// We can't directly create an account here easily, but the first SSO login
 	// will auto-provision it. We just verify the callback succeeds and the
 	// resulting login token is for the expected user.
-	redirectReq := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
-		"redirectUrl": "element://vector/webapp",
-	}))
-	redirectRec := httptest.NewRecorder()
-	routers.Client.ServeHTTP(redirectRec, redirectReq)
-	location, _ := url.Parse(redirectRec.Header().Get("Location"))
-	state := location.Query().Get("state")
+	state, cookie := startSSOFlow(t, routers, "element://vector/webapp")
 
 	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/callback", test.WithQueryParams(map[string]string{
 		"state": state,
 		"code":  "mock-code",
 	}))
+	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	routers.Client.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
@@ -988,6 +998,133 @@ func TestMSC3861SSOCompat_CallbackReusesExistingUser(t *testing.T) {
 	}
 	if loginResp.UserID != expectedUserID {
 		t.Errorf("expected user_id %s, got %s", expectedUserID, loginResp.UserID)
+	}
+}
+
+// The callback must be rejected when the browser does not present the
+// browser-binding cookie issued by /login/sso/redirect: without it an
+// attacker could start a flow with a malicious redirectUrl and trick a victim
+// into completing it, leaking the resulting login token.
+func TestMSC3861SSOCompat_CallbackWithoutCookieRejected(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                "https://auth.example.com",
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: "https://auth.example.com/auth",
+		TokenEndpoint:         "https://auth.example.com/token",
+		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+	})
+	defer closeDB()
+
+	state, _ := startSSOFlow(t, routers, "element://vector/webapp")
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/callback", test.WithQueryParams(map[string]string{
+		"state": state,
+		"code":  "mock-auth-code",
+	}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a callback without the browser-binding cookie, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A callback presenting a cookie whose nonce does not match the one stored
+// with the session must be rejected.
+func TestMSC3861SSOCompat_CallbackMismatchedCookieRejected(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                "https://auth.example.com",
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: "https://auth.example.com/auth",
+		TokenEndpoint:         "https://auth.example.com/token",
+		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+	})
+	defer closeDB()
+
+	state, cookie := startSSOFlow(t, routers, "element://vector/webapp")
+	cookie.Value = "tampered-nonce"
+
+	req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/callback", test.WithQueryParams(map[string]string{
+		"state": state,
+		"code":  "mock-auth-code",
+	}))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a callback with a mismatched cookie, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// When sso_redirect_allowlist is configured, only redirectUrl values matching
+// one of the allowed prefixes are accepted.
+func TestMSC3861SSOCompat_RedirectURLAllowlist(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                "https://auth.example.com",
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: "https://auth.example.com/auth",
+		TokenEndpoint:         "https://auth.example.com/token",
+		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"https://app.example.com/", "element://"},
+	})
+	defer closeDB()
+
+	for _, tc := range []struct {
+		name        string
+		redirectURL string
+		wantCode    int
+	}{
+		{name: "allowed https prefix", redirectURL: "https://app.example.com/welcome?x=1", wantCode: http.StatusFound},
+		{name: "allowed scheme prefix", redirectURL: "element://vector/webapp", wantCode: http.StatusFound},
+		{name: "rejected host", redirectURL: "https://evil.example.com/", wantCode: http.StatusBadRequest},
+		{name: "rejected prefix lookalike", redirectURL: "https://app.example.com.evil.com/", wantCode: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
+				"redirectUrl": tc.redirectURL,
+			}))
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("expected %d for redirectUrl %q, got %d: %s", tc.wantCode, tc.redirectURL, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// takeSession consumes the session atomically: the same state can only be
+// used once, and expired sessions are rejected.
+func TestSSOCompatHandlerTakeSessionSingleConsumption(t *testing.T) {
+	t.Parallel()
+	h := newSSOCompatHandler(&config.MSC3861Config{}, nil, nil, nil, nil)
+
+	state, _, err := h.registerRedirect("element://vector/webapp")
+	if err != nil {
+		t.Fatalf("registerRedirect failed: %v", err)
+	}
+	if s := h.takeSession(state); s == nil {
+		t.Fatal("expected takeSession to return the session")
+	}
+	if s := h.takeSession(state); s != nil {
+		t.Error("expected takeSession to consume the session, but it was returned twice")
+	}
+
+	// Expired sessions must be rejected and removed.
+	expiredState, expiredSession, err := h.registerRedirect("element://vector/webapp")
+	if err != nil {
+		t.Fatalf("registerRedirect failed: %v", err)
+	}
+	expiredSession.expiresAt = time.Now().Add(-time.Minute)
+	if s := h.takeSession(expiredState); s != nil {
+		t.Error("expected takeSession to reject an expired session")
+	}
+	if s := h.takeSession(expiredState); s != nil {
+		t.Error("expected the expired session to be removed")
 	}
 }
 
@@ -1078,5 +1215,14 @@ func TestSSOCompatHandlerCallbackURL(t *testing.T) {
 	req2.Header.Set("X-Forwarded-Proto", "https")
 	if got := h2.callbackURL(req2); got != "https://example.com/_matrix/client/v3/login/sso/callback" {
 		t.Errorf("expected derived callback URL, got %s", got)
+	}
+
+	// public_base_url takes precedence over the request-derived URL.
+	h3 := newSSOCompatHandler(&config.MSC3861Config{
+		PublicBaseURL: "https://matrix.example.com/",
+	}, nil, nil, nil, nil)
+	req3 := httptest.NewRequest(http.MethodGet, "http://internal:8008/_matrix/client/v3/login/sso/redirect", nil)
+	if got := h3.callbackURL(req3); got != "https://matrix.example.com/_matrix/client/v3/login/sso/callback" {
+		t.Errorf("expected public_base_url-derived callback URL, got %s", got)
 	}
 }

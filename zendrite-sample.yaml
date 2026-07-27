@@ -362,6 +362,15 @@ mscs:
   #   account_management_actions: []  # e.g. ["org.matrix.profile", "org.matrix.devices_list"]
   #   introspection_endpoint: ""  # defaults to {issuer}/oauth2/introspect
   #   device_authorization_endpoint: ""  # defaults to {issuer}/oauth2/device/auth
+  #   public_base_url: ""  # the public base URL of this homeserver (e.g.
+  #     "https://matrix.example.com"); used to build URLs advertised to
+  #     clients, such as the SSO callback URL, instead of trusting the
+  #     incoming request's Host header
+  #   sso_redirect_allowlist: []  # optional list of allowed redirectUrl
+  #     prefixes for the legacy SSO flow, e.g. ["https://app.example.com/",
+  #     "element://"]. When empty, any redirectUrl is accepted; the flow is
+  #     still bound to the browser that started it via an HttpOnly cookie, so
+  #     the callback cannot be triggered cross-browser.
 
 # Configuration for the Sync API.
 sync_api:

@@ -137,6 +137,85 @@ func TestMSC3861Verify_Disabled(t *testing.T) {
 	}
 }
 
+// msc3861VerifyErrorContains reports whether Verify produced an MSC3861 error
+// containing the given substring.
+func msc3861VerifyErrorContains(mscs *MSCs, substr string) bool {
+	configErrs := &ConfigErrors{}
+	mscs.Verify(configErrs)
+	for _, err := range *configErrs {
+		if strings.Contains(err, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func msc3861VerifyTestConfig(issuer string) *MSCs {
+	return &MSCs{
+		Matrix: &Global{},
+		MSCs:   []string{"msc3861"},
+		Database: DatabaseOptions{
+			ConnectionString: "file:mscs.db",
+		},
+		MSC3861: MSC3861Config{
+			Issuer:       issuer,
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+		},
+	}
+}
+
+func TestMSC3861Verify_IssuerRequiresHTTPS(t *testing.T) {
+	t.Parallel()
+	if !msc3861VerifyErrorContains(msc3861VerifyTestConfig("http://auth.example.com"), "mscs.msc3861.issuer must use https") {
+		t.Error("expected config error for a plain-http issuer")
+	}
+	if msc3861VerifyErrorContains(msc3861VerifyTestConfig("https://auth.example.com"), "mscs.msc3861.issuer") {
+		t.Error("unexpected config error for an https issuer")
+	}
+}
+
+func TestMSC3861Verify_IssuerLocalhostHTTPAllowed(t *testing.T) {
+	t.Parallel()
+	for _, issuer := range []string{
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+		"http://[::1]:8080",
+	} {
+		if msc3861VerifyErrorContains(msc3861VerifyTestConfig(issuer), "mscs.msc3861.issuer") {
+			t.Errorf("unexpected config error for localhost issuer %q", issuer)
+		}
+	}
+}
+
+func TestMSC3861Verify_EndpointOverridesMustBeAbsoluteURLs(t *testing.T) {
+	t.Parallel()
+	mscs := msc3861VerifyTestConfig("https://auth.example.com")
+	mscs.MSC3861.IntrospectionEndpoint = "not-a-url"
+	if !msc3861VerifyErrorContains(mscs, "mscs.msc3861.introspection_endpoint must be a valid absolute URL") {
+		t.Error("expected config error for a non-URL introspection_endpoint")
+	}
+
+	mscs = msc3861VerifyTestConfig("https://auth.example.com")
+	mscs.MSC3861.SSOCallbackURL = "/relative/path"
+	if !msc3861VerifyErrorContains(mscs, "mscs.msc3861.sso_callback_url must be a valid absolute URL") {
+		t.Error("expected config error for a relative sso_callback_url")
+	}
+
+	mscs = msc3861VerifyTestConfig("https://auth.example.com")
+	mscs.MSC3861.PublicBaseURL = "matrix.example.com"
+	if !msc3861VerifyErrorContains(mscs, "mscs.msc3861.public_base_url must be a valid absolute URL") {
+		t.Error("expected config error for a schemeless public_base_url")
+	}
+
+	mscs = msc3861VerifyTestConfig("https://auth.example.com")
+	mscs.MSC3861.PublicBaseURL = "https://matrix.example.com"
+	mscs.MSC3861.TokenEndpoint = "https://auth.example.com/custom/token"
+	if msc3861VerifyErrorContains(mscs, "msc3861") {
+		t.Error("unexpected config error for valid absolute URLs")
+	}
+}
+
 func TestMSCs_Enabled(t *testing.T) {
 	t.Parallel()
 	mscs := &MSCs{

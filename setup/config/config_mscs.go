@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -28,6 +29,7 @@ type MSCs struct {
 // MSC3861Config holds configuration for delegated OIDC authentication via MSC3861.
 type MSC3861Config struct {
 	// Issuer is the OIDC provider URL (e.g. the Matrix Authentication Service URL).
+	// It must use https, except for localhost issuers during development.
 	Issuer string `yaml:"issuer"`
 
 	// ClientID is the OAuth 2.0 client ID used for token introspection.
@@ -95,6 +97,17 @@ type MSC3861Config struct {
 	// layer. If empty it is derived from the incoming request host as
 	// {scheme}://{host}/_matrix/client/v3/login/sso/callback.
 	SSOCallbackURL string `yaml:"sso_callback_url"`
+
+	// PublicBaseURL is the public base URL of this homeserver (e.g.
+	// https://matrix.example.com). When set it is used instead of the incoming
+	// request's Host header to build URLs advertised to clients, such as the
+	// JWKS proxy URL in the auth metadata and the SSO callback URL.
+	PublicBaseURL string `yaml:"public_base_url"`
+
+	// SSORedirectAllowlist limits the redirectUrl values accepted by the legacy
+	// SSO compat layer. When empty, any redirectUrl is accepted; the SSO state
+	// is still bound to the browser that started the flow via a cookie.
+	SSORedirectAllowlist []string `yaml:"sso_redirect_allowlist"`
 }
 
 // msc3861Endpoint returns the configured endpoint or the default built from the issuer.
@@ -146,6 +159,12 @@ func (c *MSC3861Config) DeviceAuthorizationEndpointOrDefault() string {
 	return c.msc3861Endpoint(c.DeviceAuthorizationEndpoint, "/oauth2/device/auth")
 }
 
+// isLocalhostHost reports whether host is a loopback hostname. Plain-HTTP OIDC
+// issuers are only permitted for these hosts, to support local development.
+func isLocalhostHost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
 func (c *MSCs) Defaults(opts DefaultOpts) {
 	if opts.Generate {
 		if !opts.SingleDatabase {
@@ -176,6 +195,35 @@ func (c *MSCs) Verify(configErrs *ConfigErrors) {
 		if c.MSC3861.Issuer != "" {
 			if u, err := url.Parse(c.MSC3861.Issuer); err != nil || u.Scheme == "" || u.Host == "" {
 				configErrs.Add("mscs.msc3861.issuer must be a valid URL with scheme and host")
+			} else if u.Scheme != "https" && !isLocalhostHost(u.Hostname()) {
+				configErrs.Add("mscs.msc3861.issuer must use https; http is only allowed for localhost development issuers")
+			}
+		}
+
+		// All non-empty endpoint overrides must be absolute URLs.
+		endpoints := []struct {
+			name  string
+			value string
+		}{
+			{"introspection_endpoint", c.MSC3861.IntrospectionEndpoint},
+			{"userinfo_endpoint", c.MSC3861.UserinfoEndpoint},
+			{"authorization_endpoint", c.MSC3861.AuthorizationEndpoint},
+			{"token_endpoint", c.MSC3861.TokenEndpoint},
+			{"registration_endpoint", c.MSC3861.RegistrationEndpoint},
+			{"revocation_endpoint", c.MSC3861.RevocationEndpoint},
+			{"end_session_endpoint", c.MSC3861.EndSessionEndpoint},
+			{"device_authorization_endpoint", c.MSC3861.DeviceAuthorizationEndpoint},
+			{"jwks_uri", c.MSC3861.JWKSURI},
+			{"sso_callback_url", c.MSC3861.SSOCallbackURL},
+			{"account_management_url", c.MSC3861.AccountManagementURL},
+			{"public_base_url", c.MSC3861.PublicBaseURL},
+		}
+		for _, ep := range endpoints {
+			if ep.value == "" {
+				continue
+			}
+			if u, err := url.Parse(ep.value); err != nil || u.Scheme == "" || u.Host == "" {
+				configErrs.Add(fmt.Sprintf("mscs.msc3861.%s must be a valid absolute URL with scheme and host", ep.name))
 			}
 		}
 

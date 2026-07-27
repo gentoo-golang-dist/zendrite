@@ -8,8 +8,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,6 +39,7 @@ type ssoCompatSession struct {
 	redirectURL  string
 	codeVerifier string
 	deviceID     string
+	cookieNonce  string
 	expiresAt    time.Time
 }
 
@@ -79,7 +82,28 @@ const (
 	// Converts the provider's expires_in seconds to the expires_in_ms
 	// milliseconds used by the Matrix client API.
 	millisPerSecond = 1000
+	// The ssoCookieName cookie binds an in-flight SSO login to the browser
+	// that started it. Without it, an attacker could start a flow with a
+	// malicious redirectUrl and trick a victim's browser into completing it,
+	// leaking the resulting login token.
+	ssoCookieName = "zendrite_sso_nonce"
+	// The cookie path scopes the SSO browser-binding cookie to the client API.
+	ssoCookiePath = "/_matrix/client"
+	// Caps the in-flight SSO sessions and the stashed OIDC token sets held in
+	// memory, so the maps cannot grow at line rate when rate limiting is
+	// disabled.
+	ssoMaxEntries = 10000
+	// The retry-after hint sent with M_LIMIT_EXCEEDED responses from the SSO
+	// compat layer.
+	ssoLimitRetryAfterMS = 1000
+	// Bounds the body read on the unauthenticated POST /login endpoint handled
+	// by the SSO compat layer.
+	ssoLoginBodyMaxBytes = 1 << 20
 )
+
+// errSSOStorageFull is returned when an in-memory SSO compat map has reached
+// ssoMaxEntries; handlers translate it into a 429 M_LIMIT_EXCEEDED response.
+var errSSOStorageFull = errors.New("sso compat storage is full")
 
 func newSSOCompatHandler(
 	cfg *config.MSC3861Config,
@@ -128,60 +152,82 @@ func (h *ssoCompatHandler) cleanupExpiredSessions() {
 	}
 }
 
-func (h *ssoCompatHandler) registerRedirect(redirectURL string) (state, codeVerifier, deviceID string, err error) {
-	state, err = auth.GenerateAccessToken()
+func (h *ssoCompatHandler) registerRedirect(redirectURL string) (string, *ssoCompatSession, error) {
+	state, err := auth.GenerateAccessToken()
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to generate SSO state: %w", err)
+		return "", nil, fmt.Errorf("failed to generate SSO state: %w", err)
 	}
-	codeVerifier, err = generatePKCEVerifier()
+	codeVerifier, err := generatePKCEVerifier()
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to generate PKCE verifier: %w", err)
+		return "", nil, fmt.Errorf("failed to generate PKCE verifier: %w", err)
 	}
-	deviceID = util.RandomString(ssoDeviceIDLength)
+	cookieNonce, err := generatePKCEVerifier()
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to generate SSO cookie nonce: %w", err)
+	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.sessions[state] = &ssoCompatSession{
+	session := &ssoCompatSession{
 		redirectURL:  redirectURL,
 		codeVerifier: codeVerifier,
 		// The device ID is allocated up front so it can be requested via the
 		// urn:matrix:client:device: scope, as native OAuth 2.0 clients do. Each
 		// SSO login therefore gets its own device instead of sharing the
 		// fallback "OIDC" device.
-		deviceID:  deviceID,
-		expiresAt: time.Now().Add(ssoSessionTTL),
+		deviceID: util.RandomString(ssoDeviceIDLength),
+		// The cookie nonce binds the callback to the browser that started this
+		// flow: it is stored here and sent to the browser as an HttpOnly
+		// cookie, and the callback must present a matching cookie.
+		cookieNonce: cookieNonce,
+		expiresAt:   time.Now().Add(ssoSessionTTL),
 	}
-	return state, codeVerifier, deviceID, nil
-}
 
-func (h *ssoCompatHandler) getSession(state string) *ssoCompatSession {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if s, ok := h.sessions[state]; ok && time.Now().Before(s.expiresAt) {
-		return s
+	if len(h.sessions) >= ssoMaxEntries {
+		return "", nil, errSSOStorageFull
 	}
-	return nil
+	h.sessions[state] = session
+	return state, session, nil
 }
 
-func (h *ssoCompatHandler) deleteSession(state string) {
+// takeSession atomically returns and removes the session for the given state,
+// or nil if the state is unknown or expired. Consuming the session under a
+// single lock prevents duplicate callbacks from racing the same authorization
+// code through the token exchange.
+func (h *ssoCompatHandler) takeSession(state string) *ssoCompatSession {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	s, ok := h.sessions[state]
+	if !ok {
+		return nil
+	}
 	delete(h.sessions, state)
+	if time.Now().After(s.expiresAt) {
+		return nil
+	}
+	return s
 }
 
 // stashOIDCTokens records the provider-issued credentials for a completed SSO
 // login, keyed by the Matrix login token the client will redeem.
-func (h *ssoCompatHandler) stashOIDCTokens(loginToken string, tokens *oidcTokenResponse, deviceID, userID string) {
+func (h *ssoCompatHandler) stashOIDCTokens(loginToken string, tokens *oidcTokenResponse, deviceID, userID string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.oidcByLogTok) >= ssoMaxEntries {
+		return errSSOStorageFull
+	}
 	h.oidcByLogTok[loginToken] = &ssoCompatOIDCTokens{
 		accessToken:  tokens.AccessToken,
 		refreshToken: tokens.RefreshToken,
 		expiresInMs:  tokens.ExpiresIn * millisPerSecond,
 		deviceID:     deviceID,
 		userID:       userID,
-		expiresAt:    time.Now().Add(ssoSessionTTL),
+		// The stash is worthless once the underlying Matrix login token
+		// expires, so it shares the login token lifetime instead of the
+		// longer SSO session TTL.
+		expiresAt: time.Now().Add(userapi.DefaultLoginTokenLifetime),
 	}
+	return nil
 }
 
 // takeOIDCTokens returns and removes the stashed credentials for a login
@@ -229,7 +275,45 @@ func (h *ssoCompatHandler) callbackURL(req *http.Request) string {
 	if h.cfg.SSOCallbackURL != "" {
 		return h.cfg.SSOCallbackURL
 	}
+	if h.cfg.PublicBaseURL != "" {
+		return strings.TrimSuffix(h.cfg.PublicBaseURL, "/") + "/_matrix/client/v3/login/sso/callback"
+	}
+	// Last resort: derive the callback URL from the incoming request. This
+	// trusts the Host and X-Forwarded-Proto headers, so prefer configuring
+	// sso_callback_url or public_base_url on public deployments.
 	return requestScheme(req) + "://" + req.Host + "/_matrix/client/v3/login/sso/callback"
+}
+
+// browserBindingCookie returns the HttpOnly cookie carrying the nonce that
+// binds an in-flight SSO login to the browser that started it. SameSite=Lax
+// still allows the cookie on the top-level navigation back from the OIDC
+// provider; Secure is set whenever the request arrived over HTTPS.
+func (h *ssoCompatHandler) browserBindingCookie(req *http.Request, nonce string) *http.Cookie {
+	return &http.Cookie{
+		Name:     ssoCookieName,
+		Value:    nonce,
+		Path:     ssoCookiePath,
+		HttpOnly: true,
+		Secure:   requestScheme(req) == "https",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(ssoSessionTTL.Seconds()),
+	}
+}
+
+// redirectURLAllowed reports whether the given redirectUrl may be used for a
+// legacy SSO login. When the allowlist is empty every redirectUrl is
+// accepted; the browser-binding cookie still protects the flow from login
+// CSRF in that case.
+func (h *ssoCompatHandler) redirectURLAllowed(redirectURL string) bool {
+	if len(h.cfg.SSORedirectAllowlist) == 0 {
+		return true
+	}
+	for _, prefix := range h.cfg.SSORedirectAllowlist {
+		if strings.HasPrefix(redirectURL, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // serveRedirect handles GET /_matrix/client/v3/login/sso/redirect.
@@ -245,9 +329,21 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 			JSON: spec.BadJSON("Missing redirectUrl query parameter."),
 		}
 	}
+	if !h.redirectURLAllowed(redirectURL) {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("The given redirectUrl is not allowed on this homeserver."),
+		}
+	}
 
-	state, codeVerifier, deviceID, err := h.registerRedirect(redirectURL)
+	state, session, err := h.registerRedirect(redirectURL)
 	if err != nil {
+		if errors.Is(err, errSSOStorageFull) {
+			return util.JSONResponse{
+				Code: http.StatusTooManyRequests,
+				JSON: spec.LimitExceeded("Too many in-flight SSO logins, please try again later.", ssoLimitRetryAfterMS),
+			}
+		}
 		logrus.WithError(err).Error("MSC3861 SSO compat: failed to create session")
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,
@@ -269,8 +365,8 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 		"client_id":             {h.cfg.ClientID},
 		"redirect_uri":          {h.callbackURL(req)},
 		"state":                 {state},
-		"scope":                 {"openid offline_access email profile urn:matrix:client:api:* urn:matrix:client:device:" + deviceID},
-		"code_challenge":        {pkceChallenge(codeVerifier)},
+		"scope":                 {"openid offline_access email profile urn:matrix:client:api:* urn:matrix:client:device:" + session.deviceID},
+		"code_challenge":        {pkceChallenge(session.codeVerifier)},
 		"code_challenge_method": {"S256"},
 	}
 	// OAuth 2.0 aware clients signal the user's intent with the action
@@ -281,22 +377,37 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 	authURL := endpoints.authorizationEndpoint + "?" + q.Encode()
 
 	return util.JSONResponse{
-		Code:    http.StatusFound,
-		Headers: map[string]string{"Location": authURL},
+		Code: http.StatusFound,
+		Headers: map[string]string{
+			"Location":   authURL,
+			"Set-Cookie": h.browserBindingCookie(req, session.cookieNonce).String(),
+		},
 	}
 }
 
 // serveCallback handles GET /_matrix/client/v3/login/sso/callback.
 func (h *ssoCompatHandler) serveCallback(req *http.Request) util.JSONResponse {
 	state := req.URL.Query().Get("state")
-	session := h.getSession(state)
+	// The session is consumed atomically here, before the network-bound token
+	// exchange, so duplicate callbacks cannot race the same authorization
+	// code.
+	session := h.takeSession(state)
 	if session == nil {
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: spec.BadJSON("Invalid or expired SSO session state."),
 		}
 	}
-	defer h.deleteSession(state)
+
+	// The callback must come from the browser that started the flow: it has
+	// to present the browser-binding cookie issued by /login/sso/redirect.
+	cookie, err := req.Cookie(ssoCookieName)
+	if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(session.cookieNonce)) != 1 {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("Missing or mismatched SSO session cookie."),
+		}
+	}
 
 	if errCode := req.URL.Query().Get("error"); errCode != "" {
 		errDesc := req.URL.Query().Get("error_description")
@@ -342,7 +453,13 @@ func (h *ssoCompatHandler) serveCallback(req *http.Request) util.JSONResponse {
 	// Stash the provider-issued credentials against the login token so that
 	// redeeming it via m.login.token returns the OIDC access token rather
 	// than a homeserver-local one, which would never introspect.
-	h.stashOIDCTokens(tokenRes.Metadata.Token, tokens, device.ID, device.UserID)
+	if err := h.stashOIDCTokens(tokenRes.Metadata.Token, tokens, device.ID, device.UserID); err != nil {
+		logrus.WithError(err).Error("MSC3861 SSO compat: failed to stash OIDC tokens")
+		return util.JSONResponse{
+			Code: http.StatusTooManyRequests,
+			JSON: spec.LimitExceeded("Too many in-flight SSO logins, please try again later.", ssoLimitRetryAfterMS),
+		}
+	}
 
 	clientURL, err := url.Parse(session.redirectURL)
 	if err != nil {
@@ -656,7 +773,9 @@ func (h *ssoCompatHandler) serveLogin(cfg *config.ClientAPI) http.Handler {
 		if req.Body == nil {
 			req.Body = http.NoBody
 		}
-		body, err := io.ReadAll(req.Body)
+		// The login endpoint is unauthenticated, so the body read is bounded
+		// to keep memory usage in check.
+		body, err := io.ReadAll(io.LimitReader(req.Body, ssoLoginBodyMaxBytes+1))
 		if err != nil {
 			return util.JSONResponse{
 				Code: http.StatusBadRequest,
@@ -664,6 +783,12 @@ func (h *ssoCompatHandler) serveLogin(cfg *config.ClientAPI) http.Handler {
 			}
 		}
 		_ = req.Body.Close()
+		if len(body) > ssoLoginBodyMaxBytes {
+			return util.JSONResponse{
+				Code: http.StatusRequestEntityTooLarge,
+				JSON: spec.BadJSON("Request body too large."),
+			}
+		}
 
 		// Only m.login.token is allowed under MSC3861; everything else is delegated.
 		if gjson.GetBytes(body, "type").String() != authtypes.LoginTypeToken {
