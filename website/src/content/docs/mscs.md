@@ -108,26 +108,9 @@ No additional configuration is needed beyond enabling the MSC.
 ### MSC3861: OIDC Delegated Authentication
 
 MSC3861 delegates authentication to an external OpenID Connect (OIDC) provider such as [Matrix Authentication Service (MAS)](https://github.com/element-hq/matrix-authentication-service).
-When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection instead of managing passwords directly.
+When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection instead of managing passwords directly, and provisions accounts and devices on demand.
 
-**What changes when MSC3861 is enabled:**
-
-- Password-based registration and login are disabled.
-- `GET /login` returns the legacy `m.login.sso` and `m.login.token` flows, so older Element Web/Desktop clients can sign in via the OIDC provider without native OIDC support. The SSO flow is marked `oauth_aware_preferred`, and `/login/sso/redirect` honours the `action=login|register` parameter (`register` maps to `prompt=create` at the provider).
-- The SSO flow is bound to the browser that started it: `/login/sso/redirect` issues an HttpOnly, `SameSite=Lax` cookie that the callback must present, so a flow started in one browser cannot be completed in another.
-- `redirectUrl` is validated default-deny.
-  With `sso_redirect_allowlist` empty, only targets on the homeserver's own origin (from `public_base_url`, or the incoming request's scheme and host when it is not set) are accepted; everything else is rejected with `M_INVALID_PARAM`.
-  The browser-binding cookie is not sufficient on its own here: the victim's own browser runs the whole flow and therefore holds the cookie, so an unrestricted `redirectUrl` would let a single crafted link deliver the login token, and with it the provider-issued access and refresh tokens, to an attacker.
-- `POST /login` accepts only `m.login.token`, redeeming a login token issued by the SSO callback; redemption returns the provider-issued OIDC access token, refresh token and expiry, plus the device from its scope (a homeserver-local token would never introspect). Other login types return `403 M_FORBIDDEN`.
-- `POST /refresh` bridges to the provider's refresh token grant, so legacy clients can renew expiring OIDC access tokens. Expired tokens report `soft_logout: true`, including on the userinfo fallback path, so clients attempt a refresh instead of destroying the session.
-- `POST /register`, `/account/password`, `/account/deactivate`, `/logout`, `/logout/all`, `/delete_devices`, and device modification endpoints return `403 M_FORBIDDEN`.
-- `/.well-known/matrix/client` includes an `m.authentication` section with the OIDC issuer.
-- `GET /_matrix/client/v1/auth_metadata` advertises the OAuth 2.0 authorization server metadata, including the account management URL/actions, device authorization endpoint, and supported prompt values discovered from the provider.
-- `GET /capabilities` reports `m.change_password` and `m.3pid_changes` as disabled.
-- `/keys/device_signing/upload` uses the `m.oauth` user-interactive auth type, deep-linking to the account management UI to confirm cross-signing resets.
-- Device IDs are taken from the stable `urn:matrix:client:device:<id>` scope token (the `urn:matrix:device:` and unstable MSC2967 prefixes are still accepted).
-- Expired access tokens return `401 M_UNKNOWN_TOKEN` with `soft_logout: true` so clients refresh at the provider instead of logging out.
-- New users are auto-provisioned on first token introspection.
+This changes the behaviour of a large part of the client-server API: password login and registration are disabled, session management moves to the provider, and clients without native OIDC support go through a legacy SSO compatibility layer.
 
 **Configuration:**
 
@@ -139,41 +122,6 @@ mscs:
     issuer: "https://auth.example.com/"
     client_id: "0000000000000000000ZENDRITE"
     client_secret: "secret"
-    client_auth_method: "client_secret_basic"  # or "client_secret_post"
-    admin_token: ""                            # optional: static token for admin API access
-    account_management_url: ""                 # optional: URL for account management UI
-    introspection_endpoint: ""                 # optional: defaults to {issuer}/oauth2/introspect
-    authorization_endpoint: ""                 # optional: defaults to {issuer}/oauth2/auth
-    token_endpoint: ""                         # optional: defaults to {issuer}/oauth2/token
-    registration_endpoint: ""                  # optional: defaults to {issuer}/oauth2/clients/register
-    revocation_endpoint: ""                    # optional: defaults to {issuer}/oauth2/revoke
-    device_authorization_endpoint: ""          # optional: defaults to {issuer}/oauth2/device/auth
-    jwks_uri: ""                               # optional: defaults to {issuer}/oauth2/keys
-    account_management_actions: []             # optional: e.g. ["org.matrix.profile", "org.matrix.devices_list"]
-    sso_callback_url: ""                       # optional: overrides the SSO callback URL
-    public_base_url: ""                        # optional: e.g. "https://matrix.example.com"; used to build client-facing URLs
-                                               # (including the SSO callback) instead of trusting request Host headers
-    sso_redirect_allowlist: []                 # optional: redirectUrl targets allowed for the legacy SSO flow;
-                                               # when empty, only the homeserver's own origin is accepted
 ```
 
-| Field | Required | Description |
-| --- | --- | --- |
-| `issuer` | Yes | The OIDC provider URL (e.g. your MAS instance). |
-| `client_id` | Yes | OAuth 2.0 client ID registered with the OIDC provider for introspection. |
-| `client_secret` | Yes | OAuth 2.0 client secret for introspection. |
-| `client_auth_method` | No | Authentication method: `client_secret_basic` (default) or `client_secret_post`. |
-| `admin_token` | No | A static bearer token that grants admin access, bypassing OIDC introspection. Useful for service-to-service calls. |
-| `account_management_url` | No | URL where users can manage their account (shown in well-known response and advertised as `account_management_uri` in the auth metadata). |
-| `account_management_actions` | No | Account management actions supported by the account management URL, advertised as `account_management_actions_supported`. |
-| `device_authorization_endpoint` | No | Override the OAuth 2.0 device authorization endpoint (RFC 8628). Defaults to the discovered value, then `{issuer}/oauth2/device/auth`. |
-| `introspection_endpoint` | No | Override the introspection endpoint URL. Defaults to `{issuer}/oauth2/introspect`. |
-| `public_base_url` | No | The public base URL of the homeserver (e.g. `https://matrix.example.com`). Used to build URLs advertised to clients, including the SSO callback URL when `sso_callback_url` is not set. |
-| `sso_redirect_allowlist` | No | `redirectUrl` targets allowed for the legacy SSO flow (e.g. `["https://app.example.com/", "element://"]`). `http(s)` entries are matched on scheme, host and path prefix, so `https://app.example.com` does not match `https://app.example.com.evil.com/`; entries with any other scheme (such as the `element://` desktop deep link) are matched as plain string prefixes. When empty, only redirect targets on the homeserver's own origin are accepted. |
-
-**Known limitations:**
-
-- The legacy SSO compat layer keeps its in-flight state (SSO sessions, the login tokens issued by the callback, and pending cross-signing reset confirmations) in process memory.
-  The `/login/sso/redirect`, `/login/sso/callback` and `POST /login` requests of one login must therefore all be handled by the same Zendrite process.
-  Running several instances behind a load balancer breaks the flow unless the balancer pins a client's requests to one instance.
-  Clients with native OIDC support are unaffected, since they never use the compat layer.
+See [Delegated authentication (OIDC)](/administration/oidc/) for the full setup guide, the complete configuration reference, client support, account provisioning rules, migration caveats and troubleshooting.
