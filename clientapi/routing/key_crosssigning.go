@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"sync"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
@@ -82,25 +83,26 @@ func UploadCrossSigningDeviceKeys(
 			// With delegated authentication there is no password to re-check.
 			// The OAuth 2.0 API uses the m.oauth UIA type instead: the client
 			// opens the params URL so the user can confirm the action in the
-			// account management web UI, then resubmits the session to complete
-			// the stage. m.oauth is a UX confirmation, not an auth factor; the
-			// real guard is the valid access token on the request. We therefore
-			// only complete the stage when the client resubmits a session that
-			// was issued by this server for the same user, or when the OIDC
-			// provider confirmed the web flow via the MAS admin API.
+			// account management web UI, and the OIDC provider reports that
+			// confirmation back through the MAS admin API. That callback is the
+			// only evidence that a human approved the replacement -- a
+			// resubmitted session proves nothing beyond possession of the
+			// access token, which is exactly what UIA on this endpoint has to
+			// guard against. The stage is therefore completed by the provider
+			// confirmation alone whenever the provider is able to send one, and
+			// only falls back to the weaker resubmission check when no admin
+			// token is configured and that callback cannot happen.
 			completed := slices.Contains(sessions.getCompletedStages(sessionID), authtypes.LoginTypeOAuth)
-			if !completed && sessionID != "" {
-				if sessions.completeOAuthSession(sessionID, device.UserID) || consumeMASCrossSigningConfirmation(device.UserID) {
-					sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeOAuth)
-					completed = true
-				}
+			if !completed && completeOAuthCrossSigningStage(sessionID, device.UserID, mscCfg.MSC3861.AdminToken != "") {
+				sessions.addCompletedSessionStage(sessionID, authtypes.LoginTypeOAuth)
+				completed = true
 			}
 			if !completed {
 				// Always generate the session ID server-side. A client-supplied
 				// session that we never issued (or that was issued for another
 				// user) gets a fresh challenge with a new session ID rather
 				// than being honored. The stage is only recorded as completed
-				// once the resubmission checks above pass.
+				// once the checks above pass.
 				sessionID = util.RandomString(sessionIDLength)
 				sessions.addOAuthSession(sessionID, device.UserID)
 				return util.JSONResponse{
@@ -178,6 +180,39 @@ func UploadCrossSigningDeviceKeys(
 		Code: http.StatusOK,
 		JSON: struct{}{},
 	}
+}
+
+// unconfirmedCrossSigningWarning makes sure the fallback below is reported once
+// per process rather than on every cross-signing key replacement.
+var unconfirmedCrossSigningWarning sync.Once
+
+// completeOAuthCrossSigningStage reports whether the m.oauth UIA stage for a
+// cross-signing key replacement may be completed, consuming the signal that
+// completes it.
+//
+// When an admin token is configured the MAS admin routes are registered, so the
+// OIDC provider is able to call
+// POST /_synapse/admin/v1/users/{userId}/_allow_cross_signing_replacement_without_uia
+// once the user confirmed the reset in the account management web UI. In that
+// configuration the provider confirmation is the only thing that completes the
+// stage: resubmitting a session this server issued is not sufficient, since any
+// holder of the access token can do that.
+//
+// Without an admin token there is no callback channel, so the stage falls back
+// to a resubmission of a session that this server issued for this user. That is
+// a weaker check -- the access token is then the only guard -- so it is logged.
+func completeOAuthCrossSigningStage(sessionID, userID string, providerCanConfirm bool) bool {
+	if providerCanConfirm {
+		return consumeMASCrossSigningConfirmation(userID)
+	}
+	if !sessions.completeOAuthSession(sessionID, userID) {
+		return false
+	}
+	unconfirmedCrossSigningWarning.Do(func() {
+		logrus.Warn("MSC3861: completing cross-signing key replacements without provider confirmation, " +
+			"set msc3861.admin_token so the OIDC provider can confirm the reset via the MAS admin API")
+	})
+	return true
 }
 
 // msc3861OAuthUIAURL builds the URL for the m.oauth UIA params, pointing at the

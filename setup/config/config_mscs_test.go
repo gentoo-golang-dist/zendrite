@@ -5,8 +5,11 @@
 package config
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/sirupsen/logrus"
 )
 
 func TestMSC3861Verify_MissingIssuer(t *testing.T) {
@@ -213,6 +216,56 @@ func TestMSC3861Verify_EndpointOverridesMustBeAbsoluteURLs(t *testing.T) {
 	mscs.MSC3861.TokenEndpoint = "https://auth.example.com/custom/token"
 	if msc3861VerifyErrorContains(mscs, "msc3861") {
 		t.Error("unexpected config error for valid absolute URLs")
+	}
+}
+
+// An empty sso_redirect_allowlist is not a config error, but it must warn:
+// the legacy SSO flow is default-deny in that case and only accepts redirect
+// targets on the homeserver's own origin.
+func TestMSC3861Verify_EmptySSORedirectAllowlistWarnsButIsValid(t *testing.T) {
+	mscs := msc3861VerifyTestConfig("https://auth.example.com")
+
+	var logged bytes.Buffer
+	restore := captureWarnings(&logged)
+	configErrs := &ConfigErrors{}
+	mscs.Verify(configErrs)
+	restore()
+
+	for _, err := range *configErrs {
+		if strings.Contains(err, "sso_redirect_allowlist") {
+			t.Errorf("unexpected config error for an empty sso_redirect_allowlist: %s", err)
+		}
+	}
+	if !strings.Contains(logged.String(), "mscs.msc3861.sso_redirect_allowlist is empty") {
+		t.Errorf("expected a startup warning about the empty allowlist, got: %s", logged.String())
+	}
+	if !strings.Contains(logged.String(), "own origin") {
+		t.Errorf("expected the warning to explain the same-origin default, got: %s", logged.String())
+	}
+
+	// A configured allowlist must not warn.
+	mscs = msc3861VerifyTestConfig("https://auth.example.com")
+	mscs.MSC3861.SSORedirectAllowlist = []string{"https://app.example.com/"}
+	logged.Reset()
+	restore = captureWarnings(&logged)
+	mscs.Verify(&ConfigErrors{})
+	restore()
+	if strings.Contains(logged.String(), "sso_redirect_allowlist") {
+		t.Errorf("unexpected allowlist warning when one is configured: %s", logged.String())
+	}
+}
+
+// captureWarnings redirects logrus output into buf until the returned function
+// is called. The tests using it cannot run in parallel, since logrus output is
+// global.
+func captureWarnings(buf *bytes.Buffer) func() {
+	prevOut := logrus.StandardLogger().Out
+	prevFormatter := logrus.StandardLogger().Formatter
+	logrus.SetOutput(buf)
+	logrus.SetFormatter(&logrus.TextFormatter{DisableColors: true, DisableTimestamp: true})
+	return func() {
+		logrus.SetOutput(prevOut)
+		logrus.SetFormatter(prevFormatter)
 	}
 }
 

@@ -380,6 +380,7 @@ func TestMSC3861SSOCompat_RedirectUsesConfiguredEndpoints(t *testing.T) {
 		AuthorizationEndpoint: authzEndpoint,
 		TokenEndpoint:         tokenEndpoint,
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -445,6 +446,7 @@ func TestMSC3861SSOCompat_RedirectActionRegisterSetsPromptCreate(t *testing.T) {
 		AuthorizationEndpoint: "https://auth.example.com/custom/auth",
 		TokenEndpoint:         "https://auth.example.com/custom/token",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -505,10 +507,11 @@ func TestMSC3861SSOCompat_RedirectDiscoversEndpoints(t *testing.T) {
 	defer mockProvider.Close()
 
 	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
-		Issuer:         mockProvider.URL,
-		ClientID:       "test-client-id",
-		ClientSecret:   "test-client-secret",
-		SSOCallbackURL: "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		Issuer:               mockProvider.URL,
+		ClientID:             "test-client-id",
+		ClientSecret:         "test-client-secret",
+		SSOCallbackURL:       "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist: []string{"element://"},
 	})
 	defer closeDB()
 
@@ -615,6 +618,7 @@ func TestMSC3861SSOCompat_CallbackSuccess(t *testing.T) {
 		TokenEndpoint:         mockProvider.URL + "/token",
 		IntrospectionEndpoint: mockProvider.URL + "/introspect",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -795,6 +799,7 @@ func TestMSC3861SSOCompat_CallbackTokenExchangeFailure(t *testing.T) {
 		AuthorizationEndpoint: mockProvider.URL + "/auth",
 		TokenEndpoint:         mockProvider.URL + "/token",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -844,6 +849,7 @@ func TestMSC3861SSOCompat_CallbackInactiveToken(t *testing.T) {
 		TokenEndpoint:         mockProvider.URL + "/token",
 		IntrospectionEndpoint: mockProvider.URL + "/introspect",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -906,6 +912,7 @@ func TestMSC3861SSOCompat_CallbackClientSecretPost(t *testing.T) {
 		TokenEndpoint:         mockProvider.URL + "/token",
 		IntrospectionEndpoint: mockIntrospect.URL + "/introspect",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -959,6 +966,7 @@ func TestMSC3861SSOCompat_CallbackReusesExistingUser(t *testing.T) {
 		TokenEndpoint:         mockProvider.URL + "/token",
 		IntrospectionEndpoint: mockProvider.URL + "/introspect",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -1014,6 +1022,7 @@ func TestMSC3861SSOCompat_CallbackWithoutCookieRejected(t *testing.T) {
 		AuthorizationEndpoint: "https://auth.example.com/auth",
 		TokenEndpoint:         "https://auth.example.com/token",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -1041,6 +1050,7 @@ func TestMSC3861SSOCompat_CallbackMismatchedCookieRejected(t *testing.T) {
 		AuthorizationEndpoint: "https://auth.example.com/auth",
 		TokenEndpoint:         "https://auth.example.com/token",
 		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+		SSORedirectAllowlist:  []string{"element://"},
 	})
 	defer closeDB()
 
@@ -1101,7 +1111,8 @@ func TestMSC3861SSOCompat_RedirectURLAllowlist(t *testing.T) {
 // used once, and expired sessions are rejected.
 func TestSSOCompatHandlerTakeSessionSingleConsumption(t *testing.T) {
 	t.Parallel()
-	h := newSSOCompatHandler(&config.MSC3861Config{}, nil, nil, nil, nil)
+	h := newSSOCompatHandler(&config.MSC3861Config{}, nil, nil, nil)
+	defer h.Close()
 
 	state, _, err := h.registerRedirect("element://vector/webapp")
 	if err != nil {
@@ -1204,13 +1215,15 @@ func TestSSOCompatHandlerCallbackURL(t *testing.T) {
 	t.Parallel()
 	h := newSSOCompatHandler(&config.MSC3861Config{
 		SSOCallbackURL: "https://custom.example.com/callback",
-	}, nil, nil, nil, nil)
+	}, nil, nil, nil)
+	defer h.Close()
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/_matrix/client/v3/login/sso/redirect", nil)
 	if got := h.callbackURL(req); got != "https://custom.example.com/callback" {
 		t.Errorf("expected custom callback URL, got %s", got)
 	}
 
-	h2 := newSSOCompatHandler(&config.MSC3861Config{}, nil, nil, nil, nil)
+	h2 := newSSOCompatHandler(&config.MSC3861Config{}, nil, nil, nil)
+	defer h2.Close()
 	req2 := httptest.NewRequest(http.MethodGet, "http://example.com/_matrix/client/v3/login/sso/redirect", nil)
 	req2.Header.Set("X-Forwarded-Proto", "https")
 	if got := h2.callbackURL(req2); got != "https://example.com/_matrix/client/v3/login/sso/callback" {
@@ -1220,9 +1233,317 @@ func TestSSOCompatHandlerCallbackURL(t *testing.T) {
 	// public_base_url takes precedence over the request-derived URL.
 	h3 := newSSOCompatHandler(&config.MSC3861Config{
 		PublicBaseURL: "https://matrix.example.com/",
-	}, nil, nil, nil, nil)
+	}, nil, nil, nil)
+	defer h3.Close()
 	req3 := httptest.NewRequest(http.MethodGet, "http://internal:8008/_matrix/client/v3/login/sso/redirect", nil)
 	if got := h3.callbackURL(req3); got != "https://matrix.example.com/_matrix/client/v3/login/sso/callback" {
 		t.Errorf("expected public_base_url-derived callback URL, got %s", got)
 	}
+}
+
+// With no sso_redirect_allowlist configured the redirect endpoint is
+// default-deny: only targets on the homeserver's own origin are accepted.
+// Anything else would let an attacker's link walk the victim's own browser
+// through the flow and collect the resulting login token, which POST /login
+// redeems into the provider-issued access and refresh tokens.
+func TestMSC3861SSOCompat_RedirectDefaultDeniesCrossOrigin(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                "https://auth.example.com",
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: "https://auth.example.com/auth",
+		TokenEndpoint:         "https://auth.example.com/token",
+		SSOCallbackURL:        "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+	})
+	defer closeDB()
+
+	// test.NewRequest builds requests for http://localhost, so that is the
+	// origin the homeserver sees.
+	for _, tc := range []struct {
+		name        string
+		redirectURL string
+		wantCode    int
+	}{
+		{name: "same origin", redirectURL: "http://localhost/element/#/welcome", wantCode: http.StatusFound},
+		{name: "same origin case insensitive", redirectURL: "HTTP://LOCALHOST/element", wantCode: http.StatusFound},
+		{name: "attacker origin", redirectURL: "https://evil.example.com/", wantCode: http.StatusBadRequest},
+		{name: "same host different scheme", redirectURL: "https://localhost/element", wantCode: http.StatusBadRequest},
+		{name: "protocol relative", redirectURL: "//evil.example.com/", wantCode: http.StatusBadRequest},
+		{name: "deep link without allowlist", redirectURL: "element://vector/webapp", wantCode: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
+				"redirectUrl": tc.redirectURL,
+			}))
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("expected %d for redirectUrl %q, got %d: %s", tc.wantCode, tc.redirectURL, rec.Code, rec.Body.String())
+			}
+			if tc.wantCode != http.StatusBadRequest {
+				return
+			}
+			// The rejection must tell the operator how to allow the target.
+			var errResp map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+				t.Fatalf("failed to parse error response: %v", err)
+			}
+			if errResp["errcode"] != "M_INVALID_PARAM" {
+				t.Errorf("expected M_INVALID_PARAM, got %v", errResp["errcode"])
+			}
+			if msg, _ := errResp["error"].(string); !strings.Contains(msg, "sso_redirect_allowlist") {
+				t.Errorf("expected the error to point at sso_redirect_allowlist, got %q", msg)
+			}
+		})
+	}
+}
+
+// When public_base_url is configured it, rather than the request's Host
+// header, defines the origin accepted by the default-deny check.
+func TestMSC3861SSOCompat_RedirectDefaultDenyUsesPublicBaseURL(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                "https://auth.example.com",
+		ClientID:              "test-client-id",
+		ClientSecret:          "test-client-secret",
+		AuthorizationEndpoint: "https://auth.example.com/auth",
+		TokenEndpoint:         "https://auth.example.com/token",
+		PublicBaseURL:         "https://matrix.example.com",
+	})
+	defer closeDB()
+
+	for _, tc := range []struct {
+		name        string
+		redirectURL string
+		wantCode    int
+	}{
+		{name: "public base url origin", redirectURL: "https://matrix.example.com/element/", wantCode: http.StatusFound},
+		{name: "request origin no longer trusted", redirectURL: "http://localhost/element/", wantCode: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
+				"redirectUrl": tc.redirectURL,
+			}))
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("expected %d for redirectUrl %q, got %d: %s", tc.wantCode, tc.redirectURL, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// redirectURLAllowed matches http(s) allowlist entries on the parsed origin,
+// so a lookalike host cannot pass by sharing a string prefix with an entry.
+func TestSSOCompatHandlerRedirectURLAllowed(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "http://matrix.example.com/_matrix/client/v3/login/sso/redirect", nil)
+
+	for _, tc := range []struct {
+		name        string
+		allowlist   []string
+		publicBase  string
+		redirectURL string
+		want        bool
+	}{
+		{name: "empty allowlist allows request origin", redirectURL: "http://matrix.example.com/element", want: true},
+		{name: "empty allowlist denies other origin", redirectURL: "https://evil.example.com/", want: false},
+		{name: "empty allowlist denies relative target", redirectURL: "/element/#/welcome", want: false},
+		{name: "empty allowlist honors public_base_url", publicBase: "https://public.example.com", redirectURL: "https://public.example.com/element", want: true},
+		{
+			name:        "allowlist entry without trailing slash allows the origin",
+			allowlist:   []string{"https://app.example.com"},
+			redirectURL: "https://app.example.com/welcome?x=1",
+			want:        true,
+		},
+		{
+			name:        "allowlist entry without trailing slash rejects a lookalike host",
+			allowlist:   []string{"https://app.example.com"},
+			redirectURL: "https://app.example.com.evil.com/",
+			want:        false,
+		},
+		{
+			name:        "allowlist entry rejects an evil userinfo host",
+			allowlist:   []string{"https://app.example.com"},
+			redirectURL: "https://app.example.com@evil.example.com/",
+			want:        false,
+		},
+		{
+			name:        "allowlist entry rejects a different port",
+			allowlist:   []string{"https://app.example.com"},
+			redirectURL: "https://app.example.com:8443/",
+			want:        false,
+		},
+		{
+			name:        "allowlist path scopes the target",
+			allowlist:   []string{"https://app.example.com/element/"},
+			redirectURL: "https://app.example.com/element/welcome",
+			want:        true,
+		},
+		{
+			name:        "allowlist path rejects a sibling path",
+			allowlist:   []string{"https://app.example.com/element/"},
+			redirectURL: "https://app.example.com/elementary",
+			want:        false,
+		},
+		{
+			name:        "non-http entries keep prefix matching",
+			allowlist:   []string{"element://"},
+			redirectURL: "element://vector/webapp",
+			want:        true,
+		},
+		{
+			name:        "non-http entries do not match other schemes",
+			allowlist:   []string{"element://"},
+			redirectURL: "elementx://vector/webapp",
+			want:        false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSSOCompatHandler(&config.MSC3861Config{
+				SSORedirectAllowlist: tc.allowlist,
+				PublicBaseURL:        tc.publicBase,
+			}, nil, nil, nil)
+			defer h.Close()
+			if got := h.redirectURLAllowed(req, tc.redirectURL); got != tc.want {
+				t.Errorf("redirectURLAllowed(%q) = %v, want %v", tc.redirectURL, got, tc.want)
+			}
+		})
+	}
+}
+
+// Discovery results are cached per issuer, so that /login/sso/redirect and the
+// unauthenticated POST /refresh do not fetch .well-known/openid-configuration
+// on every request.
+func TestSSOCompatHandlerDiscoveryCache(t *testing.T) {
+	t.Parallel()
+
+	var discoveryHits int32
+	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		atomic.AddInt32(&discoveryHits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"authorization_endpoint": "https://auth.example.com/discovery/auth",
+			"token_endpoint":         "https://auth.example.com/discovery/token",
+		})
+	}))
+	defer mockProvider.Close()
+
+	h := newSSOCompatHandler(&config.MSC3861Config{
+		Issuer:       mockProvider.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}, nil, mockProvider.Client(), nil)
+	defer h.Close()
+
+	// A zero TTL makes every entry stale as soon as it is written, so each
+	// call refetches. This is what the injected TTL is for.
+	for i := range 3 {
+		endpoints, err := h.discoverOIDCEndpointsWithTTL(context.Background(), 0, 0)
+		if err != nil {
+			t.Fatalf("discoverOIDCEndpointsWithTTL call %d failed: %v", i, err)
+		}
+		if endpoints.authorizationEndpoint != "https://auth.example.com/discovery/auth" {
+			t.Errorf("unexpected authorization endpoint: %s", endpoints.authorizationEndpoint)
+		}
+		if endpoints.tokenEndpoint != "https://auth.example.com/discovery/token" {
+			t.Errorf("unexpected token endpoint: %s", endpoints.tokenEndpoint)
+		}
+	}
+	if got := atomic.LoadInt32(&discoveryHits); got != 3 {
+		t.Fatalf("expected an expired cache entry to be refetched every time, got %d fetches", got)
+	}
+
+	// With the production TTL the document is fetched once and then served
+	// from the cache.
+	for i := range 3 {
+		if _, err := h.discoverOIDCEndpoints(context.Background()); err != nil {
+			t.Fatalf("discoverOIDCEndpoints call %d failed: %v", i, err)
+		}
+	}
+	if got := atomic.LoadInt32(&discoveryHits); got != 4 {
+		t.Fatalf("expected a single further discovery fetch, got %d in total", got)
+	}
+}
+
+// Failed discoveries are negative-cached, so a provider outage cannot be
+// amplified into one outbound request per client request.
+func TestSSOCompatHandlerDiscoveryCacheNegativeCaching(t *testing.T) {
+	t.Parallel()
+
+	var discoveryHits int32
+	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&discoveryHits, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer mockProvider.Close()
+
+	h := newSSOCompatHandler(&config.MSC3861Config{
+		Issuer:       mockProvider.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}, nil, mockProvider.Client(), nil)
+	defer h.Close()
+
+	for i := range 3 {
+		if _, err := h.discoverOIDCEndpoints(context.Background()); err == nil {
+			t.Fatalf("expected discovery call %d to fail", i)
+		}
+	}
+	if got := atomic.LoadInt32(&discoveryHits); got != 1 {
+		t.Fatalf("expected the failure to be negative-cached after one fetch, got %d", got)
+	}
+}
+
+// Client credentials are sent verbatim in the Authorization header: MAS,
+// Keycloak and Hydra compare the raw values, so form-encoding them would break
+// every secret containing '+', '/', '=' or '%'.
+func TestMSC3861SSOCompat_ClientSecretBasicSendsRawCredentials(t *testing.T) {
+	t.Parallel()
+
+	const clientSecret = "s3cr3t+with/special=chars%21"
+	mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "test-client-id" || pass != clientSecret {
+			t.Errorf("expected raw basic auth credentials, got ok=%v user=%q pass=%q", ok, user, pass)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "new-access-token",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+	}))
+	defer mockProvider.Close()
+
+	routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+		Issuer:                mockProvider.URL,
+		ClientID:              "test-client-id",
+		ClientSecret:          clientSecret,
+		AuthorizationEndpoint: mockProvider.URL + "/auth",
+		TokenEndpoint:         mockProvider.URL + "/token",
+	})
+	defer closeDB()
+
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/refresh", test.WithJSONBody(t, map[string]any{
+		"refresh_token": "old-refresh-token",
+	}))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Close stops the cleanup goroutine and is safe to call repeatedly.
+func TestSSOCompatHandlerCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
+	h := newSSOCompatHandler(&config.MSC3861Config{}, nil, nil, nil)
+	h.Close()
+	h.Close()
 }

@@ -60,12 +60,20 @@ type ssoCompatOIDCTokens struct {
 
 // ssoCompatHandler bridges Element's legacy m.login.sso flow to the OIDC
 // provider configured for MSC3861.
+//
+// The in-flight state below (sessions, oidcByLogTok) is process-local, so the
+// SSO callback and the POST /login redemption that follows it must be handled
+// by the same process. See the "known limitations" note in the MSC3861
+// documentation.
 type ssoCompatHandler struct {
 	cfg        *config.MSC3861Config
-	matrixCfg  *config.Global
 	userAPI    userapi.ClientUserAPI
 	httpClient *http.Client
 	rateLimits *httputil.RateLimits
+
+	// stop terminates cleanupLoop; closed exactly once by Close.
+	stop     chan struct{}
+	stopOnce sync.Once
 
 	mu           sync.Mutex
 	sessions     map[string]*ssoCompatSession
@@ -99,15 +107,29 @@ const (
 	// Bounds the body read on the unauthenticated POST /login endpoint handled
 	// by the SSO compat layer.
 	ssoLoginBodyMaxBytes = 1 << 20
+	// Bounds the outbound OIDC discovery request made when no explicit
+	// authorization/token endpoint is configured.
+	ssoOIDCDiscoveryTimeout = 10 * time.Second
+	// Discovered endpoints are cached for an hour, mirroring the auth metadata
+	// and userapi discovery caches, so that /login/sso/redirect and the
+	// unauthenticated POST /refresh do not perform an outbound
+	// .well-known/openid-configuration fetch on every request.
+	ssoOIDCDiscoveryCacheTTL = time.Hour
+	// A failed discovery is negative-cached for a minute so that a provider
+	// outage cannot be amplified into one outbound request per client request,
+	// while still recovering quickly once the provider is back.
+	ssoOIDCDiscoveryErrorCacheTTL = time.Minute
 )
 
 // errSSOStorageFull is returned when an in-memory SSO compat map has reached
 // ssoMaxEntries; handlers translate it into a 429 M_LIMIT_EXCEEDED response.
 var errSSOStorageFull = errors.New("sso compat storage is full")
 
+// newSSOCompatHandler builds the legacy SSO compat handler. The Global config
+// is accepted but unused: every URL the compat layer builds comes from the
+// MSC3861 config or the incoming request.
 func newSSOCompatHandler(
 	cfg *config.MSC3861Config,
-	matrixCfg *config.Global,
 	userAPI userapi.ClientUserAPI,
 	httpClient *http.Client,
 	rateLimits *httputil.RateLimits,
@@ -117,10 +139,10 @@ func newSSOCompatHandler(
 	}
 	h := &ssoCompatHandler{
 		cfg:          cfg,
-		matrixCfg:    matrixCfg,
 		userAPI:      userAPI,
 		httpClient:   httpClient,
 		rateLimits:   rateLimits,
+		stop:         make(chan struct{}),
 		sessions:     make(map[string]*ssoCompatSession),
 		oidcByLogTok: make(map[string]*ssoCompatOIDCTokens),
 	}
@@ -128,11 +150,25 @@ func newSSOCompatHandler(
 	return h
 }
 
+// Close stops the background cleanup goroutine. It is safe to call more than
+// once, and mainly matters for tests, which would otherwise leak one goroutine
+// per handler they build.
+func (h *ssoCompatHandler) Close() {
+	h.stopOnce.Do(func() {
+		close(h.stop)
+	})
+}
+
 func (h *ssoCompatHandler) cleanupLoop() {
 	ticker := time.NewTicker(ssoCleanupInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		h.cleanupExpiredSessions()
+	for {
+		select {
+		case <-ticker.C:
+			h.cleanupExpiredSessions()
+		case <-h.stop:
+			return
+		}
 	}
 }
 
@@ -300,16 +336,79 @@ func (h *ssoCompatHandler) browserBindingCookie(req *http.Request, nonce string)
 	}
 }
 
-// redirectURLAllowed reports whether the given redirectUrl may be used for a
-// legacy SSO login. When the allowlist is empty every redirectUrl is
-// accepted; the browser-binding cookie still protects the flow from login
-// CSRF in that case.
-func (h *ssoCompatHandler) redirectURLAllowed(redirectURL string) bool {
-	if len(h.cfg.SSORedirectAllowlist) == 0 {
+// homeserverOrigin returns the scheme and host this homeserver is reachable
+// at, preferring the configured public_base_url over the incoming request's
+// own origin, which trusts the Host and X-Forwarded-Proto headers.
+func (h *ssoCompatHandler) homeserverOrigin(req *http.Request) (scheme, host string) {
+	if h.cfg.PublicBaseURL != "" {
+		if u, err := url.Parse(h.cfg.PublicBaseURL); err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme, u.Host
+		}
+	}
+	return requestScheme(req), req.Host
+}
+
+// sameOrigin reports whether the parsed target has the given scheme and host.
+// Scheme and host are compared case-insensitively, as both are
+// case-insensitive per RFC 3986; the port is part of the host and must match
+// exactly.
+func sameOrigin(target *url.URL, scheme, host string) bool {
+	return strings.EqualFold(target.Scheme, scheme) && strings.EqualFold(target.Host, host)
+}
+
+// redirectAllowlistEntryMatches reports whether a redirect target matches a
+// single sso_redirect_allowlist entry.
+//
+// For http(s) entries the scheme and host are compared after parsing, because
+// a bare prefix comparison would let https://app.example.com.evil.com/ match
+// an entry of https://app.example.com. When the entry carries a path beyond
+// "/", the target must sit at or below that path.
+//
+// Entries with any other scheme (e.g. the element://vector/webapp deep link
+// used by Element Desktop) have no meaningful origin to compare, so they keep
+// the historic prefix matching.
+func redirectAllowlistEntryMatches(target *url.URL, redirectURL, entry string) bool {
+	entryURL, err := url.Parse(entry)
+	if err != nil || entryURL.Host == "" ||
+		(!strings.EqualFold(entryURL.Scheme, "http") && !strings.EqualFold(entryURL.Scheme, "https")) {
+		return strings.HasPrefix(redirectURL, entry)
+	}
+	if !sameOrigin(target, entryURL.Scheme, entryURL.Host) {
+		return false
+	}
+	entryPath := strings.TrimSuffix(entryURL.Path, "/")
+	if entryPath == "" {
 		return true
 	}
-	for _, prefix := range h.cfg.SSORedirectAllowlist {
-		if strings.HasPrefix(redirectURL, prefix) {
+	return target.Path == entryPath || strings.HasPrefix(target.Path, entryPath+"/")
+}
+
+// redirectURLAllowed reports whether the given redirectUrl may be used for a
+// legacy SSO login.
+//
+// The check is default-deny: with no sso_redirect_allowlist configured, only
+// targets on the homeserver's own origin are accepted. The browser-binding
+// cookie does not make an open redirect safe here, because the victim's own
+// browser runs the whole flow and therefore holds the cookie: a link to
+// /login/sso/redirect?redirectUrl=https://evil.example.com/ would hand the
+// attacker a login token, which POST /login redeems into the *provider-issued*
+// access and refresh tokens.
+func (h *ssoCompatHandler) redirectURLAllowed(req *http.Request, redirectURL string) bool {
+	// Relative or otherwise origin-less targets are rejected outright: a
+	// protocol-relative //evil.example.com/ has no scheme but is very much
+	// cross-origin.
+	target, err := url.Parse(redirectURL)
+	if err != nil || target.Scheme == "" {
+		return false
+	}
+
+	if len(h.cfg.SSORedirectAllowlist) == 0 {
+		scheme, host := h.homeserverOrigin(req)
+		return host != "" && sameOrigin(target, scheme, host)
+	}
+
+	for _, entry := range h.cfg.SSORedirectAllowlist {
+		if redirectAllowlistEntryMatches(target, redirectURL, entry) {
 			return true
 		}
 	}
@@ -329,10 +428,19 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 			JSON: spec.BadJSON("Missing redirectUrl query parameter."),
 		}
 	}
-	if !h.redirectURLAllowed(redirectURL) {
+	if !h.redirectURLAllowed(req, redirectURL) {
+		if len(h.cfg.SSORedirectAllowlist) == 0 {
+			logrus.WithField("redirect_url", redirectURL).Warn(
+				"MSC3861 SSO compat: rejected a cross-origin redirectUrl; configure mscs.msc3861.sso_redirect_allowlist to permit it",
+			)
+			return util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.InvalidParam("The given redirectUrl is not on this homeserver's origin. Ask the server administrator to add it to mscs.msc3861.sso_redirect_allowlist."),
+			}
+		}
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
-			JSON: spec.BadJSON("The given redirectUrl is not allowed on this homeserver."),
+			JSON: spec.InvalidParam("The given redirectUrl is not in mscs.msc3861.sso_redirect_allowlist on this homeserver."),
 		}
 	}
 
@@ -483,14 +591,70 @@ type oidcProviderEndpoints struct {
 	tokenEndpoint         string
 }
 
+// ssoDiscoveryCacheEntry holds the outcome of a discovery attempt for one
+// issuer. Failures are cached too (with a shorter TTL) so that a provider
+// outage does not turn every /login/sso/redirect and POST /refresh into an
+// outbound request.
+type ssoDiscoveryCacheEntry struct {
+	endpoints *oidcProviderEndpoints
+	err       error
+	expiresAt time.Time
+}
+
+var (
+	ssoDiscoveryCache   = map[string]ssoDiscoveryCacheEntry{}
+	ssoDiscoveryCacheMu sync.RWMutex
+)
+
+// discoverOIDCEndpoints returns the provider's authorization and token
+// endpoints, fetching the discovery document at most once per
+// ssoOIDCDiscoveryCacheTTL per issuer.
 func (h *ssoCompatHandler) discoverOIDCEndpoints(ctx context.Context) (*oidcProviderEndpoints, error) {
+	return h.discoverOIDCEndpointsWithTTL(ctx, ssoOIDCDiscoveryCacheTTL, ssoOIDCDiscoveryErrorCacheTTL)
+}
+
+// discoverOIDCEndpointsWithTTL is the testable core of discoverOIDCEndpoints
+// with explicit positive and negative cache TTLs.
+func (h *ssoCompatHandler) discoverOIDCEndpointsWithTTL(ctx context.Context, cacheTTL, errorCacheTTL time.Duration) (*oidcProviderEndpoints, error) {
 	cfg := h.cfg
+	// Fully configured endpoints need no discovery at all.
 	if cfg.AuthorizationEndpoint != "" && cfg.TokenEndpoint != "" {
 		return &oidcProviderEndpoints{
 			authorizationEndpoint: cfg.AuthorizationEndpoint,
 			tokenEndpoint:         cfg.TokenEndpoint,
 		}, nil
 	}
+
+	ssoDiscoveryCacheMu.RLock()
+	cached, ok := ssoDiscoveryCache[cfg.Issuer]
+	ssoDiscoveryCacheMu.RUnlock()
+	if ok && time.Now().Before(cached.expiresAt) {
+		return cached.endpoints, cached.err
+	}
+
+	endpoints, err := h.fetchOIDCEndpoints(ctx)
+	ttl := cacheTTL
+	if err != nil {
+		ttl = errorCacheTTL
+	}
+	ssoDiscoveryCacheMu.Lock()
+	ssoDiscoveryCache[cfg.Issuer] = ssoDiscoveryCacheEntry{
+		endpoints: endpoints,
+		err:       err,
+		expiresAt: time.Now().Add(ttl),
+	}
+	ssoDiscoveryCacheMu.Unlock()
+
+	return endpoints, err
+}
+
+// fetchOIDCEndpoints performs the uncached .well-known/openid-configuration
+// lookup, falling back to the config-derived defaults for any endpoint the
+// provider does not advertise.
+func (h *ssoCompatHandler) fetchOIDCEndpoints(ctx context.Context) (*oidcProviderEndpoints, error) {
+	cfg := h.cfg
+	ctx, cancel := context.WithTimeout(ctx, ssoOIDCDiscoveryTimeout)
+	defer cancel()
 
 	discoveryURL := strings.TrimSuffix(cfg.Issuer, "/") + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
@@ -566,7 +730,11 @@ func (h *ssoCompatHandler) callTokenEndpoint(ctx context.Context, endpoint strin
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	if authMethod == "client_secret_basic" {
-		req.SetBasicAuth(url.QueryEscape(h.cfg.ClientID), url.QueryEscape(h.cfg.ClientSecret))
+		// The credentials are sent verbatim. RFC 6749 section 2.3.1 nominally
+		// asks for form-encoding first, but MAS, Keycloak and Hydra all compare
+		// the raw values, so encoding them would silently break every client
+		// secret containing '+', '/', '=' or '%'.
+		req.SetBasicAuth(h.cfg.ClientID, h.cfg.ClientSecret)
 	}
 
 	return h.httpClient.Do(req)
@@ -746,7 +914,7 @@ func (h *ssoCompatHandler) provisionUser(ctx context.Context, accessToken string
 // m.login.token so that clients which do not yet implement native OIDC can
 // still log in via the OIDC provider. The SSO flow is marked as
 // oauth_aware_preferred so OAuth 2.0 aware clients only offer that flow.
-func msc3861LoginFlows(_ *config.MSCs) util.JSONResponse {
+func msc3861LoginFlows() util.JSONResponse {
 	return util.JSONResponse{
 		Code: http.StatusOK,
 		JSON: flows{
@@ -764,10 +932,10 @@ func msc3861LoginFlows(_ *config.MSCs) util.JSONResponse {
 // callback. Login tokens unknown to the SSO compat layer are rejected:
 // redeeming them through the legacy login path would mint a homeserver-local
 // access token that can never validate against the OIDC provider.
-func (h *ssoCompatHandler) serveLogin(cfg *config.ClientAPI) http.Handler {
+func (h *ssoCompatHandler) serveLogin() http.Handler {
 	return httputil.MakeExternalAPI("login", func(req *http.Request) util.JSONResponse {
 		if req.Method == http.MethodGet || req.Method == http.MethodOptions {
-			return msc3861LoginFlows(cfg.MSCs)
+			return msc3861LoginFlows()
 		}
 
 		if req.Body == nil {

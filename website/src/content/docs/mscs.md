@@ -114,7 +114,10 @@ When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection
 
 - Password-based registration and login are disabled.
 - `GET /login` returns the legacy `m.login.sso` and `m.login.token` flows, so older Element Web/Desktop clients can sign in via the OIDC provider without native OIDC support. The SSO flow is marked `oauth_aware_preferred`, and `/login/sso/redirect` honours the `action=login|register` parameter (`register` maps to `prompt=create` at the provider).
-- The SSO flow is bound to the browser that started it: `/login/sso/redirect` issues an HttpOnly, `SameSite=Lax` cookie that the callback must present, which prevents login CSRF even when `sso_redirect_allowlist` is empty.
+- The SSO flow is bound to the browser that started it: `/login/sso/redirect` issues an HttpOnly, `SameSite=Lax` cookie that the callback must present, so a flow started in one browser cannot be completed in another.
+- `redirectUrl` is validated default-deny.
+  With `sso_redirect_allowlist` empty, only targets on the homeserver's own origin (from `public_base_url`, or the incoming request's scheme and host when it is not set) are accepted; everything else is rejected with `M_INVALID_PARAM`.
+  The browser-binding cookie is not sufficient on its own here: the victim's own browser runs the whole flow and therefore holds the cookie, so an unrestricted `redirectUrl` would let a single crafted link deliver the login token, and with it the provider-issued access and refresh tokens, to an attacker.
 - `POST /login` accepts only `m.login.token`, redeeming a login token issued by the SSO callback; redemption returns the provider-issued OIDC access token, refresh token and expiry, plus the device from its scope (a homeserver-local token would never introspect). Other login types return `403 M_FORBIDDEN`.
 - `POST /refresh` bridges to the provider's refresh token grant, so legacy clients can renew expiring OIDC access tokens. Expired tokens report `soft_logout: true`, including on the userinfo fallback path, so clients attempt a refresh instead of destroying the session.
 - `POST /register`, `/account/password`, `/account/deactivate`, `/logout`, `/logout/all`, `/delete_devices`, and device modification endpoints return `403 M_FORBIDDEN`.
@@ -150,8 +153,8 @@ mscs:
     sso_callback_url: ""                       # optional: overrides the SSO callback URL
     public_base_url: ""                        # optional: e.g. "https://matrix.example.com"; used to build client-facing URLs
                                                # (including the SSO callback) instead of trusting request Host headers
-    sso_redirect_allowlist: []                 # optional: allowed redirectUrl prefixes for the legacy SSO flow;
-                                               # when empty, any redirectUrl is accepted (browser-binding cookie still applies)
+    sso_redirect_allowlist: []                 # optional: redirectUrl targets allowed for the legacy SSO flow;
+                                               # when empty, only the homeserver's own origin is accepted
 ```
 
 | Field | Required | Description |
@@ -166,4 +169,11 @@ mscs:
 | `device_authorization_endpoint` | No | Override the OAuth 2.0 device authorization endpoint (RFC 8628). Defaults to the discovered value, then `{issuer}/oauth2/device/auth`. |
 | `introspection_endpoint` | No | Override the introspection endpoint URL. Defaults to `{issuer}/oauth2/introspect`. |
 | `public_base_url` | No | The public base URL of the homeserver (e.g. `https://matrix.example.com`). Used to build URLs advertised to clients, including the SSO callback URL when `sso_callback_url` is not set. |
-| `sso_redirect_allowlist` | No | Allowed `redirectUrl` prefixes for the legacy SSO flow (e.g. `["https://app.example.com/", "element://"]`). When empty, any `redirectUrl` is accepted; the flow is still bound to the browser that started it via an HttpOnly cookie. |
+| `sso_redirect_allowlist` | No | `redirectUrl` targets allowed for the legacy SSO flow (e.g. `["https://app.example.com/", "element://"]`). `http(s)` entries are matched on scheme, host and path prefix, so `https://app.example.com` does not match `https://app.example.com.evil.com/`; entries with any other scheme (such as the `element://` desktop deep link) are matched as plain string prefixes. When empty, only redirect targets on the homeserver's own origin are accepted. |
+
+**Known limitations:**
+
+- The legacy SSO compat layer keeps its in-flight state (SSO sessions, the login tokens issued by the callback, and pending cross-signing reset confirmations) in process memory.
+  The `/login/sso/redirect`, `/login/sso/callback` and `POST /login` requests of one login must therefore all be handled by the same Zendrite process.
+  Running several instances behind a load balancer breaks the flow unless the balancer pins a client's requests to one instance.
+  Clients with native OIDC support are unaffected, since they never use the compat layer.

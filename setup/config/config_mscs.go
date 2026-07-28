@@ -105,8 +105,11 @@ type MSC3861Config struct {
 	PublicBaseURL string `yaml:"public_base_url"`
 
 	// SSORedirectAllowlist limits the redirectUrl values accepted by the legacy
-	// SSO compat layer. When empty, any redirectUrl is accepted; the SSO state
-	// is still bound to the browser that started the flow via a cookie.
+	// SSO compat layer. When empty the check is default-deny: only redirect
+	// targets on the homeserver's own origin (PublicBaseURL when set, else the
+	// incoming request's origin) are accepted. Entries with an http(s) scheme
+	// are matched on scheme, host and path prefix; entries with any other
+	// scheme (e.g. "element://") are matched as plain string prefixes.
 	SSORedirectAllowlist []string `yaml:"sso_redirect_allowlist"`
 }
 
@@ -241,6 +244,13 @@ func (c *MSCs) Verify(configErrs *ConfigErrors) {
 		}
 		if c.MSC3861.AccountManagementURL == "" {
 			logrus.Warn("mscs.msc3861.account_management_url is empty; account management discovery and m.oauth UIA (e.g. cross-signing reset) will not work")
+		}
+		if len(c.MSC3861.SSORedirectAllowlist) == 0 {
+			// Without an allowlist the legacy SSO flow is default-deny, because
+			// a redirectUrl pointing off-origin would hand the login token, and
+			// with it the provider-issued access and refresh tokens, to whoever
+			// crafted the link.
+			logrus.Warn("mscs.msc3861.sso_redirect_allowlist is empty; the legacy SSO flow will only accept redirectUrl values on this homeserver's own origin. Configure it with the client origins and deep links you trust (e.g. [\"https://app.example.com/\", \"element://\"]) if clients need to be redirected elsewhere")
 		}
 	}
 }

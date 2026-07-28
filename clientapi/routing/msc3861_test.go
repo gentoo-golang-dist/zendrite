@@ -408,6 +408,28 @@ func TestMSC3861_ApplicationServiceRegisterStillWorks(t *testing.T) {
 	}
 }
 
+// TestMSC3861_RegisterBodyTooLarge verifies that the unauthenticated register
+// shim bounds the body it buffers instead of reading it in full.
+func TestMSC3861_RegisterBodyTooLarge(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	// One byte over the limit is enough to be rejected; the handler must not
+	// buffer the whole body first.
+	oversized := append([]byte(`{"padding":"`), bytes.Repeat([]byte("a"), msc3861RegisterBodyMaxBytes)...)
+	oversized = append(oversized, []byte(`"}`)...)
+
+	req := test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/register")
+	req.Body = io.NopCloser(bytes.NewReader(oversized))
+	rec := httptest.NewRecorder()
+	routers.Client.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for an oversized register body, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMSC3861_VersionsAdvertisesMSC2965(t *testing.T) {
 	t.Parallel()
 	routers, _, closeDB := setupMSC3861Routers(t)
@@ -625,6 +647,64 @@ func TestMSC3861_DiscoveryIssuerMismatch(t *testing.T) {
 	}
 }
 
+// TestMSC3861_DiscoveryIssuerTrailingSlash verifies that a configured issuer
+// with a trailing slash still matches the discovery document and is cached,
+// instead of silently revalidating on every request.
+func TestMSC3861_DiscoveryIssuerTrailingSlash(t *testing.T) {
+	t.Parallel()
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			t.Errorf("unexpected discovery path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"issuer":         "http://" + r.Host,
+			"token_endpoint": "http://" + r.Host + "/oauth2/token",
+		})
+	}))
+	defer srv.Close()
+
+	doc := discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL+"/", time.Hour)
+	if doc.TokenEndpoint == "" {
+		t.Fatal("expected a trailing-slash issuer to match the discovery document")
+	}
+
+	// Cached under the normalised issuer: a second lookup does not hit the
+	// provider again, whether or not the caller passes the trailing slash.
+	if doc = discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL+"/", time.Hour); doc.TokenEndpoint == "" {
+		t.Fatal("expected cached discovery document to be used")
+	}
+	if doc = discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, time.Hour); doc.TokenEndpoint == "" {
+		t.Fatal("expected the normalised issuer to share the cache entry")
+	}
+	if hits != 1 {
+		t.Fatalf("expected the trailing-slash issuer to be cached, got %d hits", hits)
+	}
+}
+
+// TestMSC3861_DiscoveryIssuerDocTrailingSlash verifies that the issuer
+// comparison also tolerates a trailing slash on the provider's side.
+func TestMSC3861_DiscoveryIssuerDocTrailingSlash(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"issuer":         "http://" + r.Host + "/",
+			"token_endpoint": "http://" + r.Host + "/oauth2/token",
+		})
+	}))
+	defer srv.Close()
+
+	doc := discoverOIDCAuthServerMetadataWithTTL(context.Background(), srv.URL, time.Hour)
+	if doc.TokenEndpoint == "" {
+		t.Fatal("expected a trailing-slash discovered issuer to match the configured issuer")
+	}
+}
+
 func jwksProxyTestConfig(jwksURI string) *config.MSCs {
 	return &config.MSCs{
 		MSCs: []string{"msc3861"},
@@ -784,6 +864,29 @@ func TestMSC3861_MASAdminUserLifecycle(t *testing.T) {
 	}
 	if !userResp.Admin {
 		t.Error("expected admin=true to be reported from the account record")
+	}
+}
+
+// TestMSC3861_MASPlaceholderTokenIsRandom verifies that the placeholder device
+// access token comes from the CSPRNG and is unpredictable: a guessable value
+// would be a usable credential for the admin-created device.
+func TestMSC3861_MASPlaceholderTokenIsRandom(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]struct{}{}
+	for range 100 {
+		token, err := generatePlaceholderToken()
+		if err != nil {
+			t.Fatalf("failed to generate placeholder token: %v", err)
+		}
+		// 32 random bytes hex-encoded, prefixed to mark the token's origin.
+		if len(token) != len("mas_")+64 {
+			t.Fatalf("unexpected placeholder token length: %q", token)
+		}
+		if _, dup := seen[token]; dup {
+			t.Fatalf("placeholder token repeated: %q", token)
+		}
+		seen[token] = struct{}{}
 	}
 }
 

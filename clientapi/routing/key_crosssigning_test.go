@@ -175,7 +175,9 @@ func Test_UploadCrossSigningDeviceKeys_ExistingKeysMismatch(t *testing.T) {
 }
 
 // Under MSC3861 the UIA challenge uses the m.oauth auth type, pointing at the
-// account management URL; resubmitting the session completes the stage.
+// account management URL. Without an admin token the provider cannot confirm
+// the reset, so the fallback applies and resubmitting the issued session
+// completes the stage.
 func Test_UploadCrossSigningDeviceKeys_OAuthUIA(t *testing.T) {
 	userID := "@user:example.com"
 	mscCfg := &config.MSCs{
@@ -260,7 +262,7 @@ func Test_UploadCrossSigningDeviceKeys_OAuthUIA(t *testing.T) {
 		}
 	}
 
-	// Resubmitting with just the issued session completes the stage.
+	// Resubmitting the issued session completes the stage in fallback mode.
 	req = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{
 		"auth": {"session": "`+uia.Session+`"},
 		"master_key": {"user_id": "@user:example.com", "usage": ["master"], "keys": {"ed25519:1": "key1"}},
@@ -289,12 +291,30 @@ func oauthUIATestKeyAPI(userIDs ...string) *mockKeyAPI {
 	return m
 }
 
-func oauthUIAMSCConfig() *config.MSCs {
+// oauthUIAMSCConfig returns an MSC3861 config. An empty admin token means the
+// MAS admin routes are not registered, so the provider cannot confirm a
+// cross-signing reset and the resubmission fallback applies.
+func oauthUIAMSCConfig(adminToken string) *config.MSCs {
 	return &config.MSCs{
 		MSCs: []string{"msc3861"},
 		MSC3861: config.MSC3861Config{
 			AccountManagementURL: "https://account.example.com/manage",
+			AdminToken:           adminToken,
 		},
+	}
+}
+
+// recordCrossSigningConfirmation simulates MAS calling the admin endpoint after
+// the user confirmed the reset in the account management web UI.
+func recordCrossSigningConfirmation(t *testing.T, cfg *config.ClientAPI, userID string) {
+	t.Helper()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("userId", userID)
+	masReq := httptest.NewRequest(http.MethodPost, "/", nil)
+	masReq = masReq.WithContext(context.WithValue(masReq.Context(), chi.RouteCtxKey, rctx))
+	res := MASAllowCrossSigningReplacement(masReq, cfg)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d from MAS admin endpoint, got %d", http.StatusOK, res.Code)
 	}
 }
 
@@ -319,12 +339,13 @@ func uploadCrossSigning(t *testing.T, keyserverAPI UploadKeysAPI, device *api.De
 	return UploadCrossSigningDeviceKeys(req, keyserverAPI, device, getAccountByPassword, &config.ClientAPI{}, mscCfg)
 }
 
-// A session issued for one user must not complete the m.oauth stage for
-// another user, and a failed attempt must not consume the issued session.
+// In the fallback mode a session issued for one user must not complete the
+// m.oauth stage for another user, and a failed attempt must not consume the
+// issued session.
 func Test_UploadCrossSigningDeviceKeys_OAuthUIA_SessionUserBound(t *testing.T) {
 	userA := "@alice-oauth:example.com"
 	userB := "@bob-oauth:example.com"
-	mscCfg := oauthUIAMSCConfig()
+	mscCfg := oauthUIAMSCConfig("")
 	keyserverAPI := oauthUIATestKeyAPI(userA, userB)
 	deviceA := &api.Device{UserID: userA, ID: "deviceA"}
 	deviceB := &api.Device{UserID: userB, ID: "deviceB"}
@@ -362,11 +383,11 @@ func Test_UploadCrossSigningDeviceKeys_OAuthUIA_SessionUserBound(t *testing.T) {
 	}
 }
 
-// A confirmation recorded through the MAS admin endpoint completes the m.oauth
-// stage as an alternative signal, and is consumed on use.
+// With an admin token configured, a confirmation recorded through the MAS admin
+// endpoint completes the m.oauth stage and is consumed on use.
 func Test_UploadCrossSigningDeviceKeys_OAuthUIA_MASConfirmation(t *testing.T) {
 	userID := "@carol-oauth:example.com"
-	mscCfg := oauthUIAMSCConfig()
+	mscCfg := oauthUIAMSCConfig("admin-token")
 	keyserverAPI := oauthUIATestKeyAPI(userID)
 	device := &api.Device{UserID: userID, ID: "device"}
 
@@ -374,15 +395,7 @@ func Test_UploadCrossSigningDeviceKeys_OAuthUIA_MASConfirmation(t *testing.T) {
 	defer closeDB()
 	cfg.Global.ServerName = "example.com"
 
-	// The MAS admin endpoint records the confirmation for the user.
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("userId", userID)
-	masReq := httptest.NewRequest(http.MethodPost, "/", nil)
-	masReq = masReq.WithContext(context.WithValue(masReq.Context(), chi.RouteCtxKey, rctx))
-	res := MASAllowCrossSigningReplacement(masReq, &cfg.ClientAPI)
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected status %d from MAS admin endpoint, got %d", http.StatusOK, res.Code)
-	}
+	recordCrossSigningConfirmation(t, &cfg.ClientAPI, userID)
 
 	// The confirmation completes the stage even without a server-issued
 	// session, as the provider confirmed the user did the web flow.
@@ -395,6 +408,68 @@ func Test_UploadCrossSigningDeviceKeys_OAuthUIA_MASConfirmation(t *testing.T) {
 	uploadRes = uploadCrossSigning(t, keyserverAPI, device, "another-client-session", mscCfg)
 	if uploadRes.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, uploadRes.Code)
+	}
+}
+
+// With an admin token configured the provider can confirm the reset, so
+// resubmitting a server-issued session must not complete the m.oauth stage on
+// its own; only the provider confirmation does.
+func Test_UploadCrossSigningDeviceKeys_OAuthUIA_AdminTokenRequiresConfirmation(t *testing.T) {
+	userID := "@dave-oauth:example.com"
+	mscCfg := oauthUIAMSCConfig("admin-token")
+	keyserverAPI := oauthUIATestKeyAPI(userID)
+	device := &api.Device{UserID: userID, ID: "device"}
+
+	cfg, _, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	defer closeDB()
+	cfg.Global.ServerName = "example.com"
+
+	// The first request gets an m.oauth challenge pointing at the account
+	// management UI.
+	res := uploadCrossSigning(t, keyserverAPI, device, "", mscCfg)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	uia, ok := res.JSON.(userInteractiveResponse)
+	if !ok {
+		t.Fatalf("expected userInteractiveResponse, got %T", res.JSON)
+	}
+	if uia.Session == "" {
+		t.Fatal("expected a session ID in the UIA response")
+	}
+	oauthParams, ok := uia.Params["m.oauth"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected m.oauth params, got %+v", uia.Params)
+	}
+	wantURL := "https://account.example.com/manage?action=org.matrix.cross_signing_reset&device_id=device"
+	if oauthParams["url"] != wantURL {
+		t.Errorf("expected m.oauth url %q, got %q", wantURL, oauthParams["url"])
+	}
+
+	// Resubmitting that session without a provider confirmation must not
+	// complete the stage; a fresh challenge is returned instead.
+	res = uploadCrossSigning(t, keyserverAPI, device, uia.Session, mscCfg)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	reissued, ok := res.JSON.(userInteractiveResponse)
+	if !ok {
+		t.Fatalf("expected userInteractiveResponse, got %T", res.JSON)
+	}
+	if reissued.Session == uia.Session {
+		t.Fatal("expected a fresh session ID after an unconfirmed resubmission")
+	}
+	for _, stage := range reissued.Completed {
+		if stage == authtypes.LoginTypeOAuth {
+			t.Fatal("m.oauth must not be completed without a provider confirmation")
+		}
+	}
+
+	// Once the provider confirms the reset, the resubmission succeeds.
+	recordCrossSigningConfirmation(t, &cfg.ClientAPI, userID)
+	res = uploadCrossSigning(t, keyserverAPI, device, reissued.Session, mscCfg)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
 	}
 }
 

@@ -29,6 +29,10 @@ import (
 // verifyMASAdminToken checks the Authorization header for a valid MAS admin token.
 // Returns a JSON error response if verification fails, or nil if successful.
 func verifyMASAdminToken(req *http.Request, adminToken string) *util.JSONResponse {
+	// Unreachable today: routing.go only registers the MAS admin routes when
+	// an admin token is configured. Kept as defense in depth so that the
+	// helper fails closed rather than comparing against the empty string if a
+	// future caller ever registers these routes without that gate.
 	if adminToken == "" {
 		res := util.JSONResponse{
 			Code: http.StatusForbidden,
@@ -480,7 +484,14 @@ func MASCreateOrGetDevice(req *http.Request, cfg *config.ClientAPI, userAPI user
 
 	// Generate a placeholder access token since the DB requires unique tokens.
 	// MAS will supply the real token during OIDC login flows.
-	placeholderToken := generatePlaceholderToken()
+	placeholderToken, err := generatePlaceholderToken()
+	if err != nil {
+		logrus.WithError(err).Error("MAS admin: failed to generate placeholder access token")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
 
 	var deviceRes userapi.PerformDeviceCreationResponse
 	if err := userAPI.PerformDeviceCreation(req.Context(), &userapi.PerformDeviceCreationRequest{
@@ -669,12 +680,15 @@ func MASAllowCrossSigningReplacement(req *http.Request, cfg *config.ClientAPI) u
 	}
 }
 
-// generatePlaceholderToken creates a unique placeholder access token for admin-created devices.
-func generatePlaceholderToken() string {
+// generatePlaceholderToken creates a unique placeholder access token for
+// admin-created devices. A failure to read from the system CSPRNG is fatal for
+// the request rather than something to work around: the placeholder is stored
+// as a device access token, so any guessable fallback (a timestamp, say) would
+// be a usable credential for that device until MAS overwrites it.
+func generatePlaceholderToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback should never happen, but just in case.
-		return "mas_placeholder_" + time.Now().Format("20060102150405.000000000")
+		return "", err
 	}
-	return "mas_" + hex.EncodeToString(b)
+	return "mas_" + hex.EncodeToString(b), nil
 }

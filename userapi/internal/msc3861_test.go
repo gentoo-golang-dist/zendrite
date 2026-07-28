@@ -6,14 +6,18 @@ package internal
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
@@ -309,10 +313,13 @@ func TestIntrospectToken_BasicAuth(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// A secret full of characters that url.QueryEscape would mangle. MAS,
+	// Keycloak and Hydra all compare the raw value, so it must arrive verbatim.
+	const rawSecret = "s3cr+t/with=chars%and spaces"
 	msc3861 := &config.MSC3861Config{
 		Issuer:                srv.URL,
-		ClientID:              "my-client",
-		ClientSecret:          "my-secret",
+		ClientID:              "my client+id",
+		ClientSecret:          rawSecret,
 		IntrospectionEndpoint: srv.URL + "/introspect",
 		// Default auth method is client_secret_basic
 	}
@@ -324,15 +331,165 @@ func TestIntrospectToken_BasicAuth(t *testing.T) {
 	if !gotBasicAuth {
 		t.Fatal("expected Basic auth header")
 	}
-	// The values are URL-encoded in SetBasicAuth, so decode them
-	decodedUser, _ := url.QueryUnescape(gotUser)
-	decodedPass, _ := url.QueryUnescape(gotPass)
-	if decodedUser != "my-client" {
-		t.Errorf("expected basic auth user my-client, got %q", decodedUser)
+	if gotUser != "my client+id" {
+		t.Errorf("expected basic auth user to be sent raw, got %q", gotUser)
 	}
-	if decodedPass != "my-secret" {
-		t.Errorf("expected basic auth pass my-secret, got %q", decodedPass)
+	if gotPass != rawSecret {
+		t.Errorf("expected basic auth pass to be sent raw, got %q", gotPass)
 	}
+}
+
+func TestIntrospectToken_UnsupportedAuthMethod(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no request must be made for an unsupported auth method")
+	}))
+	defer srv.Close()
+
+	msc3861 := &config.MSC3861Config{
+		Issuer:                srv.URL,
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		ClientAuthMethod:      "private_key_jwt",
+		IntrospectionEndpoint: srv.URL + "/introspect",
+	}
+
+	_, err := introspectToken(context.Background(), msc3861, "unsupported-method-token-"+t.Name(), srv.Client())
+	if err == nil {
+		t.Fatal("expected an error for an unsupported client_auth_method")
+	}
+	if !strings.Contains(err.Error(), "private_key_jwt") {
+		t.Errorf("expected the error to name the auth method, got %v", err)
+	}
+}
+
+func TestIntrospectToken_ClientSecretPostSurvivesRedirect(t *testing.T) {
+	t.Parallel()
+	// Go's http client replays the body via req.GetBody on a 307, so a form
+	// that was patched onto req.Body after the request was built would arrive
+	// without the client credentials.
+	var gotClientID, gotClientSecret string
+	var redirected bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/introspect" {
+			redirected = true
+			http.Redirect(w, r, "/introspect-moved", http.StatusTemporaryRedirect)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		gotClientID = r.FormValue("client_id")
+		gotClientSecret = r.FormValue("client_secret")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "uuid-redirect"}) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	msc3861 := &config.MSC3861Config{
+		Issuer:                srv.URL,
+		ClientID:              "my-client-id",
+		ClientSecret:          "my-client-secret",
+		ClientAuthMethod:      "client_secret_post",
+		IntrospectionEndpoint: srv.URL + "/introspect",
+	}
+
+	if _, err := introspectToken(context.Background(), msc3861, "redirect-token-"+t.Name(), srv.Client()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !redirected {
+		t.Fatal("expected the introspection endpoint to redirect")
+	}
+	if gotClientID != "my-client-id" {
+		t.Errorf("expected client_id to survive the redirect, got %q", gotClientID)
+	}
+	if gotClientSecret != "my-client-secret" {
+		t.Errorf("expected client_secret to survive the redirect, got %q", gotClientSecret)
+	}
+}
+
+func TestIntrospectToken_RejectedCredentialsFallBackLoudly(t *testing.T) {
+	t.Parallel()
+	var hook loggerHook
+	logrus.AddHook(&hook)
+	defer func() { logrus.StandardLogger().ReplaceHooks(make(logrus.LevelHooks)) }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/introspect":
+			// The provider rejects our client credentials, not the user token.
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/userinfo":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+				"sub":                "rejected-creds-sub",
+				"preferred_username": "rejecteduser",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	msc3861 := &config.MSC3861Config{
+		Issuer:                srv.URL,
+		ClientID:              "client-id",
+		ClientSecret:          "wrong-secret",
+		IntrospectionEndpoint: srv.URL + "/introspect",
+		UserinfoEndpoint:      srv.URL + "/userinfo",
+	}
+
+	resp, err := introspectToken(context.Background(), msc3861, "rejected-creds-token-"+t.Name(), srv.Client())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The fallback still authenticates the user, but without any scope.
+	if resp.Scope != "" {
+		t.Errorf("expected no scope from the userinfo fallback, got %q", resp.Scope)
+	}
+	if !hook.hasErrorContaining("rejected the configured client credentials") {
+		t.Errorf("expected an Error-level log about rejected client credentials, got %v", hook.entries())
+	}
+}
+
+// loggerHook collects logrus entries so tests can assert on log level and
+// message, which is the only observable effect of a masked misconfiguration.
+type loggerHook struct {
+	mu      sync.Mutex
+	records []*logrus.Entry
+}
+
+func (h *loggerHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
+func (h *loggerHook) Fire(entry *logrus.Entry) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, entry)
+	return nil
+}
+
+func (h *loggerHook) hasErrorContaining(substr string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, entry := range h.records {
+		if entry.Level == logrus.ErrorLevel && strings.Contains(entry.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *loggerHook) entries() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	messages := make([]string, 0, len(h.records))
+	for _, entry := range h.records {
+		messages = append(messages, entry.Level.String()+": "+entry.Message)
+	}
+	return messages
 }
 
 func TestExtractDeviceIDFromScope(t *testing.T) {
@@ -439,33 +596,142 @@ func TestIsExpiredBearerToken(t *testing.T) {
 func TestDeriveLocalpart(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name         string
-		email        string
-		username     string
-		sub          string
-		serverName   string
-		expectedPart string
+		name          string
+		email         string
+		emailVerified bool
+		username      string
+		sub           string
+		serverName    string
+		expectedPart  string
 	}{
-		{"email matching server domain", "alice@example.com", "ignored", "sub-1", "example.com", "alice"},
-		{"email matching server domain case-insensitively", "alice@Example.COM", "ignored", "sub-1", "example.com", "alice"},
-		{"email on foreign domain kept whole", "alice@other.com", "ignored", "sub-1", "example.com", "alice_other.com"},
-		{"username when no email", "", "bob", "sub-1", "example.com", "bob"},
-		{"sub when no email or username", "", "", "sub-1", "example.com", "sub-1"},
-		{"email preferred over username", "alice@example.com", "bob", "sub-1", "example.com", "alice"},
-		{"empty everything", "", "", "", "example.com", ""},
+		{"email matching server domain", "alice@example.com", true, "ignored", "sub-1", "example.com", "alice"},
+		{"email matching server domain case-insensitively", "alice@Example.COM", true, "ignored", "sub-1", "example.com", "alice"},
+		{"email on foreign domain kept whole", "alice@other.com", true, "ignored", "sub-1", "example.com", "alice_other.com"},
+		{"username when no email", "", false, "bob", "sub-1", "example.com", "bob"},
+		{"sub when no email or username", "", false, "", "sub-1", "example.com", "sub-1"},
+		{"verified email preferred over username", "alice@example.com", true, "bob", "sub-1", "example.com", "alice"},
+		{"unverified email ignored in favor of username", "alice@example.com", false, "bob", "sub-1", "example.com", "bob"},
+		// The dangerous case: an unverified, self-asserted address on our own
+		// domain must not hand out a localpart in our namespace.
+		{"unverified email ignored in favor of sub", "admin@example.com", false, "", "sub-1", "example.com", "sub-1"},
+		{"empty everything", "", false, "", "", "example.com", ""},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := deriveLocalpart(&IntrospectionResponse{
-				Email:    tc.email,
-				Username: tc.username,
-				Sub:      tc.sub,
+				Email:         tc.email,
+				EmailVerified: tc.emailVerified,
+				Username:      tc.username,
+				Sub:           tc.sub,
 			}, tc.serverName)
 			if got != tc.expectedPart {
-				t.Errorf("deriveLocalpart(email=%q, username=%q, sub=%q, server=%q) = %q, want %q",
-					tc.email, tc.username, tc.sub, tc.serverName, got, tc.expectedPart)
+				t.Errorf("deriveLocalpart(email=%q, email_verified=%v, username=%q, sub=%q, server=%q) = %q, want %q",
+					tc.email, tc.emailVerified, tc.username, tc.sub, tc.serverName, got, tc.expectedPart)
+			}
+		})
+	}
+}
+
+func TestIntrospectToken_EmailVerified(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		emailVerified    any
+		expectedVerified bool
+	}{
+		{"verified email", true, true},
+		{"unverified email", false, false},
+		{"absent email_verified claim", nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body := map[string]any{
+					"active": true,
+					"sub":    "opaque-uuid-email",
+					"email":  "alice@example.com",
+				}
+				if tc.emailVerified != nil {
+					body["email_verified"] = tc.emailVerified
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(body) //nolint:errcheck
+			}))
+			defer srv.Close()
+
+			msc3861 := &config.MSC3861Config{
+				Issuer:                srv.URL,
+				ClientID:              "client-id",
+				ClientSecret:          "client-secret",
+				IntrospectionEndpoint: srv.URL + "/introspect",
+			}
+
+			resp, err := introspectToken(context.Background(), msc3861, "email-verified-token-"+t.Name(), srv.Client())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.EmailVerified != tc.expectedVerified {
+				t.Errorf("expected EmailVerified %v, got %v", tc.expectedVerified, resp.EmailVerified)
+			}
+		})
+	}
+}
+
+func TestIntrospectToken_UserinfoEmailVerified(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		emailVerified    bool
+		expectedUsername string
+		expectedVerified bool
+	}{
+		// The userinfo username chain falls back to the email address, which
+		// would otherwise smuggle an unverified address past deriveLocalpart.
+		{"verified email used as username fallback", true, "alice@example.com", true},
+		{"unverified email not used as username fallback", false, "", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/introspect":
+					w.WriteHeader(http.StatusNotFound)
+				case "/userinfo":
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+						"sub":            "userinfo-email-sub",
+						"email":          "alice@example.com",
+						"email_verified": tc.emailVerified,
+					})
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			msc3861 := &config.MSC3861Config{
+				Issuer:                srv.URL,
+				ClientID:              "client-id",
+				ClientSecret:          "client-secret",
+				IntrospectionEndpoint: srv.URL + "/introspect",
+				UserinfoEndpoint:      srv.URL + "/userinfo",
+			}
+
+			resp, err := introspectToken(context.Background(), msc3861, "userinfo-email-token-"+t.Name(), srv.Client())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.Username != tc.expectedUsername {
+				t.Errorf("expected username %q, got %q", tc.expectedUsername, resp.Username)
+			}
+			if resp.EmailVerified != tc.expectedVerified {
+				t.Errorf("expected EmailVerified %v, got %v", tc.expectedVerified, resp.EmailVerified)
 			}
 		})
 	}
@@ -654,11 +920,12 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-					"active":   true,
-					"sub":      "01HULID000000000000000000",
-					"scope":    "openid",
-					"username": "uliduser",
-					"email":    "alice@test",
+					"active":         true,
+					"sub":            "01HULID000000000000000000",
+					"scope":          "openid",
+					"username":       "uliduser",
+					"email":          "alice@test",
+					"email_verified": true,
 				})
 			}))
 			defer srv.Close()
@@ -674,10 +941,42 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			if res.Device == nil {
 				t.Fatal("expected device for active token")
 			}
-			// The email claim wins over the username/sub, and the domain is
-			// stripped because it matches the server name.
+			// The verified email claim wins over the username/sub, and the
+			// domain is stripped because it matches the server name.
 			if res.Device.UserID != "@alice:test" {
 				t.Errorf("expected user ID @alice:test, got %s", res.Device.UserID)
+			}
+		})
+
+		t.Run("UnverifiedEmailDoesNotClaimLocalpart", func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active": true,
+					"sub":    "opaque-uuid-unverified",
+					"scope":  "openid",
+					// Self-asserted address on our own domain, with no
+					// email_verified claim to back it up.
+					"email": "serveradmin@test",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			req := &api.QueryAccessTokenRequest{AccessToken: "unverified-email-token-" + t.Name()}
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(context.Background(), req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device == nil {
+				t.Fatal("expected device for active token")
+			}
+			// The unverified email must not decide the localpart; the subject
+			// claim does.
+			if res.Device.UserID != "@opaque-uuid-unverified:test" {
+				t.Errorf("expected user ID @opaque-uuid-unverified:test, got %s", res.Device.UserID)
 			}
 		})
 
@@ -1083,6 +1382,134 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			}
 			if stored.DisplayName != displayName {
 				t.Errorf("expected stored display name %q, got %q", displayName, stored.DisplayName)
+			}
+		})
+
+		t.Run("DeviceReusedAcrossTokenRotation", func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      "opaque-uuid-rotation",
+					"scope":    "openid urn:matrix:org.matrix.msc2967.client:device:ROTDEV",
+					"username": "rotationuser",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			ctx := context.Background()
+			serverName := userAPI.Config.Matrix.ServerName
+
+			res := &api.QueryAccessTokenResponse{}
+			first := &api.QueryAccessTokenRequest{AccessToken: "rotation-token-1-" + t.Name()}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, first, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device == nil {
+				t.Fatal("expected device on first login")
+			}
+
+			displayName := "Rotating Device"
+			if err := userAPI.DB.UpdateDevice(ctx, "rotationuser", serverName, "ROTDEV", &displayName); err != nil {
+				t.Fatalf("failed to update device display name: %v", err)
+			}
+
+			// The provider refreshed the access token. The device is the same,
+			// so the row must be updated in place rather than recreated.
+			res2 := &api.QueryAccessTokenResponse{}
+			second := &api.QueryAccessTokenRequest{AccessToken: "rotation-token-2-" + t.Name()}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, second, res2); err != nil {
+				t.Fatalf("unexpected error after token rotation: %v", err)
+			}
+			if res2.Device == nil {
+				t.Fatal("expected device after token rotation")
+			}
+			if res2.Device.AccessToken != second.AccessToken {
+				t.Errorf("expected the rotated access token %q, got %q", second.AccessToken, res2.Device.AccessToken)
+			}
+			if res2.Device.SessionID != res.Device.SessionID {
+				t.Errorf("expected session ID %d to survive rotation, got %d", res.Device.SessionID, res2.Device.SessionID)
+			}
+			if res2.Device.DisplayName != displayName {
+				t.Errorf("expected display name %q to survive rotation, got %q", displayName, res2.Device.DisplayName)
+			}
+
+			stored, err := userAPI.DB.GetDeviceByID(ctx, "rotationuser", serverName, "ROTDEV")
+			if err != nil {
+				t.Fatalf("failed to look up device: %v", err)
+			}
+			if stored.DisplayName != displayName {
+				t.Errorf("expected stored display name %q, got %q", displayName, stored.DisplayName)
+			}
+
+			// The superseded token must no longer resolve to a device.
+			if _, err := userAPI.DB.GetDeviceByAccessToken(ctx, first.AccessToken); !errors.Is(err, sql.ErrNoRows) {
+				t.Errorf("expected the old access token to be revoked, got %v", err)
+			}
+		})
+
+		t.Run("TokenHeldByAnotherDeviceIsRevoked", func(t *testing.T) {
+			// The device scope only appears on the second call, so the same
+			// token is first bound to the default "OIDC" device row and then
+			// has to move to the scoped one.
+			var withDeviceScope bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				scope := "openid"
+				if withDeviceScope {
+					scope += " urn:matrix:org.matrix.msc2967.client:device:MOVEDDEV"
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"active":   true,
+					"sub":      "opaque-uuid-moved",
+					"scope":    scope,
+					"username": "moveduser",
+				})
+			}))
+			defer srv.Close()
+
+			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
+			defer closeDB()
+
+			ctx := context.Background()
+			serverName := userAPI.Config.Matrix.ServerName
+			req := &api.QueryAccessTokenRequest{AccessToken: "moved-token-" + t.Name()}
+
+			res := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.Device == nil || res.Device.ID != defaultOIDCDeviceID {
+				t.Fatalf("expected the default OIDC device on first login, got %+v", res.Device)
+			}
+
+			// Create the scoped device row so the token has to be moved off the
+			// default row rather than simply inserted.
+			newDeviceID := "MOVEDDEV"
+			if _, err := userAPI.DB.CreateDevice(ctx, "moveduser", serverName, &newDeviceID, "other-token-"+t.Name(), nil, "", ""); err != nil {
+				t.Fatalf("failed to create scoped device: %v", err)
+			}
+
+			withDeviceScope = true
+			// Introspection results are cached by token hash, so drop the entry.
+			getIntrospectionCache().Delete(hashToken(req.AccessToken))
+
+			res2 := &api.QueryAccessTokenResponse{}
+			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res2); err != nil {
+				t.Fatalf("unexpected error on second call: %v", err)
+			}
+			if res2.Device == nil {
+				t.Fatal("expected device on second call")
+			}
+			if res2.Device.ID != newDeviceID {
+				t.Errorf("expected device ID %s, got %s", newDeviceID, res2.Device.ID)
+			}
+			// The stale row that used to hold the token must be gone.
+			if _, err := userAPI.DB.GetDeviceByID(ctx, "moveduser", serverName, defaultOIDCDeviceID); !errors.Is(err, sql.ErrNoRows) {
+				t.Errorf("expected the stale OIDC device to be revoked, got %v", err)
 			}
 		})
 

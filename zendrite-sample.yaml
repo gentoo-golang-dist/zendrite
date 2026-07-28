@@ -392,11 +392,17 @@ mscs:
   #     "https://matrix.example.com"); used to build URLs advertised to
   #     clients, such as the SSO callback URL, instead of trusting the
   #     incoming request's Host header
-  #   sso_redirect_allowlist: []  # optional list of allowed redirectUrl
-  #     prefixes for the legacy SSO flow, e.g. ["https://app.example.com/",
-  #     "element://"]. When empty, any redirectUrl is accepted; the flow is
-  #     still bound to the browser that started it via an HttpOnly cookie, so
-  #     the callback cannot be triggered cross-browser.
+  #   sso_redirect_allowlist: []  # optional list of redirectUrl targets
+  #     allowed for the legacy SSO flow, e.g. ["https://app.example.com/",
+  #     "element://"]. http(s) entries are matched on scheme, host and path
+  #     prefix; entries with another scheme (e.g. the Element Desktop deep
+  #     link) are matched as string prefixes. When empty, the check is
+  #     default-deny: only targets on this homeserver's own origin (from
+  #     public_base_url, else the incoming request) are accepted. An
+  #     unrestricted redirectUrl would be an open redirect that leaks the
+  #     login token, and with it the provider-issued access and refresh
+  #     tokens; the browser-binding cookie does not prevent that, because the
+  #     victim's own browser runs the flow and holds the cookie.
 
 # Configuration for the Sync API.
 sync_api:

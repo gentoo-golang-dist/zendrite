@@ -752,6 +752,21 @@ func (d *Database) UpdateDevice(
 	})
 }
 
+// UpdateDeviceAccessToken replaces the access token of an existing device.
+// Unlike CreateDevice it does not delete and re-insert the row, so the session
+// ID and display name survive. This is what OIDC token rotation needs: the
+// device is the same, only the bearer token the client presents has changed.
+// Returns SQL error if there are problems and nil on success.
+func (d *Database) UpdateDeviceAccessToken(
+	ctx context.Context,
+	localpart string, serverName spec.ServerName,
+	deviceID, accessToken string,
+) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		return d.Devices.UpdateDeviceAccessToken(ctx, txn, localpart, serverName, deviceID, accessToken)
+	})
+}
+
 // RemoveDevices revokes one or more devices by deleting the entry in the database
 // matching with the given device IDs and user ID localpart.
 // If the devices don't exist, it will not return an error

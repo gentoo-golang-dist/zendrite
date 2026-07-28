@@ -38,6 +38,10 @@ func msc3861ForbiddenHandler(metricsName string) http.Handler {
 	})
 }
 
+// Bounds the body read on the unauthenticated POST /register endpoint handled
+// by the MSC3861 register shim (1 MiB).
+const msc3861RegisterBodyMaxBytes = 1 << 20
+
 // msc3861RegisterHandler returns a handler for POST /_matrix/client/v3/register
 // when MSC3861 is enabled. Application-service registrations
 // (m.login.application_service with an access token) are still allowed; all
@@ -51,7 +55,10 @@ func msc3861RegisterHandler(
 		if req.Body == nil {
 			req.Body = http.NoBody
 		}
-		body, err := io.ReadAll(req.Body)
+		// The register endpoint is unauthenticated, so the body read is
+		// bounded to keep memory usage in check. One extra byte is read so an
+		// over-long body can be told apart from one exactly at the limit.
+		body, err := io.ReadAll(io.LimitReader(req.Body, msc3861RegisterBodyMaxBytes+1))
 		if err != nil {
 			return util.JSONResponse{
 				Code: http.StatusBadRequest,
@@ -59,6 +66,12 @@ func msc3861RegisterHandler(
 			}
 		}
 		req.Body.Close()
+		if len(body) > msc3861RegisterBodyMaxBytes {
+			return util.JSONResponse{
+				Code: http.StatusRequestEntityTooLarge,
+				JSON: spec.BadJSON("Request body too large."),
+			}
+		}
 		// Restore the body so the real registration handler can read it.
 		req.Body = io.NopCloser(bytes.NewReader(body))
 
@@ -155,6 +168,14 @@ func discoverOIDCAuthServerMetadataWithTTL(ctx context.Context, issuer string, c
 		return oidcAuthMetadataDoc{}
 	}
 
+	// Normalise the configured issuer once, the same way the userapi discovery
+	// path does. A trailing slash is not significant for an issuer URL, and
+	// normalising here keeps the cache key, the discovery URL and the issuer
+	// comparison below consistent: otherwise a configured "https://mas/" would
+	// fetch successfully, fail the comparison, never be cached, and trigger a
+	// fresh outbound request on every auth_metadata hit.
+	issuer = strings.TrimSuffix(issuer, "/")
+
 	oidcAuthMetadataCacheMu.RLock()
 	cached, ok := oidcAuthMetadataCache[issuer]
 	oidcAuthMetadataCacheMu.RUnlock()
@@ -165,7 +186,7 @@ func discoverOIDCAuthServerMetadataWithTTL(ctx context.Context, issuer string, c
 	queryCtx, cancel := context.WithTimeout(ctx, oidcDiscoveryTimeout)
 	defer cancel()
 
-	discoveryURL := strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
+	discoveryURL := issuer + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(queryCtx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return oidcAuthMetadataDoc{}
@@ -189,8 +210,9 @@ func discoverOIDCAuthServerMetadataWithTTL(ctx context.Context, issuer string, c
 
 	// A discovery document whose issuer does not match the configured issuer
 	// is not trustworthy: neither cache nor use it. The caller still serves
-	// the config-derived values in that case.
-	if doc.Issuer != issuer {
+	// the config-derived values in that case. Both sides are compared
+	// normalised so that a trailing slash on either one is not a mismatch.
+	if strings.TrimSuffix(doc.Issuer, "/") != issuer {
 		logrus.WithFields(logrus.Fields{
 			"configured_issuer": issuer,
 			"discovered_issuer": doc.Issuer,
@@ -307,7 +329,6 @@ func msc3861AuthMetadata(req *http.Request, mscCfg *config.MSCs) util.JSONRespon
 // jwksProxyCacheEntry holds a cached JWKS response.
 type jwksProxyCacheEntry struct {
 	body      []byte
-	cachedAt  time.Time
 	expiresAt time.Time
 }
 
@@ -471,7 +492,6 @@ func jwksProxyWithTTL(req *http.Request, mscCfg *config.MSCs, cacheTTL time.Dura
 	jwksProxyCacheMu.Lock()
 	jwksProxyCache[upstream] = jwksProxyCacheEntry{
 		body:      body,
-		cachedAt:  time.Now(),
 		expiresAt: time.Now().Add(cacheTTL),
 	}
 	jwksProxyCacheMu.Unlock()

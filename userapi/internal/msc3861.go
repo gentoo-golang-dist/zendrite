@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/sirupsen/logrus"
@@ -41,6 +42,11 @@ type IntrospectionResponse struct {
 	// inject so the homeserver can derive a friendlier localpart than the
 	// subject claim.
 	Email string `json:"email"`
+	// EmailVerified reports whether the provider has verified that the subject
+	// controls Email. Many providers let users self-assert an address, so an
+	// unverified claim must never influence the localpart: it would let anyone
+	// register alice@example.com and claim @alice:example.com.
+	EmailVerified bool `json:"email_verified"`
 }
 
 // oidcDiscoveryResponse represents the relevant fields from an OIDC discovery document.
@@ -99,6 +105,9 @@ const (
 	legacyDeviceScopePrefix          = "urn:matrix:org.matrix.msc2967.client:device:"
 	// DeviceID used when the token scope carries no device ID.
 	defaultOIDCDeviceID = "OIDC"
+	// The RFC 7591 client authentication methods we support for introspection.
+	clientAuthMethodBasic = "client_secret_basic"
+	clientAuthMethodPost  = "client_secret_post"
 )
 
 func getIntrospectionCache() *ttlcache.Cache[string, *cachedIntrospection] {
@@ -179,9 +188,14 @@ func stripEmailDomain(email, serverName string) string {
 // deriveLocalpart picks the best Matrix localpart for an OIDC identity,
 // preferring the email claim, then the username claim, then the subject
 // claim for providers like Ory Hydra that don't expose a username.
+// The email claim is only trusted once the provider has verified it: an
+// unverified address is attacker-chosen, and because stripEmailDomain removes
+// the local server name it would hand out localparts in our own namespace.
 func deriveLocalpart(introspection *IntrospectionResponse, serverName string) string {
-	if localpart := sanitizeLocalpart(stripEmailDomain(introspection.Email, serverName)); localpart != "" {
-		return localpart
+	if introspection.EmailVerified {
+		if localpart := sanitizeLocalpart(stripEmailDomain(introspection.Email, serverName)); localpart != "" {
+			return localpart
+		}
 	}
 	if localpart := sanitizeLocalpart(introspection.Username); localpart != "" {
 		return localpart
@@ -407,6 +421,7 @@ func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token str
 		Name              string `json:"name"`
 		Nickname          string `json:"nickname"`
 		Email             string `json:"email"`
+		EmailVerified     bool   `json:"email_verified"`
 		Username          string `json:"username"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&userinfo); err != nil {
@@ -423,7 +438,10 @@ func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token str
 	if username == "" {
 		username = userinfo.Nickname
 	}
-	if username == "" {
+	if username == "" && userinfo.EmailVerified {
+		// Same reasoning as in deriveLocalpart: an unverified address is
+		// self-asserted, and feeding it into the username chain would smuggle
+		// it past the email_verified gate.
 		username = userinfo.Email
 	}
 	if username == "" {
@@ -431,10 +449,11 @@ func userinfoToken(ctx context.Context, msc3861 *config.MSC3861Config, token str
 	}
 
 	return &IntrospectionResponse{
-		Active:   true,
-		Sub:      userinfo.Sub,
-		Username: username,
-		Email:    userinfo.Email,
+		Active:        true,
+		Sub:           userinfo.Sub,
+		Username:      username,
+		Email:         userinfo.Email,
+		EmailVerified: userinfo.EmailVerified,
 	}, nil
 }
 
@@ -464,9 +483,28 @@ func introspectToken(ctx context.Context, msc3861 *config.MSC3861Config, token s
 // doIntrospectToken calls the OIDC introspection endpoint to validate an access token.
 // If introspection is unavailable, it falls back to the OIDC UserInfo endpoint.
 func doIntrospectToken(ctx context.Context, msc3861 *config.MSC3861Config, token string, httpClient *http.Client) (*IntrospectionResponse, error) {
+	// Reject an unsupported auth method before any network work happens: it is
+	// a configuration error, not something worth discovering after a request
+	// has already been built and an endpoint discovered.
+	authMethod := msc3861.ClientAuthMethod
+	if authMethod == "" {
+		authMethod = clientAuthMethodBasic
+	}
+	if authMethod != clientAuthMethodBasic && authMethod != clientAuthMethodPost {
+		return nil, fmt.Errorf("msc3861: unsupported client_auth_method %q", authMethod)
+	}
+
 	endpoint := resolveIntrospectionEndpoint(ctx, msc3861, httpClient)
 
+	// The form must be complete before the request is created. Patching
+	// req.Body afterwards leaves req.GetBody returning the original,
+	// credential-less body, and the http client replays GetBody on redirects
+	// and HTTP/2 retries, which would silently drop the credentials.
 	form := url.Values{"token": {token}}
+	if authMethod == clientAuthMethodPost {
+		form.Set("client_id", msc3861.ClientID)
+		form.Set("client_secret", msc3861.ClientSecret)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -475,21 +513,11 @@ func doIntrospectToken(ctx context.Context, msc3861 *config.MSC3861Config, token
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	authMethod := msc3861.ClientAuthMethod
-	if authMethod == "" {
-		authMethod = "client_secret_basic"
-	}
-
-	switch authMethod {
-	case "client_secret_basic":
-		req.SetBasicAuth(url.QueryEscape(msc3861.ClientID), url.QueryEscape(msc3861.ClientSecret))
-	case "client_secret_post":
-		form.Set("client_id", msc3861.ClientID)
-		form.Set("client_secret", msc3861.ClientSecret)
-		req.Body = io.NopCloser(strings.NewReader(form.Encode()))
-		req.ContentLength = int64(len(form.Encode()))
-	default:
-		return nil, fmt.Errorf("msc3861: unsupported client_auth_method %q", authMethod)
+	if authMethod == clientAuthMethodBasic {
+		// RFC 6749 section 2.3.1 nominally form-encodes these before base64,
+		// but MAS, Keycloak and Hydra all compare the raw values, so encoding
+		// them breaks every secret containing '+', '/', '=' or '%'.
+		req.SetBasicAuth(msc3861.ClientID, msc3861.ClientSecret)
 	}
 
 	resp, err := httpClient.Do(req)
@@ -501,10 +529,25 @@ func doIntrospectToken(ctx context.Context, msc3861 *config.MSC3861Config, token
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		logrus.WithFields(logrus.Fields{
+		fields := logrus.Fields{
 			"status":   resp.StatusCode,
 			"response": string(body),
-		}).Warn("MSC3861: introspection returned non-200 status, trying userinfo fallback")
+		}
+		// A 401/403 rejects our own client credentials, not the user's token.
+		// The userinfo fallback below hides that at the cost of returning no
+		// scope, so device IDs silently collapse to the "OIDC" default and
+		// urn:synapse:admin:* is never seen. Say so at Error level rather than
+		// letting a misconfigured secret look like a working deployment.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			fields["client_id"] = msc3861.ClientID
+			fields["client_auth_method"] = authMethod
+			logrus.WithFields(fields).Error(
+				"MSC3861: the OIDC provider rejected the configured client credentials; " +
+					"falling back to userinfo, so scope-derived device IDs and admin scope will be lost",
+			)
+			return userinfoToken(ctx, msc3861, token, httpClient)
+		}
+		logrus.WithFields(fields).Warn("MSC3861: introspection returned non-200 status, trying userinfo fallback")
 		return userinfoToken(ctx, msc3861, token, httpClient)
 	}
 
@@ -725,11 +768,11 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		return err
 	}
 
-	// 11. Extract device ID from scope and ensure a device row exists. The row
-	// is only (re)created when it is missing or the stored access token differs
-	// from the presented one (token rotation). Recreating it on every request
-	// would bump the session ID, break /send transaction deduplication and wipe
-	// the display name.
+	// 11. Extract device ID from scope and ensure a device row exists. An
+	// existing row is never recreated: OIDC access tokens rotate often (MAS
+	// defaults to five minutes) and deleting plus re-inserting the row on every
+	// rotation would bump the session ID, break /send transaction deduplication
+	// and wipe the display name. Only a genuinely missing row is created.
 	deviceID := extractDeviceIDFromScope(introspection.Scope)
 	if deviceID == "" {
 		deviceID = defaultOIDCDeviceID
@@ -744,19 +787,13 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		return err
 	}
 	if err == nil {
-		tokenDevice, tokenErr := a.DB.GetDeviceByAccessToken(ctx, req.AccessToken)
-		if tokenErr != nil && !errors.Is(tokenErr, sql.ErrNoRows) {
-			logrus.WithError(tokenErr).WithFields(logrus.Fields{
-				"localpart": localpart,
-				"device_id": deviceID,
-			}).Error("MSC3861: failed to look up device by access token")
-			return tokenErr
+		device, bindErr := a.bindMSC3861DeviceToken(ctx, existingDevice, localpart, serverName, deviceID, req.AccessToken)
+		if bindErr != nil {
+			return bindErr
 		}
-		if tokenErr == nil && tokenDevice.ID == deviceID && tokenDevice.UserID == existingDevice.UserID {
-			// Device and token are unchanged; reuse the row as-is.
-			tokenDevice.DisplayName = existingDevice.DisplayName
-			tokenDevice.AccountType = accountType
-			res.Device = tokenDevice
+		if device != nil {
+			device.AccountType = accountType
+			res.Device = device
 			return nil
 		}
 	}
@@ -781,5 +818,89 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		res.Device = deviceRes.Device
 	}
 
+	return nil
+}
+
+// bindMSC3861DeviceToken makes an already existing device row usable with the
+// presented access token, without ever recreating the row. It returns the
+// device to hand back to the caller, or a nil device (and no error) when the
+// row could not be bound, in which case the caller falls back to creating one.
+func (a *UserInternalAPI) bindMSC3861DeviceToken(
+	ctx context.Context, existingDevice *api.Device,
+	localpart string, serverName spec.ServerName,
+	deviceID, accessToken string,
+) (*api.Device, error) {
+	tokenDevice, err := a.DB.GetDeviceByAccessToken(ctx, accessToken)
+	switch {
+	case err != nil && !errors.Is(err, sql.ErrNoRows):
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"localpart": localpart,
+			"device_id": deviceID,
+		}).Error("MSC3861: failed to look up device by access token")
+		return nil, err
+
+	case err == nil && tokenDevice.ID == deviceID && tokenDevice.UserID == existingDevice.UserID:
+		// Device and token are unchanged; reuse the row as-is.
+		tokenDevice.DisplayName = existingDevice.DisplayName
+		return tokenDevice, nil
+
+	case err == nil:
+		// The token is still recorded against a *different* device row, e.g.
+		// one provisioned before the provider started sending a device scope.
+		// The access token is the primary key of the devices table, so that row
+		// has to be revoked before the token can be bound to this device.
+		if err := a.revokeMSC3861TokenDevice(ctx, tokenDevice); err != nil {
+			return nil, err
+		}
+	}
+
+	// The token rotated. Swap it into the existing row rather than deleting and
+	// re-inserting, which would allocate a new session ID.
+	if err := a.DB.UpdateDeviceAccessToken(ctx, localpart, serverName, deviceID, accessToken); err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"localpart": localpart,
+			"device_id": deviceID,
+		}).Error("MSC3861: failed to update device access token")
+		return nil, err
+	}
+
+	// Re-read by token: only the by-token lookup returns the session ID that
+	// /send transaction deduplication keys off.
+	device, err := a.DB.GetDeviceByAccessToken(ctx, accessToken)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The row vanished underneath us (concurrent logout); let the
+			// caller recreate it.
+			return nil, nil
+		}
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"localpart": localpart,
+			"device_id": deviceID,
+		}).Error("MSC3861: failed to re-read device after access token update")
+		return nil, err
+	}
+	device.DisplayName = existingDevice.DisplayName
+	return device, nil
+}
+
+// revokeMSC3861TokenDevice deletes the device row that currently holds an
+// access token so the token can be bound to a different device.
+func (a *UserInternalAPI) revokeMSC3861TokenDevice(ctx context.Context, device *api.Device) error {
+	staleLocalpart, staleServerName, err := gomatrixserverlib.SplitID('@', device.UserID)
+	if err != nil {
+		logrus.WithError(err).WithField("user_id", device.UserID).Error("MSC3861: failed to split user ID of stale token device")
+		return err
+	}
+	logrus.WithFields(logrus.Fields{
+		"user_id":   device.UserID,
+		"device_id": device.ID,
+	}).Warn("MSC3861: access token was bound to a different device, revoking it")
+	if err := a.DB.RemoveDevices(ctx, staleLocalpart, staleServerName, []string{device.ID}); err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"user_id":   device.UserID,
+			"device_id": device.ID,
+		}).Error("MSC3861: failed to revoke device holding the presented access token")
+		return err
+	}
 	return nil
 }
