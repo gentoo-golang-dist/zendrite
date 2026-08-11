@@ -143,6 +143,7 @@ func findRelevantRoomIDsForExtension(
 func (rp *RequestPool) ProcessExtensions(
 	ctx context.Context,
 	snapshot storage.DatabaseTransaction,
+	connState *V4ConnectionState, // For per-room extension state (e.g., account_data); may be nil
 	req *types.SlidingSyncRequest,
 	userID string,
 	deviceID string,
@@ -187,7 +188,7 @@ func (rp *RequestPool) ProcessExtensions(
 
 	// Process account_data extension (PostProcess)
 	if req.Extensions.AccountData != nil && req.Extensions.AccountData.Enabled {
-		accountDataResp, accountDataLastPos, err := rp.processAccountDataExtension(ctx, snapshot, userID, req.Extensions.AccountData.Lists, req.Extensions.AccountData.Rooms, fromPos, toPos, responseLists, roomSubscriptions)
+		accountDataResp, accountDataLastPos, err := rp.processAccountDataExtension(ctx, snapshot, connState, userID, req.Extensions.AccountData.Lists, req.Extensions.AccountData.Rooms, fromPos, toPos, responseLists, roomSubscriptions)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to process account_data extension")
 			// Return empty response on error - clients expect the field to be present with proper structure
@@ -430,10 +431,73 @@ func (rp *RequestPool) processE2EEExtension(
 	return resp, nil
 }
 
+// accountDataStream is the SlidingSyncConnectionStream "stream" tag for
+// per-room account_data tracking, independent of the "events" stream used
+// for the timeline.
+const accountDataStream = "account_data"
+
+// accountDataFloorForRoom returns the lower bound for a room's account data
+// query: connectionFrom, or the room's own account_data LastToken if that's
+// older (the room fell behind while excluded from prior responses). Returns
+// 0 if this connection has never sent the room's account data before.
+func accountDataFloorForRoom(connState *V4ConnectionState, roomID string, connectionFrom types.StreamPosition) types.StreamPosition {
+	if connState == nil || connState.PreviousStreamStates == nil {
+		return 0
+	}
+	prevState, ok := connState.PreviousStreamStates[roomID][accountDataStream]
+	if !ok || prevState.LastToken == "" {
+		return 0
+	}
+	tok, err := types.NewStreamTokenFromString(prevState.LastToken)
+	if err != nil {
+		return 0
+	}
+	if tok.AccountDataPosition < connectionFrom {
+		return tok.AccountDataPosition
+	}
+	return connectionFrom
+}
+
+// persistAccountDataRoomState writes this connection's account_data position
+// for every relevant room, and copies forward unchanged state for rooms not
+// relevant here - see copyForwardStreamStates for why. No-ops on
+// interrupt/timeout/disconnect responses (ConnectionPosition == 0).
+func (rp *RequestPool) persistAccountDataRoomState(
+	ctx context.Context,
+	connState *V4ConnectionState,
+	relevantRoomIDs map[string]bool,
+	toPos types.StreamingToken,
+) {
+	if connState == nil || connState.ConnectionPosition == 0 {
+		return
+	}
+
+	lastToken := toPos.String()
+	for roomID := range relevantRoomIDs {
+		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, accountDataStream, "live", lastToken); err != nil {
+			logrus.WithError(err).WithField("room_id", roomID).Warn("[ACCOUNT_DATA] Failed to persist account_data stream state")
+		}
+	}
+
+	for roomID, streams := range connState.PreviousStreamStates {
+		if relevantRoomIDs[roomID] {
+			continue // already (re)written above with the fresh position
+		}
+		prevState, ok := streams[accountDataStream]
+		if !ok {
+			continue
+		}
+		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, accountDataStream, prevState.RoomStatus, prevState.LastToken); err != nil {
+			logrus.WithError(err).WithField("room_id", roomID).Warn("[ACCOUNT_DATA] Failed to copy forward account_data stream state")
+		}
+	}
+}
+
 // processAccountDataExtension handles account data extension.
 func (rp *RequestPool) processAccountDataExtension(
 	ctx context.Context,
 	snapshot storage.DatabaseTransaction,
+	connState *V4ConnectionState,
 	userID string,
 	requestedLists []string, // Optional list filter from request (MSC3959)
 	requestedRooms []string, // Optional room filter from request (MSC3960)
@@ -448,17 +512,43 @@ func (rp *RequestPool) processAccountDataExtension(
 		from = fromPos.AccountDataPosition
 	}
 
+	// Determine which rooms to process using unified helper (MSC3959/MSC3960)
+	relevantRoomIDs := findRelevantRoomIDsForExtension(
+		requestedLists,
+		requestedRooms,
+		actualLists,
+		actualRoomSubscriptions,
+	)
+
+	logrus.WithFields(logrus.Fields{
+		"requested_lists": requestedLists,
+		"requested_rooms": requestedRooms,
+		"relevant_rooms":  len(relevantRoomIDs),
+	}).Debug("[ACCOUNT_DATA] Filtered rooms for extension")
+
+	// Widen the query floor to the oldest point any relevant room actually
+	// needs, so a room that fell behind or is new to this connection doesn't
+	// have its account data silently skipped.
+	queryFrom := from
+	for roomID := range relevantRoomIDs {
+		if floor := accountDataFloorForRoom(connState, roomID, from); floor < queryFrom {
+			queryFrom = floor
+		}
+	}
+
 	// Create range for account data query
 	r := types.Range{
-		From: from,
+		From: queryFrom,
 		To:   toPos.AccountDataPosition,
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"user_id":    userID,
-		"from":       from,
-		"to":         toPos.AccountDataPosition,
-		"is_initial": fromPos == nil,
+		"user_id":        userID,
+		"from":           from,
+		"query_from":     queryFrom,
+		"to":             toPos.AccountDataPosition,
+		"is_initial":     fromPos == nil,
+		"relevant_rooms": len(relevantRoomIDs),
 	}).Debug("[ACCOUNT_DATA] Querying account data range")
 
 	// Get account data changes in this range
@@ -481,20 +571,6 @@ func (rp *RequestPool) processAccountDataExtension(
 		Global: []synctypes.ClientEvent{},
 		Rooms:  make(map[string][]synctypes.ClientEvent),
 	}
-
-	// Determine which rooms to process using unified helper (MSC3959/MSC3960)
-	relevantRoomIDs := findRelevantRoomIDsForExtension(
-		requestedLists,
-		requestedRooms,
-		actualLists,
-		actualRoomSubscriptions,
-	)
-
-	logrus.WithFields(logrus.Fields{
-		"requested_lists": requestedLists,
-		"requested_rooms": requestedRooms,
-		"relevant_rooms":  len(relevantRoomIDs),
-	}).Debug("[ACCOUNT_DATA] Filtered rooms for extension")
 
 	// Iterate over rooms and data types
 	for roomID, dataTypeList := range dataTypes {
@@ -547,6 +623,8 @@ func (rp *RequestPool) processAccountDataExtension(
 		"num_global":    len(resp.Global),
 		"num_room_keys": len(resp.Rooms),
 	}).Debug("[ACCOUNT_DATA] Returning account data response")
+
+	rp.persistAccountDataRoomState(ctx, connState, relevantRoomIDs, toPos)
 
 	// Return lastPos so v4 sync can update the account data position in the response token
 	return resp, lastPos, nil

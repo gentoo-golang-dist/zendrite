@@ -1170,7 +1170,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 		for roomID := range v4Req.RoomSubscriptions {
 			roomSubscriptions[roomID] = true
 		}
-		extensionResp, updatedPos, deliveredReceipts, err := rp.ProcessExtensions(ctx, snapshot, &v4Req, device.UserID, device.ID, connectionKey, fromPosPtr, currentPos, response.Lists, roomSubscriptions) //nolint:contextcheck
+		extensionResp, updatedPos, deliveredReceipts, err := rp.ProcessExtensions(ctx, snapshot, connState, &v4Req, device.UserID, device.ID, connectionKey, fromPosPtr, currentPos, response.Lists, roomSubscriptions) //nolint:contextcheck
 		if err != nil {
 			logrus.WithError(err).Error("Failed to process extensions")
 			// Continue anyway - extensions are optional, return empty extension response
@@ -1682,7 +1682,7 @@ func (rp *RequestPool) buildInterruptResponse(
 		for roomID := range v4Req.RoomSubscriptions {
 			roomSubscriptions[roomID] = true
 		}
-		extensionResp, _, _, extErr := rp.ProcessExtensions(ctx, extSnapshot, v4Req, device.UserID, device.ID, connectionKey, fromPosPtr, currentPos, resp.Lists, roomSubscriptions)
+		extensionResp, _, _, extErr := rp.ProcessExtensions(ctx, extSnapshot, connState, v4Req, device.UserID, device.ID, connectionKey, fromPosPtr, currentPos, resp.Lists, roomSubscriptions)
 		if extErr != nil {
 			if errors.Is(extErr, context.Canceled) || errors.Is(extErr, context.DeadlineExceeded) {
 				return resp
