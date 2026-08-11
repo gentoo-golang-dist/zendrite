@@ -37,13 +37,15 @@ type mockSnapshot struct {
 	maxInvitePos       types.StreamPosition
 	membershipCounts   map[string]map[string]int // roomID -> membership -> count
 
-	// accountDataInRange is returned verbatim by GetAccountDataInRange,
-	// regardless of the requested range - tests decide what "changed in the
-	// range" looks like directly, the same way the real query would return
-	// changes across ALL rooms regardless of which rooms happen to be in the
-	// current sliding sync response.
-	accountDataInRange        map[string][]string // roomID ("" = global) -> data types
-	accountDataInRangeLastPos types.StreamPosition
+	// accountDataChanges backs GetAccountDataInRange.
+	accountDataChanges []mockAccountDataChange
+}
+
+// mockAccountDataChange is one fixture entry for GetAccountDataInRange.
+type mockAccountDataChange struct {
+	roomID   string
+	dataType string
+	pos      types.StreamPosition
 }
 
 type mockMembership struct {
@@ -90,22 +92,32 @@ func (m *mockSnapshot) SetRecentEvents(roomID string, events types.RecentEvents)
 	m.recentEvents[roomID] = events
 }
 
-// SetAccountDataInRange configures what GetAccountDataInRange returns,
-// simulating "these room IDs (empty string = global) had these data types change
-// somewhere in the requested range" - independent of which rooms end up
-// relevant to any particular sliding sync response.
-func (m *mockSnapshot) SetAccountDataInRange(data map[string][]string, lastPos types.StreamPosition) {
-	m.accountDataInRange = data
-	m.accountDataInRangeLastPos = lastPos
+// SetAccountDataChange adds one fixture entry: roomID (empty = global) had
+// dataType change at pos.
+func (m *mockSnapshot) SetAccountDataChange(roomID, dataType string, pos types.StreamPosition) {
+	m.accountDataChanges = append(m.accountDataChanges, mockAccountDataChange{roomID: roomID, dataType: dataType, pos: pos})
 }
 
-// GetAccountDataInRange returns the fixture set via SetAccountDataInRange
-// unconditionally, mirroring the real DB: the range query itself is
-// room-agnostic (it returns every room with account data changes), so any
-// dropping of rooms not currently "in view" happens in the caller, not here -
-// which is exactly what this mock needs to expose.
+// GetAccountDataInRange filters the fixtures set via SetAccountDataChange down
+// to the requested range, mirroring the real DB's (r.To, r.From] semantics.
 func (m *mockSnapshot) GetAccountDataInRange(ctx context.Context, userID string, r types.Range, accountDataFilterPart *synctypes.EventFilter) (map[string][]string, types.StreamPosition, error) {
-	return m.accountDataInRange, m.accountDataInRangeLastPos, nil
+	lo, hi := r.To, r.From
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+
+	result := make(map[string][]string)
+	var lastPos types.StreamPosition
+	for _, c := range m.accountDataChanges {
+		if c.pos <= lo || c.pos > hi {
+			continue
+		}
+		result[c.roomID] = append(result[c.roomID], c.dataType)
+		if c.pos > lastPos {
+			lastPos = c.pos
+		}
+	}
+	return result, lastPos, nil
 }
 
 // SetRoomSummary sets the room summary for a room.

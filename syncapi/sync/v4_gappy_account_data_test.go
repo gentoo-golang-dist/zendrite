@@ -16,97 +16,75 @@ import (
 	"codefloe.com/pat-s/zendrite/syncapi/types"
 )
 
-// TestProcessAccountDataExtension_RoomNotInCurrentResponse_StillDeliversAccountData
-// is a currently-FAILING regression test (intentionally, pending the fix
-// discussed with the user) documenting a second instance of the same bug class
-// fixed in v4_gappy_timeline_test.go, this time in the account_data extension.
-//
-// processAccountDataExtension queries ALL account data changes for the user in
-// [from, to] via GetAccountDataInRange - a connection-wide, room-agnostic range
-// - and then filters the result down to relevantRoomIDs, which is only the set
-// of rooms that happen to appear in THIS response's lists/subscriptions. Any
-// room-scoped account data (m.fully_read markers, room tags, ...) for a room
-// that isn't touched by this particular response's list ops gets silently
-// dropped, even though the query already fetched it - and the account data
-// position still advances regardless, so it is never delivered on a later
-// sync either.
-//
-// Synapse's reference implementation avoids this by tracking a PREVIOUSLY/LIVE
-// status *per room, specific to the account_data extension*
-// (previous_connection_state.account_data.have_sent_room), and for PREVIOUSLY
-// rooms queries that room's own last-sent token individually
-// (synapse/handlers/sliding_sync/extensions.py:515-526), instead of relying on
-// "was this room touched in the current response".
-//
-// zendrite has no such per-room tracking for account_data - unlike the
-// timeline, which already had (and, after the fix, has again) a per-room
-// LastToken via SlidingSyncConnectionStream. The DB schema's `stream` column
-// on that table already anticipates an "account_data" stream value in its
-// doc comment, but nothing ever writes/reads it.
-func TestProcessAccountDataExtension_RoomNotInCurrentResponse_StillDeliversAccountData(t *testing.T) {
+// TestProcessAccountDataExtension_RoomReenteringAfterGap_StillDeliversAccountData
+// guards against account_data queried from the connection-wide fromPos
+// instead of a room's own last-sent token (see accountDataFloorForRoom):
+// a room excluded from prior responses would have changes skipped once it
+// re-enters view.
+func TestProcessAccountDataExtension_RoomReenteringAfterGap_StillDeliversAccountData(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	userID := "@alice:localhost"
 
 	const (
-		roomInResponse    = "!roomA:localhost" // has a list op / subscription this response
-		roomNotInResponse = "!roomB:localhost" // quiet this response - no list op, no subscription
+		roomSteady = "!roomA:localhost" // continuously in view, no gap
+		roomGappy  = "!roomB:localhost" // was excluded for a while, now back in view
 	)
 
-	fullyReadA, err := json.Marshal(map[string]string{"event_id": "$readA:localhost"})
+	fullyReadSteady, err := json.Marshal(map[string]string{"event_id": "$readA:localhost"})
 	require.NoError(t, err)
-	fullyReadB, err := json.Marshal(map[string]string{"event_id": "$readB:localhost"})
-	require.NoError(t, err)
-	pushRules, err := json.Marshal(map[string]any{"global": map[string]any{}})
+	fullyReadGap, err := json.Marshal(map[string]string{"event_id": "$readB-missed-while-excluded:localhost"})
 	require.NoError(t, err)
 
 	snapshot := newMockSnapshot()
-	// The range query legitimately reports changes for BOTH rooms - this is
-	// what the real DB query does, since it has no concept of "which rooms are
-	// in the current response".
-	snapshot.SetAccountDataInRange(map[string][]string{
-		"":                []string{"m.push_rules"},
-		roomInResponse:    []string{"m.fully_read"},
-		roomNotInResponse: []string{"m.fully_read"},
-	}, 200)
+	// roomGappy's change at 60 is inside the gap between its own last-sent
+	// position (50) and the connection's since token (90) - see below.
+	snapshot.SetAccountDataChange(roomSteady, "m.fully_read", 95)
+	snapshot.SetAccountDataChange(roomGappy, "m.fully_read", 60)
 
 	rp := &RequestPool{
 		userAPI: &mockUserAPI{
-			globalAccountData: map[string]json.RawMessage{
-				"m.push_rules": pushRules,
-			},
 			roomAccountData: map[string]map[string]json.RawMessage{
-				roomInResponse:    {"m.fully_read": fullyReadA},
-				roomNotInResponse: {"m.fully_read": fullyReadB},
+				roomSteady: {"m.fully_read": fullyReadSteady},
+				roomGappy:  {"m.fully_read": fullyReadGap},
 			},
 		},
 	}
 
-	fromPos := &types.StreamingToken{AccountDataPosition: 100}
+	fromPos := &types.StreamingToken{AccountDataPosition: 90}
 	toPos := types.StreamingToken{AccountDataPosition: 200}
 
-	// roomNotInResponse deliberately appears in neither lists nor subscriptions -
-	// exactly like a room the client isn't currently touching because nothing
-	// else about it changed this cycle.
+	connState := &V4ConnectionState{
+		ConnectionKey: 1,
+		// ConnectionPosition left at 0: this simulates a response where we don't
+		// want persistAccountDataRoomState to write anything (irrelevant to this
+		// test, which only exercises the read/floor side).
+		PreviousStreamStates: map[string]map[string]*types.SlidingSyncStreamState{
+			roomSteady: {
+				accountDataStream: {LastToken: (&types.StreamingToken{AccountDataPosition: 90}).String()},
+			},
+			roomGappy: {
+				accountDataStream: {LastToken: (&types.StreamingToken{AccountDataPosition: 50}).String()},
+			},
+		},
+	}
+
+	// Both rooms are relevant to THIS response - roomGappy has just re-entered
+	// view (e.g. the client re-subscribed or it re-entered a list range).
 	actualLists := map[string]types.SlidingList{}
-	actualRoomSubscriptions := map[string]bool{roomInResponse: true}
+	actualRoomSubscriptions := map[string]bool{roomSteady: true, roomGappy: true}
 
 	resp, _, err := rp.processAccountDataExtension(
-		ctx, snapshot, userID,
+		ctx, snapshot, connState, userID,
 		nil, nil, // requestedLists, requestedRooms: default wildcard
 		fromPos, toPos,
 		actualLists, actualRoomSubscriptions,
 	)
 	require.NoError(t, err)
 
-	require.Contains(t, resp.Rooms, roomInResponse,
-		"account data for a room that IS in the current response must be delivered")
-
-	// This is the bug: roomNotInResponse's account data was fetched by the
-	// range query (it's a real change in [from, to]) but gets silently
-	// dropped because the room isn't in this response's lists/subscriptions.
-	// Expected to FAIL until per-room account_data tracking is implemented.
-	assert.Contains(t, resp.Rooms, roomNotInResponse,
-		"account data for a room NOT in the current response must still be delivered eventually, not dropped forever")
+	assert.Contains(t, resp.Rooms, roomSteady,
+		"a continuously-live room's account data must still be delivered")
+	assert.Contains(t, resp.Rooms, roomGappy,
+		"account data missed while a room was excluded from responses must be delivered once it's relevant again, not dropped forever")
 }
