@@ -214,6 +214,36 @@ func determineRoomStreamState(
 	}
 }
 
+// computePDUQueryFloor returns the lowest PDU position the batch
+// "which candidate rooms changed" pre-filter needs to query from, given the
+// connection-wide since position and each candidate room's own stream state.
+//
+// A room with Status == HaveSentRoomPreviously may have fallen behind the
+// connection-wide since token (e.g. it was excluded from one or more prior
+// responses while unrelated activity advanced the connection's own
+// position). Querying from the connection-wide since alone would make such a
+// room invisible to the "did anything change" check even though it has
+// pending events in [roomState.LastToken, since) that it was never actually
+// sent - the room then never re-enters roomsToPopulate until some other
+// event pushes its own position past the connection-wide since token (e.g. a
+// brand new message), which is why a "nudge" message can appear to unstick
+// history that was silently dropped.
+//
+// A too-low floor here only costs a wasted BuildRoomData call for a room
+// that turns out unchanged (getTimelineEvents' own delta logic downstream
+// correctly returns empty in that case) - it can never cause data loss the
+// way a too-high floor does, so widening is always the safe direction.
+func computePDUQueryFloor(connectionFloor types.StreamPosition, roomStates map[string]types.RoomStreamState) types.StreamPosition {
+	floor := connectionFloor
+	for _, roomState := range roomStates {
+		if roomState.Status == types.HaveSentRoomPreviously && roomState.LastToken != nil &&
+			roomState.LastToken.PDUPosition < floor {
+			floor = roomState.LastToken.PDUPosition
+		}
+	}
+	return floor
+}
+
 // logV4Response logs full response body at trace level (sensitive data)
 // Enable with logging.*.level: trace in config.
 func logV4Response(response any, userID, deviceID string, statusCode int) {
@@ -801,8 +831,25 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 				candidateRoomIDs = append(candidateRoomIDs, roomID)
 			}
 
-			// Query database for rooms that have PDU events since the last sync position
-			roomsWithPDUChanges, pduChangesErr := filterSnapshot.RoomsWithEventsSince(ctx, candidateRoomIDs, since.StreamToken.PDUPosition) //nolint:contextcheck
+			// Determine per-room stream state up front so the PDU-changes
+			// pre-filter below can use each room's own last-sent position,
+			// not just the connection-wide since token. Without this, a room
+			// that fell behind (status PREVIOUSLY - e.g. excluded from
+			// responses for a while because it dropped out of the client's
+			// active range) is invisible to RoomsWithEventsSince as soon as
+			// the connection's own position advances past events that room
+			// never actually received - the same gap bug as getTimelineEvents
+			// (v4_roomdata.go), just one layer up, at room selection instead
+			// of event selection. Reused below for the NEVER-status detection
+			// too, so no extra DB round trips.
+			candidateRoomStates := make(map[string]types.RoomStreamState, len(candidateRoomIDs))
+			for _, roomID := range candidateRoomIDs {
+				candidateRoomStates[roomID] = determineRoomStreamState(ctx, filterSnapshot, connState, roomID, device.UserID) //nolint:contextcheck
+			}
+			pduQueryFloor := computePDUQueryFloor(since.StreamToken.PDUPosition, candidateRoomStates)
+
+			// Query database for rooms that have PDU events since the earliest position any candidate room actually needs
+			roomsWithPDUChanges, pduChangesErr := filterSnapshot.RoomsWithEventsSince(ctx, candidateRoomIDs, pduQueryFloor) //nolint:contextcheck
 			if pduChangesErr != nil {
 				logrus.WithError(pduChangesErr).Error("[V4_SYNC] Failed to filter PDU changed rooms")
 				// Continue without filtering on error - return all rooms
@@ -835,7 +882,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 				// Also include rooms that have never been sent on this connection
 				// These should always be included as they're "new" to the client
 				for roomID := range roomsToPopulate {
-					roomState := determineRoomStreamState(ctx, filterSnapshot, connState, roomID, device.UserID) //nolint:contextcheck
+					roomState := candidateRoomStates[roomID]
 					if roomState.Status == types.HaveSentRoomNever {
 						roomsToKeep[roomID] = true
 						if roomKeepReasons[roomID] != "" {
