@@ -185,17 +185,12 @@ jobs:
           git config user.email "patrick.schratz@gmail.com"
           sed -i "s/^appVersion: .*/appVersion: ${VERSION}/" charts/zendrite/Chart.yaml
 
-          # Commit and push only if there are changes
+          # Submit the appVersion change through a pull request
           if git diff --quiet charts/zendrite/Chart.yaml; then
             echo "appVersion already set to ${VERSION}, skipping commit"
+            exit 0
           else
             git add charts/zendrite/Chart.yaml
             git commit -m "chore(deps): bump zendrite appVersion to ${VERSION}"
-            git push
+            git push origin "HEAD:refs/for/main/zendrite-${VERSION}" -o force-push=true
           fi
-
-          # Create semver tag via git-sv and push it
-          NEXT_VERSION=$(git-sv nv)
-          echo "Next version: ${NEXT_VERSION}"
-          git tag "v${NEXT_VERSION}"
-          git push origin "v${NEXT_VERSION}"
