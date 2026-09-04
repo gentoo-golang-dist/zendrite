@@ -336,7 +336,7 @@ func Setup(
 	}
 
 	if oidcEnabled && mscCfg.MSC3861.AdminToken != "" {
-		setupMASAdminRoutes(synapseAdminRouter, mscCfg, cfg, userAPI, rateLimits)
+		setupMASAdminRoutes(synapseAdminRouter, mscCfg, cfg, userAPI)
 	}
 
 	// You can't just do PathPrefix("/(r0|v3)") because regexps only apply when inside named path variables.

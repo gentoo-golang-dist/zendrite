@@ -800,72 +800,11 @@ func TestMSC3861_JWKSProxyServesStaleOnError(t *testing.T) {
 	}
 }
 
-// TestMSC3861_MASAdminUserLifecycle exercises user creation and retrieval
-// through the MAS admin endpoints, including the admin flag mapping.
-func TestMSC3861_MASAdminUserLifecycle(t *testing.T) {
-	t.Parallel()
-	routers, _, closeDB := setupMSC3861Routers(t)
-	defer closeDB()
-
-	// An unknown user maps to 404.
-	req := test_masAdminRequest(t, http.MethodGet, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", "")
-	rec := httptest.NewRecorder()
-	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown user, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	// Create a regular user.
-	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", `{"displayname": "Alice"}`)
-	rec = httptest.NewRecorder()
-	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 creating user, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	// Retrieval reports the account record.
-	req = test_masAdminRequest(t, http.MethodGet, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", "")
-	rec = httptest.NewRecorder()
-	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 getting user, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var userResp struct {
-		Name        string `json:"name"`
-		DisplayName string `json:"displayname"`
-		Admin       bool   `json:"admin"`
-		Deactivated bool   `json:"deactivated"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &userResp); err != nil {
-		t.Fatalf("failed to parse response: %v", err)
-	}
-	if userResp.Name != "@alice:test" {
-		t.Errorf("expected name @alice:test, got %q", userResp.Name)
-	}
-	if userResp.Admin {
-		t.Error("expected admin=false for a regular user")
-	}
-
-	// Create an admin user and verify the flag comes from the account record.
-	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@admin-user:test", "test-admin-token", `{"admin": true}`)
-	rec = httptest.NewRecorder()
-	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 creating admin user, got %d: %s", rec.Code, rec.Body.String())
-	}
-	req = test_masAdminRequest(t, http.MethodGet, "/_synapse/admin/v1/users/@admin-user:test", "test-admin-token", "")
-	rec = httptest.NewRecorder()
-	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 getting admin user, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &userResp); err != nil {
-		t.Fatalf("failed to parse response: %v", err)
-	}
-	if !userResp.Admin {
-		t.Error("expected admin=true to be reported from the account record")
-	}
-}
+// TestMSC3861_MASAdminUserLifecycle exercised user creation and retrieval
+// through the legacy /_synapse/admin/v1 endpoints, which were removed in
+// favor of the /_synapse/mas provisioning API. The equivalent coverage lives
+// in TestMASProvisionUser and TestMASQueryUser; the modern API has no admin
+// flag mapping to test.
 
 // TestMSC3861_MASPlaceholderTokenIsRandom verifies that the placeholder device
 // access token comes from the CSPRNG and is unpredictable: a guessable value
@@ -890,37 +829,39 @@ func TestMSC3861_MASPlaceholderTokenIsRandom(t *testing.T) {
 	}
 }
 
-// TestMSC3861_MASAdminDeviceIdempotent verifies that creating an existing
-// device returns it unchanged instead of clobbering it.
+// TestMSC3861_MASAdminDeviceIdempotent verifies that upserting an existing
+// device returns 200 (not 201) and updates its display name, mirroring
+// Synapse's upsert_device semantics.
 func TestMSC3861_MASAdminDeviceIdempotent(t *testing.T) {
 	t.Parallel()
 	routers, _, closeDB := setupMSC3861Routers(t)
 	defer closeDB()
 
-	req := test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test", "test-admin-token", `{}`)
+	req := test_masAdminRequest(t, http.MethodPost, "/_synapse/mas/provision_user", "test-admin-token", `{"localpart":"alice"}`)
 	rec := httptest.NewRecorder()
 	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 creating user, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 creating user, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test/devices/DEVICEONE", "test-admin-token", `{"display_name": "First name"}`)
+	req = test_masAdminRequest(t, http.MethodPost, "/_synapse/mas/upsert_device", "test-admin-token", `{"localpart": "alice", "device_id": "DEVICEONE", "display_name": "First name"}`)
+	rec = httptest.NewRecorder()
+	routers.SynapseAdmin.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 creating device, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// A second upsert for the same device returns 200 and applies the new
+	// display name.
+	req = test_masAdminRequest(t, http.MethodPost, "/_synapse/mas/upsert_device", "test-admin-token", `{"localpart": "alice", "device_id": "DEVICEONE", "display_name": "Second name"}`)
 	rec = httptest.NewRecorder()
 	routers.SynapseAdmin.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 creating device, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	// A second PUT for the same device returns the existing device untouched.
-	req = test_masAdminRequest(t, http.MethodPut, "/_synapse/admin/v1/users/@alice:test/devices/DEVICEONE", "test-admin-token", `{"display_name": "Second name"}`)
-	rec = httptest.NewRecorder()
-	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for idempotent device creation, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 for idempotent device upsert, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var deviceResp struct {
-		DeviceID    string `json:"device_id"`
-		DisplayName string `json:"display_name"`
+		DeviceID    string  `json:"device_id"`
+		DisplayName *string `json:"display_name"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &deviceResp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
@@ -928,8 +869,8 @@ func TestMSC3861_MASAdminDeviceIdempotent(t *testing.T) {
 	if deviceResp.DeviceID != "DEVICEONE" {
 		t.Errorf("expected device_id DEVICEONE, got %q", deviceResp.DeviceID)
 	}
-	if deviceResp.DisplayName != "First name" {
-		t.Errorf("expected existing display name to be preserved, got %q", deviceResp.DisplayName)
+	if deviceResp.DisplayName == nil || *deviceResp.DisplayName != "Second name" {
+		t.Errorf("expected display name to be updated to 'Second name', got %v", deviceResp.DisplayName)
 	}
 }
 

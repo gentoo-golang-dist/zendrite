@@ -1191,7 +1191,7 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			}
 		})
 
-		t.Run("LocalpartCollisionFallsBackToSub", func(t *testing.T) {
+		t.Run("LocalpartCollisionLinksExistingAccount", func(t *testing.T) {
 			sub := "opaque-uuid-collision"
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -1207,12 +1207,16 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
 			defer closeDB()
 
-			// A pre-existing (e.g. password-registered) account already owns the
-			// localpart the OIDC identity would derive from its username claim.
+			// A pre-existing account already owns the localpart the OIDC identity
+			// derives from its username claim. Under delegated authentication such
+			// an account was provisioned for this very user (MAS calls
+			// provision_user before the first token introspection), so the identity
+			// must be linked to it instead of forking the user onto a
+			// subject-derived localpart.
 			ctx := context.Background()
 			serverName := userAPI.Config.Matrix.ServerName
-			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "secret", "", api.AccountTypeUser); err != nil {
-				t.Fatalf("failed to create colliding account: %v", err)
+			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "", "", api.AccountTypeUser); err != nil {
+				t.Fatalf("failed to create pre-provisioned account: %v", err)
 			}
 
 			req := &api.QueryAccessTokenRequest{AccessToken: "collision-token-" + t.Name()}
@@ -1221,13 +1225,10 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if res.Device == nil {
-				t.Fatal("expected device when falling back to sub-derived localpart")
+				t.Fatal("expected device for linked account")
 			}
-			// The OIDC identity must not be attached to the existing @alice:test
-			// account; it falls back to the subject claim instead.
-			expectedUserID := "@" + sub + ":test"
-			if res.Device.UserID != expectedUserID {
-				t.Errorf("expected user ID %s, got %s", expectedUserID, res.Device.UserID)
+			if res.Device.UserID != "@alice:test" {
+				t.Errorf("expected user ID @alice:test, got %s", res.Device.UserID)
 			}
 
 			issuer := userAPI.Config.MSCs.MSC3861.Issuer
@@ -1235,12 +1236,12 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to look up external ID: %v", err)
 			}
-			if localpart != sub {
-				t.Errorf("expected mapping to sub-derived localpart %q, got %q", sub, localpart)
+			if localpart != "alice" {
+				t.Errorf("expected mapping to \"alice\", got %q", localpart)
 			}
 		})
 
-		t.Run("LocalpartCollisionHardFail", func(t *testing.T) {
+		t.Run("LocalpartCollisionLinksEvenWhenSubAccountAlsoExists", func(t *testing.T) {
 			sub := "opaque-uuid-taken"
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -1256,34 +1257,38 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
 			defer closeDB()
 
-			// Both the derived localpart and the subject-derived fallback are
-			// already taken by different accounts.
+			// The derived localpart is taken and an unrelated account also owns
+			// the subject-derived localpart. The username claim wins under
+			// delegated auth; the identity links to the account MAS would have
+			// provisioned.
 			ctx := context.Background()
 			serverName := userAPI.Config.Matrix.ServerName
-			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "secret", "", api.AccountTypeUser); err != nil {
-				t.Fatalf("failed to create colliding account: %v", err)
+			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "", "", api.AccountTypeUser); err != nil {
+				t.Fatalf("failed to create pre-provisioned account: %v", err)
 			}
-			if _, err := userAPI.DB.CreateAccount(ctx, sub, serverName, "secret", "", api.AccountTypeUser); err != nil {
-				t.Fatalf("failed to create colliding sub account: %v", err)
+			if _, err := userAPI.DB.CreateAccount(ctx, sub, serverName, "", "", api.AccountTypeUser); err != nil {
+				t.Fatalf("failed to create unrelated sub account: %v", err)
 			}
 
-			req := &api.QueryAccessTokenRequest{AccessToken: "hardfail-token-" + t.Name()}
+			req := &api.QueryAccessTokenRequest{AccessToken: "collision2-token-" + t.Name()}
 			res := &api.QueryAccessTokenResponse{}
 			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if res.Device != nil {
-				t.Errorf("expected nil device when all localparts collide, got %+v", res.Device)
+			if res.Device == nil {
+				t.Fatal("expected device linked to @alice:test")
+			}
+			if res.Device.UserID != "@alice:test" {
+				t.Errorf("expected user ID @alice:test, got %s", res.Device.UserID)
 			}
 
-			// No mapping must have been persisted.
 			issuer := userAPI.Config.MSCs.MSC3861.Issuer
 			localpart, _, err := userAPI.DB.GetLocalpartByExternalID(ctx, issuer, sub)
 			if err != nil {
 				t.Fatalf("failed to look up external ID: %v", err)
 			}
-			if localpart != "" {
-				t.Errorf("expected no external ID mapping, got %q", localpart)
+			if localpart != "alice" {
+				t.Errorf("expected mapping to \"alice\", got %q", localpart)
 			}
 		})
 
@@ -1579,6 +1584,11 @@ func makeTestUserAPI(t *testing.T, dbType test.DBType, introspectionServer *http
 		t.Fatalf("failed to create user DB: %v", err)
 	}
 
+	keyDB, err := storage.NewKeyDatabase(cm, &cfg.KeyServer.Database)
+	if err != nil {
+		t.Fatalf("failed to create key DB: %v", err)
+	}
+
 	syncProducer := producers.NewSyncAPI(
 		db, js,
 		cfg.Global.JetStream.Prefixed(jetstream.OutputClientData),
@@ -1586,7 +1596,13 @@ func makeTestUserAPI(t *testing.T, dbType test.DBType, introspectionServer *http
 	)
 
 	userAPI := &UserInternalAPI{
-		DB:           db,
+		DB:          db,
+		KeyDatabase: keyDB,
+		KeyChangeProducer: &producers.KeyChange{
+			Topic:     cfg.Global.JetStream.Prefixed(jetstream.OutputKeyChangeEvent),
+			JetStream: js,
+			DB:        keyDB,
+		},
 		Config:       &cfg.UserAPI,
 		RSAPI:        rsAPI,
 		SyncProducer: syncProducer,

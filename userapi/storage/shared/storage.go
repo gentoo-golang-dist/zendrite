@@ -461,6 +461,14 @@ func (d *Database) DeactivateAccount(ctx context.Context, localpart string, serv
 	})
 }
 
+// ReactivateAccount re-enables login for a previously deactivated account.
+// It is a no-op for accounts that are not deactivated.
+func (d *Database) ReactivateAccount(ctx context.Context, localpart string, serverName spec.ServerName) (err error) {
+	return d.Writer.Do(nil, nil, func(txn *sql.Tx) error {
+		return d.Accounts.ReactivateAccount(ctx, localpart, serverName)
+	})
+}
+
 // CreateOpenIDToken persists a new token that was issued for OpenID Connect.
 func (d *Database) CreateOpenIDToken(
 	ctx context.Context,

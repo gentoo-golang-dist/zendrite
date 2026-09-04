@@ -591,33 +591,20 @@ func (a *UserInternalAPI) provisionMSC3861Localpart(ctx context.Context, introsp
 		return "", nil
 	}
 
-	// Never attach an OIDC identity to a pre-existing account that merely
-	// happens to share the derived localpart (e.g. a password-registered
-	// account); fall back to the subject claim instead.
-	taken, err := a.localpartTaken(ctx, localpart, serverName)
-	if err != nil {
+	// Under delegated authentication an existing account with the derived
+	// localpart belongs to this very user: local password registration is
+	// disabled with MSC3861, and MAS refuses to register users whose localpart
+	// is already taken on the homeserver, so the account can only have been
+	// provisioned for this subject (typically by MAS calling provision_user
+	// before the first token introspection). Attach the identity to it rather
+	// than forking the user onto a subject-derived localpart.
+	if taken, err := a.localpartTaken(ctx, localpart, serverName); err != nil {
 		return "", err
-	}
-	if taken {
-		localpart = sanitizeLocalpart(introspection.Sub)
-		if err := zinternal.ValidateUsername(localpart, serverName); err != nil {
-			logrus.WithError(err).WithFields(logrus.Fields{
-				"localpart": localpart,
-				"sub":       sub,
-			}).Warn("MSC3861: subject-derived localpart is not valid")
-			return "", nil
-		}
-		taken, err = a.localpartTaken(ctx, localpart, serverName)
-		if err != nil {
-			return "", err
-		}
-		if taken {
-			logrus.WithFields(logrus.Fields{
-				"localpart": localpart,
-				"sub":       sub,
-			}).Warn("MSC3861: derived and subject localparts both collide with existing accounts, refusing to link")
-			return "", nil
-		}
+	} else if taken {
+		logrus.WithFields(logrus.Fields{
+			"localpart": localpart,
+			"sub":       sub,
+		}).Info("MSC3861: linking existing account with derived localpart")
 	}
 
 	if err := a.DB.CreateExternalIDMapping(ctx, localpart, serverName, issuer, sub); err != nil {

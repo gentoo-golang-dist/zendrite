@@ -42,14 +42,18 @@ The `redirect_uris` entry is only needed if you want the legacy SSO compatibilit
 See [Client support](#client-support).
 It must exactly match the callback URL Zendrite advertises, which is `{public_base_url}/_matrix/client/v3/login/sso/callback` unless you override it with `sso_callback_url`.
 
-MAS also needs to reach Zendrite's admin API, which it uses to provision users and devices:
+MAS also needs to reach Zendrite's provisioning API, which it uses to provision users and devices:
 
 ```yaml
 matrix:
+  kind: synapse
   homeserver: example.com
   endpoint: "http://localhost:8008"
   secret: "another-long-random-secret"
 ```
+
+The `kind` **must be `synapse`** (the default in MAS 1.21+).
+Do **not** use `synapse_legacy`: it makes MAS call Synapse's legacy `/_synapse/admin/v1|v2` endpoints, which Zendrite does not implement.
 
 That `matrix.secret` is the value you put in Zendrite's `admin_token`.
 Leaking it grants full admin access to the homeserver, so treat it like a root password.
@@ -174,8 +178,9 @@ On the first token introspection for an unknown subject, Zendrite picks a localp
 The result is lowercased and sanitised to a valid Matrix localpart.
 The mapping from the provider's `(issuer, sub)` to that localpart is then stored permanently, so a user's Matrix ID is stable even if they later change their email or display name at the provider.
 
-If the derived localpart is already taken by an unrelated account, Zendrite falls back to the subject claim rather than attaching the OIDC identity to a pre-existing account.
-If that is taken too, the login is refused instead of linking anything.
+If the derived localpart is already taken, the OIDC identity is linked to the existing account.
+Under delegated authentication such an account can only have been provisioned for this very user: local password registration is disabled, and MAS refuses to register users whose localpart is already taken on the homeserver (it checks `GET /_synapse/mas/is_localpart_available` first).
+This is what happens on a normal MAS login: MAS provisions the account through `POST /_synapse/mas/provision_user` before the first token introspection, so introspection finds the localpart taken and attaches the identity to it.
 
 Device IDs come from the token's `urn:matrix:client:device:<id>` scope.
 Tokens without a device scope share a fallback device called `OIDC`.
@@ -186,16 +191,28 @@ Accounts whose token carries the `urn:synapse:admin:*` scope are marked as serve
 
 Setting `admin_token` does two things.
 
-It registers the Synapse-compatible admin endpoints that MAS calls to manage users:
+It registers the MAS provisioning endpoints under `/_synapse/mas` that MAS calls to manage users and devices (the same API Synapse 1.135+ implements):
 
-- `GET /_synapse/admin/v1/username_available`
-- `GET|PUT /_synapse/admin/v1/users/{userId}`
-- `PUT|DELETE /_synapse/admin/v1/users/{userId}/devices/{deviceId}`
-- `DELETE /_synapse/admin/v1/users/{userId}/devices`
-- `POST /_synapse/admin/v1/users/{userId}/_deactivate`
-- `POST /_synapse/admin/v1/users/{userId}/_allow_cross_signing_replacement_without_uia`
+- `GET /_synapse/mas/query_user?localpart=...`
+- `POST /_synapse/mas/provision_user`
+- `GET /_synapse/mas/is_localpart_available?localpart=...`
+- `POST /_synapse/mas/upsert_device`
+- `POST /_synapse/mas/update_device_display_name`
+- `POST /_synapse/mas/delete_device`
+- `POST /_synapse/mas/sync_devices`
+- `POST /_synapse/mas/delete_user`
+- `POST /_synapse/mas/reactivate_user`
+- `POST /_synapse/mas/set_displayname`
+- `POST /_synapse/mas/unset_displayname`
+- `POST /_synapse/mas/allow_cross_signing_reset`
 
 These are authenticated with the admin token as a bearer token, not with a user access token.
+MAS must be configured with `matrix.kind: synapse` (the default in MAS 1.21+) and `matrix.secret` set to the same value as Zendrite's `admin_token`.
+
+The older `synapse_legacy` kind and the `/_synapse/admin/v1` user-management endpoints from previous Zendrite versions are **not** supported:
+MAS 1.21+ must use the `synapse` kind against Zendrite.
+If MAS logs 404 `M_UNRECOGNIZED` responses for `/_synapse/admin/v2/...` URLs, it is running in `synapse_legacy` mode; switch `matrix.kind` to `synapse`.
+
 If `admin_token` is unset the routes are not registered at all.
 
 It also lets the token itself be presented as an access token, which resolves to an admin device for `@admin:{server_name}`.
@@ -206,7 +223,7 @@ This is intended for service-to-service calls.
 Replacing a user's cross-signing keys normally requires user-interactive auth, which under delegated authentication cannot be a password check.
 Zendrite uses the `m.oauth` UIA type and deep-links the user to the account management UI.
 
-When `admin_token` is configured, the reset only completes after the provider confirms it by calling `_allow_cross_signing_replacement_without_uia`.
+When `admin_token` is configured, the reset only completes after the provider confirms it by calling `POST /_synapse/mas/allow_cross_signing_reset`.
 The confirmation is single-use and valid for 10 minutes.
 
 When `admin_token` is not configured there is no way for the provider to confirm anything, so Zendrite falls back to accepting a resubmitted challenge and logs a warning.
