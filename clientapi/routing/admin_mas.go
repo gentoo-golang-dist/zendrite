@@ -14,7 +14,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"time"
 
@@ -398,8 +397,11 @@ func MASProvisionUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi.
 		}
 	}
 
-	if err := internal.ValidateUsername(body.Localpart, cfg.Matrix.ServerName); err != nil {
-		return *internal.UsernameResponse(err)
+	// MAS only consults is_localpart_available for brand new registrations,
+	// so the namespace rules are enforced here as well for users it already
+	// knows about.
+	if errRes := validateLocalpartNamespace(cfg, body.Localpart, cfg.Matrix.ServerName); errRes != nil {
+		return *errRes
 	}
 
 	// Emails and the locked flag are owned by MAS under delegated auth:
@@ -461,48 +463,21 @@ func MASProvisionUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi.
 
 // MASIsLocalpartAvailable reports whether a localpart can be registered. MAS
 // reads only the errcode: any 2xx means available, M_USER_IN_USE /
-// M_INVALID_USERNAME / M_EXCLUSIVE mean taken or invalid.
+// M_INVALID_USERNAME / M_EXCLUSIVE mean taken or invalid. The localpart is
+// checked exactly as sent, like provision_user validates it, so a name
+// reported as available is guaranteed to provision.
 // GET /_synapse/mas/is_localpart_available?localpart=alice.
 func MASIsLocalpartAvailable(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	localpart := req.URL.Query().Get("localpart")
 	if errRes := masRequireLocalpart(localpart); errRes != nil {
 		return *errRes
 	}
-	localpart = strings.ToLower(localpart)
 
-	if err := internal.ValidateUsername(localpart, cfg.Matrix.ServerName); err != nil {
-		return *internal.UsernameResponse(err)
-	}
-
-	// A localpart reserved by an application service namespace is not
-	// available, reported as M_EXCLUSIVE.
-	userID := userutil.MakeUserID(localpart, cfg.Matrix.ServerName)
-	for _, appservice := range cfg.Derived.ApplicationServices {
-		if appservice.OwnsNamespaceCoveringUserId(userID) {
-			return util.JSONResponse{
-				Code: http.StatusBadRequest,
-				JSON: spec.ASExclusive("Localpart is reserved by an application service"),
-			}
+	if errRes := checkLocalpartRegistrable(req.Context(), cfg, userAPI, localpart, cfg.Matrix.ServerName); errRes != nil {
+		if errRes.Code == http.StatusInternalServerError {
+			logrus.WithField("localpart", localpart).Error("MAS admin: failed to check localpart availability")
 		}
-	}
-
-	var availRes userapi.QueryAccountAvailabilityResponse
-	if err := userAPI.QueryAccountAvailability(req.Context(), &userapi.QueryAccountAvailabilityRequest{
-		Localpart:  localpart,
-		ServerName: cfg.Matrix.ServerName,
-	}, &availRes); err != nil {
-		logrus.WithError(err).Error("MAS admin: failed to check localpart availability")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
-
-	if !availRes.Available {
-		return util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: spec.UserInUse("Localpart is already taken"),
-		}
+		return *errRes
 	}
 
 	return util.JSONResponse{

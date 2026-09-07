@@ -203,8 +203,9 @@ func TestMASQueryUser(t *testing.T) {
 }
 
 func TestMASProvisionUser(t *testing.T) {
-	routers, _, closeDB := setupMSC3861Routers(t)
+	routers, cfg, closeDB := setupMSC3861Routers(t)
 	defer closeDB()
+	registerExclusiveNamespace(cfg)
 
 	provision := func(body string) *httptest.ResponseRecorder {
 		return masAdminCall(t, routers, http.MethodPost, "/_synapse/mas/provision_user", "test-admin-token", body)
@@ -249,6 +250,18 @@ func TestMASProvisionUser(t *testing.T) {
 		}
 	})
 
+	t.Run("ExclusiveNamespaceRejected", func(t *testing.T) {
+		// MAS skips is_localpart_available for users it already knows about,
+		// so provisioning must enforce appservice namespaces itself.
+		rec := provision(`{"localpart":"exclusivetag"}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if code := masErrcode(t, rec); code != "M_EXCLUSIVE" {
+			t.Errorf("expected M_EXCLUSIVE, got %s", code)
+		}
+	})
+
 	t.Run("SetAndUnsetConflict", func(t *testing.T) {
 		for _, body := range []string{
 			`{"localpart":"conflict","set_displayname":"a","unset_displayname":true}`,
@@ -285,14 +298,11 @@ func TestMASProvisionUser(t *testing.T) {
 	})
 }
 
-func TestMASIsLocalpartAvailable(t *testing.T) {
-	routers, cfg, closeDB := setupMSC3861Routers(t)
-	defer closeDB()
-
-	// Register a second exclusive namespace whose localparts pass username
-	// validation, to cover the M_EXCLUSIVE branch (the shared harness's
-	// @_appservice_* namespace is unreachable here because leading underscores
-	// fail validation first).
+// registerExclusiveNamespace adds an exclusive appservice namespace whose
+// localparts pass username validation, to reach the M_EXCLUSIVE branch (the
+// shared harness's @_appservice_* namespace is unreachable because leading
+// underscores fail validation first).
+func registerExclusiveNamespace(cfg *config.Zendrite) {
 	exclusiveRegex := regexp.MustCompile(`@exclusive.*:test`)
 	cfg.ClientAPI.Derived.ApplicationServices = append(cfg.ClientAPI.Derived.ApplicationServices, config.ApplicationService{
 		ID:              "exclusive-as",
@@ -310,6 +320,13 @@ func TestMASIsLocalpartAvailable(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestMASIsLocalpartAvailable(t *testing.T) {
+	routers, cfg, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	registerExclusiveNamespace(cfg)
 
 	masAdminCall(t, routers, http.MethodPost, "/_synapse/mas/provision_user", "test-admin-token", `{"localpart":"taken"}`)
 
@@ -322,6 +339,7 @@ func TestMASIsLocalpartAvailable(t *testing.T) {
 		{"available", "freshtag", 200, ""},
 		{"taken", "taken", 400, "M_USER_IN_USE"},
 		{"invalid", "NOT VALID!", 400, "M_INVALID_USERNAME"},
+		{"uppercase is not folded", "Alice", 400, "M_INVALID_USERNAME"},
 		{"appservice underscore prefix", "_appservice_bot", 400, "M_INVALID_USERNAME"},
 		{"appservice exclusive", "exclusivetag", 400, "M_EXCLUSIVE"},
 		{"missing param", "", 400, "M_MISSING_PARAM"},
