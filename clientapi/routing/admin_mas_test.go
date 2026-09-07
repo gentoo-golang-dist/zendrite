@@ -16,6 +16,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/test"
+	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // These tests exercise the /_synapse/mas provisioning endpoints through the
@@ -475,7 +476,7 @@ func TestMASDeleteDevice(t *testing.T) {
 }
 
 func TestMASSyncDevices(t *testing.T) {
-	routers, _, closeDB := setupMSC3861Routers(t)
+	routers, cfg, userAPI, closeDB := setupMSC3861Stack(t, test.DBTypeSQLite, nil)
 	defer closeDB()
 
 	masAdminCall(t, routers, http.MethodPost, "/_synapse/mas/provision_user", "test-admin-token", `{"localpart":"syncuser"}`)
@@ -493,6 +494,42 @@ func TestMASSyncDevices(t *testing.T) {
 		rec := masAdminCall(t, routers, http.MethodPost, "/_synapse/mas/sync_devices", "test-admin-token", `{"localpart":"syncuser"}`)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("SyncKeepsFallbackOIDCDevice", func(t *testing.T) {
+		// Tokens without a device scope are bound to a synthetic device that
+		// MAS never lists, so the sync must not delete it.
+		token := "fallback-token"
+		var createRes userapi.PerformDeviceCreationResponse
+		fallbackID := userapi.MSC3861FallbackDeviceID
+		if err := userAPI.PerformDeviceCreation(t.Context(), &userapi.PerformDeviceCreationRequest{
+			Localpart:          "syncuser",
+			ServerName:         cfg.Global.ServerName,
+			AccessToken:        token,
+			DeviceID:           &fallbackID,
+			NoDeviceListUpdate: true,
+		}, &createRes); err != nil {
+			t.Fatalf("failed to create fallback device: %v", err)
+		}
+
+		rec := masAdminCall(t, routers, http.MethodPost, "/_synapse/mas/sync_devices", "test-admin-token", `{"localpart":"syncuser","devices":["KEEP1"]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var devices userapi.QueryDevicesResponse
+		if err := userAPI.QueryDevices(t.Context(), &userapi.QueryDevicesRequest{UserID: "@syncuser:" + string(cfg.Global.ServerName)}, &devices); err != nil {
+			t.Fatalf("QueryDevices failed: %v", err)
+		}
+		found := false
+		for _, d := range devices.Devices {
+			if d.ID == userapi.MSC3861FallbackDeviceID {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("fallback device %q must survive sync_devices, got %+v", userapi.MSC3861FallbackDeviceID, devices.Devices)
 		}
 	})
 

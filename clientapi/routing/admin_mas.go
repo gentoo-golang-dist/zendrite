@@ -704,8 +704,9 @@ type masSyncDevicesRequest struct {
 
 // MASSyncDevices reconciles the stored device list with the set of device IDs
 // MAS reports: devices absent from the set are deleted, missing ones created.
-// The dehydrated device (MSC3814) has no MAS session and is never in the
-// target set, so it is excluded from deletion.
+// The dehydrated device (MSC3814) and the fallback OIDC device have no MAS
+// session and are never in the target set, so both are excluded from
+// deletion.
 // POST /_synapse/mas/sync_devices.
 func MASSyncDevices(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masSyncDevicesRequest
@@ -753,9 +754,11 @@ func MASSyncDevices(req *http.Request, cfg *config.ClientAPI, userAPI userapi.Cl
 		current[d.ID] = struct{}{}
 	}
 
+	// The fallback device that binds tokens without a device scope has no
+	// MAS session either and must survive as well.
 	var toDelete []string
 	for id := range current {
-		if _, ok := target[id]; !ok && id != dehydratedID {
+		if _, ok := target[id]; !ok && id != dehydratedID && id != userapi.MSC3861FallbackDeviceID {
 			toDelete = append(toDelete, id)
 		}
 	}

@@ -104,7 +104,7 @@ const (
 	deviceScopePrefix                = "urn:matrix:device:"
 	legacyDeviceScopePrefix          = "urn:matrix:org.matrix.msc2967.client:device:"
 	// DeviceID used when the token scope carries no device ID.
-	defaultOIDCDeviceID = "OIDC"
+	defaultOIDCDeviceID = api.MSC3861FallbackDeviceID
 	// The RFC 7591 client authentication methods we support for introspection.
 	clientAuthMethodBasic = "client_secret_basic"
 	clientAuthMethodPost  = "client_secret_post"

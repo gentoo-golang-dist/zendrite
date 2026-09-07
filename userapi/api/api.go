@@ -523,6 +523,11 @@ type Conflict int
 // AccountType is an enum representing the kind of account.
 type AccountType int
 
+// MSC3861FallbackDeviceID is the device ID bound to OIDC access tokens whose
+// scope carries no device. MAS never lists it, so device reconciliation must
+// leave it alone.
+const MSC3861FallbackDeviceID = "OIDC"
+
 const (
 	// ConflictUpdate will update matching records returning no error.
 	ConflictUpdate Conflict = 1
