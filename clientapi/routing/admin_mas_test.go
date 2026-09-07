@@ -15,6 +15,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
+	"codefloe.com/pat-s/zendrite/test"
 )
 
 // These tests exercise the /_synapse/mas provisioning endpoints through the
@@ -668,5 +669,31 @@ func TestMASRoutesNotRegisteredWithoutAdminToken(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s: expected 404, got %d", path, rec.Code)
 		}
+	}
+}
+
+func TestMASRoutesAreRateLimited(t *testing.T) {
+	routers, _, _, closeDB := setupMSC3861Stack(t, test.DBTypeSQLite, func(cfg *config.Zendrite) {
+		cfg.ClientAPI.RateLimiting = config.RateLimiting{
+			Enabled:   true,
+			Threshold: 1,
+			CooloffMS: 60_000,
+		}
+	})
+	defer closeDB()
+
+	// The limiter keys unauthenticated callers by remote address, so a
+	// second request from the same client within the cooloff must be
+	// rejected before the admin token is even checked.
+	first := masAdminCall(t, routers, http.MethodGet, "/_synapse/mas/query_user?localpart=alice", "wrong-token", "")
+	if first.Code != http.StatusForbidden {
+		t.Fatalf("expected first call to reach token verification (403), got %d: %s", first.Code, first.Body.String())
+	}
+	second := masAdminCall(t, routers, http.MethodGet, "/_synapse/mas/query_user?localpart=alice", "wrong-token", "")
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second call to be rate limited (429), got %d: %s", second.Code, second.Body.String())
+	}
+	if errcode := masErrcode(t, second); errcode != "M_LIMIT_EXCEEDED" {
+		t.Errorf("expected M_LIMIT_EXCEEDED, got %s", errcode)
 	}
 }

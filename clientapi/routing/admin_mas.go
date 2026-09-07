@@ -82,9 +82,14 @@ func verifyMASAdminToken(req *http.Request, adminToken string) *util.JSONRespons
 	return nil
 }
 
-// masRoute wraps a MAS admin endpoint handler with bearer-token auth.
-func masRoute(name, adminToken string, h func(*http.Request) util.JSONResponse) http.Handler {
+// masRoute wraps a MAS admin endpoint handler with per-caller rate limiting
+// and bearer-token auth. The limiter runs first so that guessing the admin
+// token is throttled like any other unauthenticated request.
+func masRoute(name, adminToken string, rateLimits *httputil.RateLimits, h func(*http.Request) util.JSONResponse) http.Handler {
 	return httputil.MakeExternalAPI("mas_"+name, func(req *http.Request) util.JSONResponse {
+		if r := rateLimits.Limit(req, nil); r != nil {
+			return *r
+		}
 		if errRes := verifyMASAdminToken(req, adminToken); errRes != nil {
 			return *errRes
 		}
@@ -118,12 +123,13 @@ func setupMASAdminRoutes(
 	mscCfg *config.MSCs,
 	cfg *config.ClientAPI,
 	userAPI userapi.ClientUserAPI,
+	rateLimits *httputil.RateLimits,
 ) {
 	adminToken := mscCfg.MSC3861.AdminToken
 
 	handle := func(path, name string, methods ...string) func(func(*http.Request) util.JSONResponse) {
 		return func(h func(*http.Request) util.JSONResponse) {
-			synapseAdminRouter.Handle(path, masRoute(name, adminToken, h)).Methods(methods...)
+			synapseAdminRouter.Handle(path, masRoute(name, adminToken, rateLimits, h)).Methods(methods...)
 		}
 	}
 
@@ -156,7 +162,7 @@ func setupMASAdminRoutes(
 	// delete_device must return a bodyless 204, so it needs the body
 	// stripping wrapper around the standard JSON handler.
 	synapseAdminRouter.Handle("/mas/delete_device",
-		masNoContentOn204(masRoute("delete_device", adminToken, func(req *http.Request) util.JSONResponse {
+		masNoContentOn204(masRoute("delete_device", adminToken, rateLimits, func(req *http.Request) util.JSONResponse {
 			return MASDeleteDevice(req, cfg, userAPI)
 		})),
 	).Methods(http.MethodPost, http.MethodOptions)

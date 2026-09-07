@@ -28,6 +28,7 @@ import (
 	"codefloe.com/pat-s/zendrite/test"
 	"codefloe.com/pat-s/zendrite/test/testrig"
 	"codefloe.com/pat-s/zendrite/userapi"
+	userapiAPI "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // setupMSC3861Routers creates a full router stack with MSC3861 enabled for testing.
@@ -37,7 +38,18 @@ import (
 // same CI database.
 func setupMSC3861Routers(t *testing.T) (httputil.Routers, *config.Zendrite, func()) {
 	t.Helper()
-	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
+	routers, cfg, _, closeDB := setupMSC3861Stack(t, test.DBTypeSQLite, nil)
+	return routers, cfg, closeDB
+}
+
+// setupMSC3861Stack builds the MSC3861-enabled router stack on the given
+// database backend and also returns the user API for direct state setup and
+// assertions. The customize callback, when non-nil, runs on the config before the stack is
+// constructed so tests can override rate limiting, the introspection endpoint
+// and similar settings.
+func setupMSC3861Stack(t *testing.T, dbType test.DBType, customize func(cfg *config.Zendrite)) (httputil.Routers, *config.Zendrite, userapiAPI.ClientUserAPI, func()) {
+	t.Helper()
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
 	cfg.ClientAPI.RateLimiting.Enabled = false
 	cfg.MSCs.MSCs = []string{"msc3861"}
 	cfg.MSCs.MSC3861 = config.MSC3861Config{
@@ -71,6 +83,9 @@ func setupMSC3861Routers(t *testing.T) (httputil.Routers, *config.Zendrite, func
 			},
 		},
 	}
+	if customize != nil {
+		customize(cfg)
+	}
 
 	natsInstance := jetstream.NATSInstance{}
 	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
@@ -82,7 +97,7 @@ func setupMSC3861Routers(t *testing.T) (httputil.Routers, *config.Zendrite, func
 	routers := httputil.NewRouters()
 	Setup(routers, cfg, nil, nil, userAPI, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
 
-	return routers, cfg, closeDB
+	return routers, cfg, userAPI, closeDB
 }
 
 func TestMSC3861_DisabledEndpoints(t *testing.T) {
