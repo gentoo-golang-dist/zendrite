@@ -95,6 +95,8 @@ type ClientUserAPI interface {
 	QueryPushers(ctx context.Context, req *QueryPushersRequest, res *QueryPushersResponse) error
 	QueryPushRules(ctx context.Context, userID string) (*pushrules.AccountRuleSets, error)
 	QueryAccountAvailability(ctx context.Context, req *QueryAccountAvailabilityRequest, res *QueryAccountAvailabilityResponse) error
+	QueryAccountByLocalpart(ctx context.Context, req *QueryAccountByLocalpartRequest, res *QueryAccountByLocalpartResponse) (err error)
+	IsAccountDeactivated(ctx context.Context, localpart string, serverName spec.ServerName) (bool, error)
 	PerformAdminCreateRegistrationToken(ctx context.Context, registrationToken *clientapi.RegistrationToken) (bool, error)
 	PerformAdminListRegistrationTokens(ctx context.Context, returnAll bool, valid bool) ([]clientapi.RegistrationToken, error)
 	PerformAdminGetRegistrationToken(ctx context.Context, tokenString string) (*clientapi.RegistrationToken, error)

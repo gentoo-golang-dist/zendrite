@@ -10,10 +10,9 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
 
+	clienthttputil "codefloe.com/pat-s/zendrite/clientapi/httputil"
 	"codefloe.com/pat-s/zendrite/clientapi/userutil"
 	"codefloe.com/pat-s/zendrite/internal"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
@@ -96,25 +96,6 @@ func masRoute(name, adminToken string, rateLimits *httputil.RateLimits, h func(*
 	})
 }
 
-// masNoContentOn204 strips the response body for 204 responses, which must
-// not carry a body per RFC 9110. The stock JSON wrapper always writes one.
-func masNoContentOn204(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		result := rec.Result()
-		for header, vals := range result.Header {
-			for _, val := range vals {
-				w.Header().Add(header, val)
-			}
-		}
-		w.WriteHeader(result.StatusCode)
-		if result.StatusCode != http.StatusNoContent && result.StatusCode != http.StatusNotModified {
-			_, _ = w.Write(rec.Body.Bytes())
-		}
-	})
-}
-
 // setupMASAdminRoutes registers the /_synapse/mas provisioning endpoints that
 // MAS calls with its shared secret as a bearer token.
 func setupMASAdminRoutes(
@@ -126,96 +107,28 @@ func setupMASAdminRoutes(
 ) {
 	adminToken := mscCfg.MSC3861.AdminToken
 
-	handle := func(path, name string, methods ...string) func(func(*http.Request) util.JSONResponse) {
-		return func(h func(*http.Request) util.JSONResponse) {
-			synapseAdminRouter.Handle(path, masRoute(name, adminToken, rateLimits, h)).Methods(methods...)
-		}
+	handle := func(path, name string, h masHandler, methods ...string) {
+		synapseAdminRouter.Handle(path, masRoute(name, adminToken, rateLimits, func(req *http.Request) util.JSONResponse {
+			return h(req, cfg, userAPI)
+		})).Methods(methods...)
 	}
 
-	// GET /_synapse/mas/query_user
-	handle("/mas/query_user", "query_user", http.MethodGet, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASQueryUser(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/provision_user
-	handle("/mas/provision_user", "provision_user", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASProvisionUser(req, cfg, userAPI)
-	})
-
-	// GET /_synapse/mas/is_localpart_available
-	handle("/mas/is_localpart_available", "is_localpart_available", http.MethodGet, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASIsLocalpartAvailable(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/upsert_device
-	handle("/mas/upsert_device", "upsert_device", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASUpsertDevice(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/update_device_display_name
-	handle("/mas/update_device_display_name", "update_device_display_name", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASUpdateDeviceDisplayName(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/delete_device (responds 204 without a body)
-	// delete_device must return a bodyless 204, so it needs the body
-	// stripping wrapper around the standard JSON handler.
-	synapseAdminRouter.Handle("/mas/delete_device",
-		masNoContentOn204(masRoute("delete_device", adminToken, rateLimits, func(req *http.Request) util.JSONResponse {
-			return MASDeleteDevice(req, cfg, userAPI)
-		})),
-	).Methods(http.MethodPost, http.MethodOptions)
-
-	// POST /_synapse/mas/sync_devices
-	handle("/mas/sync_devices", "sync_devices", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASSyncDevices(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/delete_user
-	handle("/mas/delete_user", "delete_user", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASDeleteUser(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/reactivate_user
-	handle("/mas/reactivate_user", "reactivate_user", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASReactivateUser(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/set_displayname
-	handle("/mas/set_displayname", "set_displayname", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASSetDisplayName(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/unset_displayname
-	handle("/mas/unset_displayname", "unset_displayname", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASUnsetDisplayName(req, cfg, userAPI)
-	})
-
-	// POST /_synapse/mas/allow_cross_signing_reset
-	handle("/mas/allow_cross_signing_reset", "allow_cross_signing_reset", http.MethodPost, http.MethodOptions)(func(req *http.Request) util.JSONResponse {
-		return MASAllowCrossSigningReset(req, cfg, userAPI)
-	})
+	handle("/mas/query_user", "query_user", MASQueryUser, http.MethodGet, http.MethodOptions)
+	handle("/mas/provision_user", "provision_user", MASProvisionUser, http.MethodPost, http.MethodOptions)
+	handle("/mas/is_localpart_available", "is_localpart_available", MASIsLocalpartAvailable, http.MethodGet, http.MethodOptions)
+	handle("/mas/upsert_device", "upsert_device", MASUpsertDevice, http.MethodPost, http.MethodOptions)
+	handle("/mas/update_device_display_name", "update_device_display_name", MASUpdateDeviceDisplayName, http.MethodPost, http.MethodOptions)
+	handle("/mas/delete_device", "delete_device", MASDeleteDevice, http.MethodPost, http.MethodOptions)
+	handle("/mas/sync_devices", "sync_devices", MASSyncDevices, http.MethodPost, http.MethodOptions)
+	handle("/mas/delete_user", "delete_user", MASDeleteUser, http.MethodPost, http.MethodOptions)
+	handle("/mas/reactivate_user", "reactivate_user", MASReactivateUser, http.MethodPost, http.MethodOptions)
+	handle("/mas/set_displayname", "set_displayname", MASSetDisplayName, http.MethodPost, http.MethodOptions)
+	handle("/mas/unset_displayname", "unset_displayname", MASUnsetDisplayName, http.MethodPost, http.MethodOptions)
+	handle("/mas/allow_cross_signing_reset", "allow_cross_signing_reset", MASAllowCrossSigningReset, http.MethodPost, http.MethodOptions)
 }
 
-// masDecodeBody decodes the request body into v, returning a 400 response on
-// parse failure.
-func masDecodeBody(req *http.Request, v any) *util.JSONResponse {
-	if req.Body == nil {
-		res := util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: spec.BadJSON("Missing request body"),
-		}
-		return &res
-	}
-	if err := json.NewDecoder(req.Body).Decode(v); err != nil {
-		res := util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: spec.BadJSON("Failed to parse request body: " + err.Error()),
-		}
-		return &res
-	}
-	return nil
-}
+// masHandler is the shared signature of every /_synapse/mas endpoint.
+type masHandler func(*http.Request, *config.ClientAPI, userapi.ClientUserAPI) util.JSONResponse
 
 // masRequireLocalpart returns a 400 response when the localpart is empty.
 func masRequireLocalpart(localpart string) *util.JSONResponse {
@@ -229,18 +142,6 @@ func masRequireLocalpart(localpart string) *util.JSONResponse {
 	return nil
 }
 
-// accountByLocalpartQuerier is implemented by the full user internal API. It
-// is asserted at runtime so these handlers only depend on ClientUserAPI.
-type accountByLocalpartQuerier interface {
-	QueryAccountByLocalpart(ctx context.Context, req *userapi.QueryAccountByLocalpartRequest, res *userapi.QueryAccountByLocalpartResponse) error
-}
-
-// accountDeactivationQuerier is implemented by the full user internal API. It
-// is asserted at runtime so these handlers only depend on ClientUserAPI.
-type accountDeactivationQuerier interface {
-	IsAccountDeactivated(ctx context.Context, localpart string, serverName spec.ServerName) (bool, error)
-}
-
 // masLookupAccount validates the localpart and verifies that an account
 // exists for it, returning a 404/400/500 response when validation fails or
 // the account is unknown.
@@ -250,21 +151,12 @@ func masLookupAccount(ctx context.Context, userAPI userapi.ClientUserAPI, cfg *c
 	}
 
 	var accRes userapi.QueryAccountByLocalpartResponse
-	querier, ok := userAPI.(accountByLocalpartQuerier)
-	if !ok {
-		logrus.Error("MAS admin: user API does not support QueryAccountByLocalpart")
-		res := util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-		return &res
-	}
-	err := querier.QueryAccountByLocalpart(ctx, &userapi.QueryAccountByLocalpartRequest{
+	err := userAPI.QueryAccountByLocalpart(ctx, &userapi.QueryAccountByLocalpartRequest{
 		Localpart:  localpart,
 		ServerName: cfg.Matrix.ServerName,
 	}, &accRes)
 	switch {
-	case errors.Is(err, sql.ErrNoRows):
+	case errors.Is(err, sql.ErrNoRows), err == nil && accRes.Account == nil:
 		res := util.JSONResponse{
 			Code: http.StatusNotFound,
 			JSON: spec.NotFound("User not found"),
@@ -275,12 +167,6 @@ func masLookupAccount(ctx context.Context, userAPI userapi.ClientUserAPI, cfg *c
 		res := util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
-		}
-		return &res
-	case accRes.Account == nil:
-		res := util.JSONResponse{
-			Code: http.StatusNotFound,
-			JSON: spec.NotFound("User not found"),
 		}
 		return &res
 	}
@@ -328,15 +214,10 @@ func MASQueryUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi.Clie
 
 	// The deactivated flag lives on a separate query; a failure here must not
 	// hide the account either.
-	var deactivated bool
-	if dq, ok := userAPI.(accountDeactivationQuerier); ok {
-		deactivated, err = dq.IsAccountDeactivated(req.Context(), localpart, cfg.Matrix.ServerName)
-		if err != nil {
-			logrus.WithError(err).WithField("user_id", userID).Warn("MAS admin: failed to query deactivation state")
-			deactivated = false
-		}
-	} else {
-		logrus.Error("MAS admin: user API does not support IsAccountDeactivated")
+	deactivated, err := userAPI.IsAccountDeactivated(req.Context(), localpart, cfg.Matrix.ServerName)
+	if err != nil {
+		logrus.WithError(err).WithField("user_id", userID).Warn("MAS admin: failed to query deactivation state")
+		deactivated = false
 	}
 
 	// Zendrite has no suspension concept; suspended users are already blocked
@@ -371,7 +252,7 @@ type masProvisionUserRequest struct {
 // POST /_synapse/mas/provision_user.
 func MASProvisionUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masProvisionUserRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -505,7 +386,7 @@ type masDeviceResponse struct {
 // POST /_synapse/mas/upsert_device.
 func MASUpsertDevice(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masUpsertDeviceRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -557,27 +438,8 @@ func MASUpsertDevice(req *http.Request, cfg *config.ClientAPI, userAPI userapi.C
 		}
 	}
 
-	// Generate a placeholder access token since the DB requires unique tokens.
-	// MAS will supply the real token during OIDC login flows.
-	placeholderToken, err := generatePlaceholderToken()
-	if err != nil {
-		logrus.WithError(err).Error("MAS admin: failed to generate placeholder access token")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
-
-	var deviceRes userapi.PerformDeviceCreationResponse
-	if err := userAPI.PerformDeviceCreation(req.Context(), &userapi.PerformDeviceCreationRequest{
-		Localpart:          body.Localpart,
-		ServerName:         cfg.Matrix.ServerName,
-		AccessToken:        placeholderToken,
-		DeviceID:           &body.DeviceID,
-		DeviceDisplayName:  body.DisplayName,
-		NoDeviceListUpdate: true,
-	}, &deviceRes); err != nil {
-		logrus.WithError(err).Error("MAS admin: failed to create device")
+	if err := masCreateDevice(req.Context(), userAPI, cfg, body.Localpart, body.DeviceID, body.DisplayName); err != nil {
+		logrus.WithError(err).WithField("device_id", body.DeviceID).Error("MAS admin: failed to create device")
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
@@ -602,7 +464,7 @@ type masDeviceDisplayNameRequest struct {
 // POST /_synapse/mas/update_device_display_name.
 func MASUpdateDeviceDisplayName(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masDeviceDisplayNameRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -657,11 +519,13 @@ type masDeviceIDRequest struct {
 	DeviceID  string `json:"device_id"`
 }
 
-// MASDeleteDevice deletes a single device and responds with a bodyless 204.
+// MASDeleteDevice deletes a single device and responds 204. The Go HTTP server never
+// writes a body for that status, so the JSON wrapper's payload is dropped
+// on the wire.
 // POST /_synapse/mas/delete_device.
 func MASDeleteDevice(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masDeviceIDRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -710,7 +574,7 @@ type masSyncDevicesRequest struct {
 // POST /_synapse/mas/sync_devices.
 func MASSyncDevices(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masSyncDevicesRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -784,22 +648,7 @@ func MASSyncDevices(req *http.Request, cfg *config.ClientAPI, userAPI userapi.Cl
 	}
 
 	for _, id := range toAdd {
-		placeholderToken, err := generatePlaceholderToken()
-		if err != nil {
-			logrus.WithError(err).Error("MAS admin: failed to generate placeholder access token")
-			return util.JSONResponse{
-				Code: http.StatusInternalServerError,
-				JSON: spec.InternalServerError{},
-			}
-		}
-		var deviceRes userapi.PerformDeviceCreationResponse
-		if err := userAPI.PerformDeviceCreation(req.Context(), &userapi.PerformDeviceCreationRequest{
-			Localpart:          body.Localpart,
-			ServerName:         cfg.Matrix.ServerName,
-			AccessToken:        placeholderToken,
-			DeviceID:           &id,
-			NoDeviceListUpdate: true,
-		}, &deviceRes); err != nil {
+		if err := masCreateDevice(req.Context(), userAPI, cfg, body.Localpart, id, nil); err != nil {
 			logrus.WithError(err).WithField("device_id", id).Error("MAS admin: failed to create device during sync")
 			return util.JSONResponse{
 				Code: http.StatusInternalServerError,
@@ -826,7 +675,7 @@ type masDeleteUserRequest struct {
 // POST /_synapse/mas/delete_user.
 func MASDeleteUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masDeleteUserRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -868,7 +717,7 @@ type masLocalpartOnlyRequest struct {
 // POST /_synapse/mas/reactivate_user.
 func MASReactivateUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masLocalpartOnlyRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -915,7 +764,7 @@ type masSetDisplayNameRequest struct {
 // POST /_synapse/mas/set_displayname.
 func MASSetDisplayName(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masSetDisplayNameRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -950,7 +799,7 @@ func MASSetDisplayName(req *http.Request, cfg *config.ClientAPI, userAPI userapi
 // POST /_synapse/mas/unset_displayname.
 func MASUnsetDisplayName(req *http.Request, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI) util.JSONResponse {
 	var body masLocalpartOnlyRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -1017,7 +866,7 @@ func consumeMASCrossSigningConfirmation(userID string) bool {
 // POST /_synapse/mas/allow_cross_signing_reset.
 func MASAllowCrossSigningReset(req *http.Request, cfg *config.ClientAPI, _ userapi.ClientUserAPI) util.JSONResponse {
 	var body masLocalpartOnlyRequest
-	if errRes := masDecodeBody(req, &body); errRes != nil {
+	if errRes := clienthttputil.UnmarshalJSONRequest(req, &body); errRes != nil {
 		return *errRes
 	}
 	if errRes := masRequireLocalpart(body.Localpart); errRes != nil {
@@ -1033,6 +882,26 @@ func MASAllowCrossSigningReset(req *http.Request, cfg *config.ClientAPI, _ usera
 		Code: http.StatusOK,
 		JSON: struct{}{},
 	}
+}
+
+// masCreateDevice creates a device row for a MAS-provisioned session. The
+// row carries a placeholder access token because the database requires one;
+// the introspection path swaps in the real token on the client's first
+// request.
+func masCreateDevice(ctx context.Context, userAPI userapi.ClientUserAPI, cfg *config.ClientAPI, localpart, deviceID string, displayName *string) error {
+	placeholderToken, err := generatePlaceholderToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate placeholder access token: %w", err)
+	}
+	var deviceRes userapi.PerformDeviceCreationResponse
+	return userAPI.PerformDeviceCreation(ctx, &userapi.PerformDeviceCreationRequest{
+		Localpart:          localpart,
+		ServerName:         cfg.Matrix.ServerName,
+		AccessToken:        placeholderToken,
+		DeviceID:           &deviceID,
+		DeviceDisplayName:  displayName,
+		NoDeviceListUpdate: true,
+	}, &deviceRes)
 }
 
 // generatePlaceholderToken creates a unique placeholder access token for
