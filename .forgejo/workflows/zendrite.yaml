@@ -33,6 +33,7 @@ jobs:
               - '.pre-commit-config.yaml'
               - '.forgejo/workflows/**'
               - 'Dockerfile'
+              - 'build/scripts/**'
 
   # Run golangci-lint
   lint:
