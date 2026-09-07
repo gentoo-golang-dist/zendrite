@@ -169,18 +169,20 @@ Keep the list as tight as you can.
 
 ## How accounts are provisioned
 
-On the first token introspection for an unknown subject, Zendrite picks a localpart in this order:
+On the first token introspection for an unknown subject, Zendrite picks a localpart and stores the mapping from the provider's `(issuer, sub)` to it permanently, so a user's Matrix ID is stable even if they later change their email or display name at the provider.
+How the localpart is picked depends on whether MAS provisioning is enabled.
+
+With `admin_token` set, the `username` claim is the localpart MAS already provisioned through `POST /_synapse/mas/provision_user`, so it is used exactly as sent and the identity is attached to that account.
+A username that is not a valid Matrix localpart is refused rather than rewritten, because a rewritten name could resolve to a different user's account.
+
+Without `admin_token`, Zendrite derives a localpart in this order:
 
 1. The `email` claim, but **only** when the provider also reports `email_verified: true`. If the domain matches your server name, it is stripped, so `alice@example.com` becomes `@alice:example.com`.
 2. The `username` claim.
 3. The `sub` claim, for providers that expose no username.
 
 The result is lowercased and sanitised to a valid Matrix localpart.
-The mapping from the provider's `(issuer, sub)` to that localpart is then stored permanently, so a user's Matrix ID is stable even if they later change their email or display name at the provider.
-
-If the derived localpart is already taken, the OIDC identity is linked to the existing account.
-Under delegated authentication such an account can only have been provisioned for this very user: local password registration is disabled, and MAS refuses to register users whose localpart is already taken on the homeserver (it checks `GET /_synapse/mas/is_localpart_available` first).
-This is what happens on a normal MAS login: MAS provisions the account through `POST /_synapse/mas/provision_user` before the first token introspection, so introspection finds the localpart taken and attaches the identity to it.
+If that localpart already belongs to an account, the identity is **not** linked to it: Zendrite falls back to a localpart derived from the `sub` claim, and refuses the login when that one is taken as well.
 
 Device IDs come from the token's `urn:matrix:client:device:<id>` scope.
 Tokens without a device scope share a fallback device called `OIDC`.
@@ -209,8 +211,7 @@ It registers the MAS provisioning endpoints under `/_synapse/mas` that MAS calls
 These are authenticated with the admin token as a bearer token, not with a user access token.
 MAS must be configured with `matrix.kind: synapse` (the default in MAS 1.21+) and `matrix.secret` set to the same value as Zendrite's `admin_token`.
 
-The older `synapse_legacy` kind and the `/_synapse/admin/v1` user-management endpoints from previous Zendrite versions are **not** supported:
-MAS 1.21+ must use the `synapse` kind against Zendrite.
+The older `synapse_legacy` kind and the `/_synapse/admin/v1` user-management endpoints from previous Zendrite versions are **not** supported: MAS 1.21+ must use the `synapse` kind against Zendrite.
 If MAS logs 404 `M_UNRECOGNIZED` responses for `/_synapse/admin/v2/...` URLs, it is running in `synapse_legacy` mode; switch `matrix.kind` to `synapse`.
 
 If `admin_token` is unset the routes are not registered at all.
