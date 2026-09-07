@@ -1191,104 +1191,137 @@ func TestQueryAccessTokenMSC3861(t *testing.T) {
 			}
 		})
 
-		t.Run("LocalpartCollisionLinksExistingAccount", func(t *testing.T) {
-			sub := "opaque-uuid-collision"
+		// collisionCase runs one introspection against a fresh user API whose
+		// database was prepared by setup, with the given admin token (empty
+		// disables MAS provisioning mode).
+		collisionCase := func(t *testing.T, sub, username, adminToken string, setup func(ctx context.Context, userAPI *UserInternalAPI)) (*api.QueryAccessTokenResponse, *UserInternalAPI, func()) {
+			t.Helper()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
 					"active":   true,
 					"sub":      sub,
 					"scope":    "openid",
-					"username": "alice",
+					"username": username,
 				})
 			}))
-			defer srv.Close()
-
 			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
-			defer closeDB()
-
-			// A pre-existing account already owns the localpart the OIDC identity
-			// derives from its username claim. Under delegated authentication such
-			// an account was provisioned for this very user (MAS calls
-			// provision_user before the first token introspection), so the identity
-			// must be linked to it instead of forking the user onto a
-			// subject-derived localpart.
+			userAPI.Config.MSCs.MSC3861.AdminToken = adminToken
 			ctx := context.Background()
-			serverName := userAPI.Config.Matrix.ServerName
-			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "", "", api.AccountTypeUser); err != nil {
-				t.Fatalf("failed to create pre-provisioned account: %v", err)
-			}
+			setup(ctx, userAPI)
 
 			req := &api.QueryAccessTokenRequest{AccessToken: "collision-token-" + t.Name()}
 			res := &api.QueryAccessTokenResponse{}
 			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			return res, userAPI, func() {
+				closeDB()
+				srv.Close()
+			}
+		}
+		mappedLocalpart := func(t *testing.T, userAPI *UserInternalAPI, sub string) string {
+			t.Helper()
+			localpart, _, err := userAPI.DB.GetLocalpartByExternalID(context.Background(), userAPI.Config.MSCs.MSC3861.Issuer, sub)
+			if err != nil {
+				t.Fatalf("failed to look up external ID: %v", err)
+			}
+			return localpart
+		}
+		createAccount := func(t *testing.T, ctx context.Context, userAPI *UserInternalAPI, localpart string) {
+			t.Helper()
+			if _, err := userAPI.DB.CreateAccount(ctx, localpart, userAPI.Config.Matrix.ServerName, "", "", api.AccountTypeUser); err != nil {
+				t.Fatalf("failed to create account %q: %v", localpart, err)
+			}
+		}
+
+		t.Run("MASModeLinksProvisionedAccount", func(t *testing.T) {
+			// MAS calls provision_user before the first token introspection, so
+			// the account already exists and the identity must attach to it
+			// rather than forking the user onto a subject-derived localpart.
+			sub := "opaque-uuid-collision"
+			res, userAPI, cleanup := collisionCase(t, sub, "alice", "mas-admin-token", func(ctx context.Context, userAPI *UserInternalAPI) {
+				createAccount(t, ctx, userAPI, "alice")
+			})
+			defer cleanup()
 			if res.Device == nil {
 				t.Fatal("expected device for linked account")
 			}
 			if res.Device.UserID != "@alice:test" {
 				t.Errorf("expected user ID @alice:test, got %s", res.Device.UserID)
 			}
-
-			issuer := userAPI.Config.MSCs.MSC3861.Issuer
-			localpart, _, err := userAPI.DB.GetLocalpartByExternalID(ctx, issuer, sub)
-			if err != nil {
-				t.Fatalf("failed to look up external ID: %v", err)
-			}
-			if localpart != "alice" {
-				t.Errorf("expected mapping to \"alice\", got %q", localpart)
+			if got := mappedLocalpart(t, userAPI, sub); got != "alice" {
+				t.Errorf("expected mapping to \"alice\", got %q", got)
 			}
 		})
 
-		t.Run("LocalpartCollisionLinksEvenWhenSubAccountAlsoExists", func(t *testing.T) {
-			sub := "opaque-uuid-taken"
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-					"active":   true,
-					"sub":      sub,
-					"scope":    "openid",
-					"username": "alice",
-				})
-			}))
-			defer srv.Close()
-
-			userAPI, closeDB := makeTestUserAPI(t, dbType, srv)
-			defer closeDB()
-
-			// The derived localpart is taken and an unrelated account also owns
-			// the subject-derived localpart. The username claim wins under
-			// delegated auth; the identity links to the account MAS would have
-			// provisioned.
-			ctx := context.Background()
-			serverName := userAPI.Config.Matrix.ServerName
-			if _, err := userAPI.DB.CreateAccount(ctx, "alice", serverName, "", "", api.AccountTypeUser); err != nil {
-				t.Fatalf("failed to create pre-provisioned account: %v", err)
-			}
-			if _, err := userAPI.DB.CreateAccount(ctx, sub, serverName, "", "", api.AccountTypeUser); err != nil {
-				t.Fatalf("failed to create unrelated sub account: %v", err)
-			}
-
-			req := &api.QueryAccessTokenRequest{AccessToken: "collision2-token-" + t.Name()}
-			res := &api.QueryAccessTokenResponse{}
-			if err := userAPI.queryAccessTokenMSC3861(ctx, req, res); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+		t.Run("MASModeUsesUsernameVerbatim", func(t *testing.T) {
+			// The sanitiser would turn "bob_" into "bob". Under MAS the username
+			// is the localpart MAS provisioned, so it must be taken as-is and
+			// never resolve to a different existing account.
+			sub := "opaque-uuid-bob-underscore"
+			res, userAPI, cleanup := collisionCase(t, sub, "bob_", "mas-admin-token", func(ctx context.Context, userAPI *UserInternalAPI) {
+				createAccount(t, ctx, userAPI, "bob")
+				createAccount(t, ctx, userAPI, "bob_")
+			})
+			defer cleanup()
 			if res.Device == nil {
-				t.Fatal("expected device linked to @alice:test")
+				t.Fatal("expected device for @bob_:test")
 			}
-			if res.Device.UserID != "@alice:test" {
-				t.Errorf("expected user ID @alice:test, got %s", res.Device.UserID)
+			if res.Device.UserID != "@bob_:test" {
+				t.Errorf("expected user ID @bob_:test, got %s", res.Device.UserID)
 			}
+			if got := mappedLocalpart(t, userAPI, sub); got != "bob_" {
+				t.Errorf("expected mapping to \"bob_\", got %q", got)
+			}
+		})
 
-			issuer := userAPI.Config.MSCs.MSC3861.Issuer
-			localpart, _, err := userAPI.DB.GetLocalpartByExternalID(ctx, issuer, sub)
-			if err != nil {
-				t.Fatalf("failed to look up external ID: %v", err)
+		t.Run("MASModeRejectsInvalidUsername", func(t *testing.T) {
+			sub := "opaque-uuid-invalid-username"
+			res, userAPI, cleanup := collisionCase(t, sub, "Not Valid", "mas-admin-token", func(context.Context, *UserInternalAPI) {})
+			defer cleanup()
+			if res.Device != nil {
+				t.Errorf("expected no device for an invalid MAS username, got %+v", res.Device)
 			}
-			if localpart != "alice" {
-				t.Errorf("expected mapping to \"alice\", got %q", localpart)
+			if got := mappedLocalpart(t, userAPI, sub); got != "" {
+				t.Errorf("expected no external ID mapping, got %q", got)
+			}
+		})
+
+		t.Run("LocalpartCollisionFallsBackToSub", func(t *testing.T) {
+			// Without MAS provisioning a pre-existing (e.g. password-registered)
+			// account that merely shares the derived localpart must never be
+			// linked; the identity falls back to the subject claim instead.
+			sub := "opaque-uuid-fallback"
+			res, userAPI, cleanup := collisionCase(t, sub, "alice", "", func(ctx context.Context, userAPI *UserInternalAPI) {
+				createAccount(t, ctx, userAPI, "alice")
+			})
+			defer cleanup()
+			if res.Device == nil {
+				t.Fatal("expected device when falling back to sub-derived localpart")
+			}
+			if res.Device.UserID != "@"+sub+":test" {
+				t.Errorf("expected user ID @%s:test, got %s", sub, res.Device.UserID)
+			}
+			if got := mappedLocalpart(t, userAPI, sub); got != sub {
+				t.Errorf("expected mapping to %q, got %q", sub, got)
+			}
+		})
+
+		t.Run("LocalpartCollisionHardFail", func(t *testing.T) {
+			// Both the derived localpart and the subject-derived fallback are
+			// already taken by different accounts: refuse without linking.
+			sub := "opaque-uuid-taken"
+			res, userAPI, cleanup := collisionCase(t, sub, "alice", "", func(ctx context.Context, userAPI *UserInternalAPI) {
+				createAccount(t, ctx, userAPI, "alice")
+				createAccount(t, ctx, userAPI, sub)
+			})
+			defer cleanup()
+			if res.Device != nil {
+				t.Errorf("expected nil device when all localparts collide, got %+v", res.Device)
+			}
+			if got := mappedLocalpart(t, userAPI, sub); got != "" {
+				t.Errorf("expected no external ID mapping, got %q", got)
 			}
 		})
 
