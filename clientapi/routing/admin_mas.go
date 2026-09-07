@@ -724,10 +724,11 @@ func MASReactivateUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi
 		return *errRes
 	}
 
-	if errRes := masLookupAccount(req.Context(), userAPI, cfg, body.Localpart); errRes != nil {
-		return *errRes
+	if err := internal.ValidateUsername(body.Localpart, cfg.Matrix.ServerName); err != nil {
+		return *internal.UsernameResponse(err)
 	}
 
+	// The update itself reports a missing account, so no lookup is needed.
 	var reactivateRes userapi.PerformAccountReactivationResponse
 	err := userAPI.PerformAccountReactivation(req.Context(), &userapi.PerformAccountReactivationRequest{
 		Localpart:  body.Localpart,
@@ -735,7 +736,6 @@ func MASReactivateUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi
 	}, &reactivateRes)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// Lost a race with a concurrent deletion.
 		return util.JSONResponse{
 			Code: http.StatusNotFound,
 			JSON: spec.NotFound("User not found"),

@@ -173,11 +173,23 @@ func (s *accountsStatements) DeactivateAccount(
 	return
 }
 
+// ReactivateAccount clears the deactivated flag and reports sql.ErrNoRows
+// when no account matches, so callers need no separate existence lookup.
 func (s *accountsStatements) ReactivateAccount(
 	ctx context.Context, localpart string, serverName spec.ServerName,
-) (err error) {
-	_, err = s.reactivateAccountStmt.ExecContext(ctx, localpart, serverName)
-	return
+) error {
+	result, err := s.reactivateAccountStmt.ExecContext(ctx, localpart, serverName)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *accountsStatements) SelectPasswordHash(

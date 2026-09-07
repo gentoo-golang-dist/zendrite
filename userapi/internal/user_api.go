@@ -711,13 +711,11 @@ func (a *UserInternalAPI) PerformAccountReactivation(ctx context.Context, req *a
 		return fmt.Errorf("server name %q not locally configured", serverName)
 	}
 
-	if _, err := a.DB.GetAccountByLocalpart(ctx, req.Localpart, serverName); err != nil {
+	if err := a.DB.ReactivateAccount(ctx, req.Localpart, serverName); err != nil {
 		return err
 	}
-
-	err := a.DB.ReactivateAccount(ctx, req.Localpart, serverName)
-	res.AccountReactivated = err == nil
-	return err
+	res.AccountReactivated = true
+	return nil
 }
 
 // PerformOpenIDTokenCreation creates a new token that a relying party uses to authenticate a user.
