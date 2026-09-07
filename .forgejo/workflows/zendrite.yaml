@@ -128,7 +128,7 @@ jobs:
     runs-on: docker
     steps:
       - name: Install runner dependencies
-        run: apk add --no-cache bash git nodejs python3 jq openssl curl
+        run: apk add --no-cache bash git nodejs python3 jq openssl
       - uses: actions/checkout@v7
       - name: Install Go
         uses: actions/setup-go@v7

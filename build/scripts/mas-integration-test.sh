@@ -15,7 +15,7 @@
 # /_synapse/mas API was implemented (see oidc.md for the configuration this
 # test mirrors).
 #
-# Requirements: docker, go, python3, curl, openssl, jq.
+# Requirements: docker, go, python3, openssl, jq.
 #
 # Environment overrides:
 #   MAS_IMAGE        MAS container image (default ghcr.io/element-hq/matrix-authentication-service:1.22.0)
@@ -50,6 +50,36 @@ fail() {
   exit 1
 }
 
+# wait_for <attempts> <cmd...> retries cmd once per second until it succeeds
+# and returns non-zero once the attempts are used up.
+wait_for() {
+  local attempts="$1"
+  shift
+  for _ in $(seq 1 "${attempts}"); do
+    if "$@" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  "$@" >/dev/null 2>&1
+}
+
+# Probes run from inside already running containers on the e2e network, so
+# they exercise the DNS and TCP path the services use without spawning a
+# throwaway container per attempt.
+postgres_ready() { docker exec mas-e2e-postgres pg_isready -h mas-e2e-postgres -U mas; }
+mas_ready() { docker exec mas-e2e-zendrite wget -q -O /dev/null http://mas-e2e-mas:8080/health; }
+zendrite_ready() { docker exec mas-e2e-zendrite wget -q -O /dev/null http://127.0.0.1:8008/_matrix/client/versions; }
+container_running() { [[ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
+
+# mas_http <url> [wget args...] issues an HTTP request from the Zendrite
+# container with busybox wget and prints the response body.
+mas_http() {
+  local url="$1"
+  shift
+  docker exec mas-e2e-zendrite wget -q -O - "$@" "${url}"
+}
+
 cleanup() {
   [[ "${CLEANED_UP}" -eq 1 ]] && return
   CLEANED_UP=1
@@ -64,7 +94,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for tool in docker go python3 curl openssl jq; do
+for tool in docker go python3 openssl jq; do
   command -v "${tool}" >/dev/null 2>&1 || fail "required tool '${tool}' not found in PATH"
 done
 
@@ -75,7 +105,6 @@ cd "${REPO_ROOT}"
 # daemon runs in a different mount namespace than the job, so bind mounts of
 # job-local paths arrive as empty directories in the containers.
 WORKDIR="$(mktemp -d /tmp/zendrite-mas-e2e.XXXXXX)"
-log "working directory: ${WORKDIR}"
 log "working directory: ${WORKDIR}"
 
 # --- Generate Zendrite key and config --------------------------------------
@@ -171,20 +200,16 @@ docker run -d --name mas-e2e-postgres --network "${NETWORK}" \
   -e POSTGRES_USER=mas -e POSTGRES_PASSWORD=mas -e POSTGRES_DB=mas \
   "${POSTGRES_IMAGE}" >/dev/null
 
-# Wait for PostgreSQL to accept TCP connections from the Docker network,
-# i.e. exactly the path MAS uses (DNS + TCP). Checking via docker exec and
-# the unix socket would pass even if nothing listens on the network.
+# Wait for PostgreSQL to accept TCP connections on the Docker network, i.e.
+# exactly the path MAS uses (DNS + TCP): pg_isready is pointed at the
+# container's network name, not the unix socket.
 log "waiting for PostgreSQL to accept connections"
 for _ in $(seq 1 60); do
-  if docker run --rm --network "${NETWORK}" "${POSTGRES_IMAGE}" pg_isready -h mas-e2e-postgres -U mas >/dev/null 2>&1; then
-    break
-  fi
-  if [[ "$(docker inspect -f '{{.State.Running}}' mas-e2e-postgres 2>/dev/null)" != "true" ]]; then
-    fail "PostgreSQL container exited early; log follows:\n$(docker logs mas-e2e-postgres 2>&1 | tail -30)"
-  fi
+  postgres_ready >/dev/null 2>&1 && break
+  container_running mas-e2e-postgres || fail "PostgreSQL container exited early; log follows:\n$(docker logs mas-e2e-postgres 2>&1 | tail -30)"
   sleep 1
 done
-docker run --rm --network "${NETWORK}" "${POSTGRES_IMAGE}" pg_isready -h mas-e2e-postgres -U mas >/dev/null 2>&1 || fail "PostgreSQL did not become ready"
+postgres_ready >/dev/null 2>&1 || fail "PostgreSQL did not become ready"
 
 # Address the database by its container IP instead of the docker DNS name.
 # On some CI runners the embedded DNS resolves differently per container: the
@@ -271,10 +296,7 @@ for attempt in 1 2 3; do
   fi
   log "migration attempt ${attempt} failed; postgres at ${POSTGRES_IP}: $(docker inspect -f 'status={{.State.Status}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}}' mas-e2e-postgres 2>/dev/null)"
   docker start mas-e2e-postgres >/dev/null 2>&1 || true
-  for _ in $(seq 1 30); do
-    docker run --rm --network "${NETWORK}" "${POSTGRES_IMAGE}" pg_isready -h mas-e2e-postgres -U mas >/dev/null 2>&1 && break
-    sleep 1
-  done
+  wait_for 30 postgres_ready || true
 done
 [[ "${migrate_ok}" == "1" ]] || fail "MAS database migrations failed; PostgreSQL log follows:\n$(docker logs mas-e2e-postgres 2>&1 | tail -30)"
 
@@ -317,20 +339,14 @@ log "waiting for Zendrite and MAS to become ready"
 # MAS compiles its policy module on startup, which can take a while on
 # emulated or slow runners.
 for _ in $(seq 1 180); do
-  zendrite_ok=0
-  mas_ok=0
-  docker exec mas-e2e-zendrite wget -q -O /dev/null http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1 && zendrite_ok=1
-  docker run --rm --network "${NETWORK}" alpine:3 wget -q -O /dev/null http://mas-e2e-mas:8080/health >/dev/null 2>&1 && mas_ok=1
-  if [[ "${zendrite_ok}" == "1" && "${mas_ok}" == "1" ]]; then
+  if zendrite_ready >/dev/null 2>&1 && mas_ready >/dev/null 2>&1; then
     break
   fi
-  if [[ "$(docker inspect -f '{{.State.Running}}' mas-e2e-zendrite 2>/dev/null)" != "true" ]]; then
-    fail "Zendrite container exited early; log follows:\n$(docker logs mas-e2e-zendrite 2>&1 | tail -30)"
-  fi
+  container_running mas-e2e-zendrite || fail "Zendrite container exited early; log follows:\n$(docker logs mas-e2e-zendrite 2>&1 | tail -30)"
   sleep 1
 done
-docker exec mas-e2e-zendrite wget -q -O /dev/null http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1 || fail "Zendrite did not become ready; log follows:\n$(docker logs mas-e2e-zendrite 2>&1 | tail -30)"
-docker run --rm --network "${NETWORK}" alpine:3 wget -q -O /dev/null http://mas-e2e-mas:8080/health >/dev/null 2>&1 || fail "MAS did not become ready; log follows:\n$(docker logs mas-e2e-mas 2>&1 | tail -30)"
+zendrite_ready >/dev/null 2>&1 || fail "Zendrite did not become ready; log follows:\n$(docker logs mas-e2e-zendrite 2>&1 | tail -30)"
+mas_ready >/dev/null 2>&1 || fail "MAS did not become ready; log follows:\n$(docker logs mas-e2e-mas 2>&1 | tail -30)"
 
 # --- Exercise the delegated auth flow --------------------------------------
 
@@ -342,13 +358,10 @@ docker run --rm --network "${NETWORK}" \
   -c /config/config.yaml >/dev/null
 
 log "performing compatibility login against MAS (triggers provisioning on Zendrite)"
+login_body='{"type":"m.login.password","identifier":{"type":"m.id.user","user":"e2euser"},"password":"E2e-Passw0rd!"}'
 login_response="$(
-  docker run --rm --network "${NETWORK}" alpine:3 sh -c '
-    apk add --no-cache -q curl >/dev/null 2>&1 &&
-    curl -sf -X POST "http://mas-e2e-mas:8080/_matrix/client/v3/login" \
-      -H "Content-Type: application/json" \
-      -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"e2euser\"},\"password\":\"E2e-Passw0rd!\"}"
-  '
+  mas_http "http://mas-e2e-mas:8080/_matrix/client/v3/login" \
+    --header "Content-Type: application/json" --post-data "${login_body}"
 )" || fail "compat login failed; MAS log follows:\n$(docker logs mas-e2e-mas 2>&1 | tail -50)\nZendrite log follows:\n$(docker logs mas-e2e-zendrite 2>&1 | tail -50)"
 
 access_token="$(jq -r '.access_token // empty' <<<"${login_response}")"
@@ -361,24 +374,18 @@ log "login ok: ${user_id} device ${device_id}"
 
 log "calling /account/whoami on Zendrite with the MAS-issued token"
 whoami_response="$(
-  docker run --rm --network "${NETWORK}" -e AT="${access_token}" alpine:3 sh -c '
-    apk add --no-cache -q curl >/dev/null 2>&1 &&
-    curl -sf "http://mas-e2e-zendrite:8008/_matrix/client/v3/account/whoami" \
-      -H "Authorization: Bearer ${AT}"
-  '
+  mas_http "http://mas-e2e-zendrite:8008/_matrix/client/v3/account/whoami" \
+    --header "Authorization: Bearer ${access_token}"
 )" || fail "whoami failed (token introspection or provisioning broken); Zendrite log follows:\n$(docker logs mas-e2e-zendrite 2>&1 | tail -50)"
 whoami_user="$(jq -r '.user_id // empty' <<<"${whoami_response}")"
 [[ "${whoami_user}" == "@e2euser:localhost" ]] || fail "whoami returned unexpected user: ${whoami_response}"
 log "whoami ok: ${whoami_user}"
 
 log "performing a second login (relogin path)"
-docker run --rm --network "${NETWORK}" alpine:3 sh -c '
-  apk add --no-cache -q curl jq >/dev/null 2>&1 &&
-  curl -sf -X POST "http://mas-e2e-mas:8080/_matrix/client/v3/login" \
-    -H "Content-Type: application/json" \
-    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"e2euser\"},\"password\":\"E2e-Passw0rd!\"}" |
-    jq -e ".access_token" >/dev/null
-' || fail "second login failed; MAS log follows:\n$(docker logs mas-e2e-mas 2>&1 | tail -50)"
+mas_http "http://mas-e2e-mas:8080/_matrix/client/v3/login" \
+  --header "Content-Type: application/json" --post-data "${login_body}" |
+  jq -e ".access_token" >/dev/null ||
+  fail "second login failed; MAS log follows:\n$(docker logs mas-e2e-mas 2>&1 | tail -50)"
 log "relogin ok"
 
 log "PASS: delegated auth end-to-end flow works"
