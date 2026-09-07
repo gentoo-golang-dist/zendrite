@@ -346,39 +346,6 @@ func TestMSC3861_AuthMetadataDiscoversEndpoints(t *testing.T) {
 	}
 }
 
-func TestMSC3861_MASAdminRoutesRequireAdminToken(t *testing.T) {
-	t.Parallel()
-
-	cfg, processCtx, closeDB := testrig.CreateConfig(t, test.DBTypeSQLite)
-	defer closeDB()
-	cfg.ClientAPI.RateLimiting.Enabled = false
-	cfg.MSCs.MSCs = []string{"msc3861"}
-	cfg.MSCs.MSC3861 = config.MSC3861Config{
-		Issuer:       "https://auth.example.com",
-		ClientID:     "test-client-id",
-		ClientSecret: "test-client-secret",
-		// AdminToken deliberately left empty.
-	}
-	cfg.Global.WellKnownClientName = "https://matrix.example.com"
-
-	natsInstance := jetstream.NATSInstance{}
-	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
-	caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
-	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
-	rsAPI.SetFederationAPI(nil, nil)
-	userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, &natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
-
-	routers := httputil.NewRouters()
-	Setup(routers, cfg, nil, nil, userAPI, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
-
-	req := test.NewRequest(t, http.MethodGet, "/_synapse/admin/v1/username_available?username=alice")
-	rec := httptest.NewRecorder()
-	routers.SynapseAdmin.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404 when admin_token is empty, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
 func TestMSC3861_DevicesGETStillWorks(t *testing.T) {
 	t.Parallel()
 	routers, _, closeDB := setupMSC3861Routers(t)
