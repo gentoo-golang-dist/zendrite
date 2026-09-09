@@ -277,6 +277,7 @@ func (d *Database) QueryPushRules(
 		return nil, err
 	}
 
+	pushrules.AddMentionRules(&pushRules.Global, localpart, serverName)
 	return &pushRules, nil
 }
 
@@ -302,7 +303,19 @@ func (d *Database) GetAccountData(ctx context.Context, localpart string, serverN
 	rooms map[string]map[string]json.RawMessage,
 	err error,
 ) {
-	return d.AccountDatas.SelectAccountData(ctx, localpart, serverName)
+	global, rooms, err = d.AccountDatas.SelectAccountData(ctx, localpart, serverName)
+	if err != nil {
+		return
+	}
+	if _, ok := global["m.push_rules"]; ok {
+		var rules *pushrules.AccountRuleSets
+		rules, err = d.QueryPushRules(ctx, localpart, serverName)
+		if err != nil {
+			return
+		}
+		global["m.push_rules"], err = json.Marshal(rules)
+	}
+	return
 }
 
 // GetAccountDataByType returns account data matching a given
@@ -313,6 +326,13 @@ func (d *Database) GetAccountDataByType(
 	ctx context.Context, localpart string, serverName spec.ServerName,
 	roomID, dataType string,
 ) (data json.RawMessage, err error) {
+	if roomID == "" && dataType == "m.push_rules" {
+		rules, queryErr := d.QueryPushRules(ctx, localpart, serverName)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		return json.Marshal(rules)
+	}
 	return d.AccountDatas.SelectAccountDataByType(
 		ctx, localpart, serverName, roomID, dataType,
 	)
