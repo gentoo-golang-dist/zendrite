@@ -899,3 +899,27 @@ func TestPushRulesMentionUpgrade(t *testing.T) {
 		assert.Equal(t, upgraded, again)
 	})
 }
+
+func TestPushRulesAccountDataReadCompatibility(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateUserDatabase(t, dbType)
+		defer close()
+		data, err := db.GetAccountDataByType(ctx, "alice", "localhost", "", "m.push_rules")
+		assert.NoError(t, err)
+		assert.Empty(t, data)
+		global, _, err := db.GetAccountData(ctx, "alice", "localhost")
+		assert.NoError(t, err)
+		_, exists := global["m.push_rules"]
+		assert.False(t, exists, "reading absent push rules must not create account data")
+
+		for _, payload := range []string{`{}`, `null`, `{"global":null}`, `{"custom":true}`} {
+			assert.NoError(t, db.SaveAccountData(ctx, "alice", "localhost", "", "m.push_rules", json.RawMessage(payload)))
+			data, err = db.GetAccountDataByType(ctx, "alice", "localhost", "", "m.push_rules")
+			assert.NoError(t, err)
+			assert.Equal(t, payload, string(data))
+			global, _, err = db.GetAccountData(ctx, "alice", "localhost")
+			assert.NoError(t, err)
+			assert.Equal(t, payload, string(global["m.push_rules"]))
+		}
+	})
+}
