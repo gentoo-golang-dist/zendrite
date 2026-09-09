@@ -854,3 +854,8 @@ func (d *DatabaseTransaction) UnPartialStatedRoomsInRange(
 	roomIDs, _, err := d.UnPartialStatedRooms.SelectUnPartialStatedRoomsInRange(ctx, d.txn, userID, r)
 	return roomIDs, err
 }
+
+// ThreadRelations returns a bounded batch of thread replies in topology order.
+func (d *DatabaseTransaction) ThreadRelations(ctx context.Context, roomID string, watermark types.StreamPosition, before types.TopologyToken, limit int) ([]types.ThreadRelation, error) {
+	return d.Relations.SelectThreadRelations(ctx, d.txn, roomID, watermark, before, limit)
+}
