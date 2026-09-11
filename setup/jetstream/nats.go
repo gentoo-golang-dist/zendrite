@@ -46,6 +46,7 @@ func (s *NATSInstance) Prepare(process *process.ProcessContext, cfg *config.JetS
 	// For connecting to an external NATS server.
 	if len(cfg.Addresses) > 0 {
 		s.js, s.nc = setupNATS(process, cfg, nil)
+		process.Defer(s.nc.Close)
 		return s.js, s.nc
 	}
 
@@ -67,14 +68,8 @@ func (s *NATSInstance) Prepare(process *process.ProcessContext, cfg *config.JetS
 		if !cfg.NoLog {
 			s.SetLogger(NewLogAdapter(), opts.Debug, opts.Trace)
 		}
-		process.ComponentStarted()
 		go s.Start()
-		go func() {
-			<-process.WaitForShutdown()
-			s.Shutdown()
-			s.WaitForShutdown()
-			process.ComponentFinished()
-		}()
+		process.Defer(func() { s.Shutdown(); s.WaitForShutdown() })
 		if !s.ReadyForConnections(time.Second * 60) { //nolint:mnd
 			logrus.Fatalln("NATS did not start in time, shutting down")
 			process.ShutdownZendrite()
@@ -90,6 +85,7 @@ func (s *NATSInstance) Prepare(process *process.ProcessContext, cfg *config.JetS
 		logrus.Fatalln("Failed to create NATS client")
 	}
 	s.js, s.nc = setupNATS(process, cfg, s.nc)
+	process.Defer(s.nc.Close)
 	return s.js, s.nc
 }
 
@@ -134,12 +130,14 @@ func natsConnectOptions(process *process.ProcessContext, cfg *config.JetStream, 
 		natsclient.ReconnectJitter(time.Second, time.Second),
 		natsclient.ReconnectWait(time.Second * 10), //nolint:mnd
 		natsclient.ReconnectHandler(func(c *natsclient.Conn) {
-			js, jerr := c.JetStream(jsOpts...)
-			if jerr != nil {
-				logrus.WithError(jerr).Panic("Unable to get JetStream context in reconnect handler")
-				return
-			}
-			checkAndConfigureStreams(process, cfg, js)
+			process.Do(func() {
+				js, jerr := c.JetStream(jsOpts...)
+				if jerr != nil {
+					logrus.WithError(jerr).Panic("Unable to get JetStream context in reconnect handler")
+					return
+				}
+				checkAndConfigureStreams(process, cfg, js)
+			})
 		}),
 	}
 

@@ -116,7 +116,6 @@ func getIntrospectionCache() *ttlcache.Cache[string, *cachedIntrospection] {
 			ttlcache.WithTTL[string, *cachedIntrospection](introspectionCacheTTL),
 			ttlcache.WithCapacity[string, *cachedIntrospection](introspectionCacheMaxSize),
 		)
-		go introspectionCache.Start()
 	})
 	return introspectionCache
 }

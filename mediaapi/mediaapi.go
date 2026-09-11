@@ -30,14 +30,18 @@ func AddPublicRoutes(
 	userAPI userapi.MediaUserAPI,
 	client *fclient.Client,
 	fedClient fclient.FederationClient,
-	keyRing gomatrixserverlib.JSONVerifier,
+	keyRing gomatrixserverlib.JSONVerifier, contexts ...context.Context,
 ) {
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
 	mediaDB, err := storage.NewMediaAPIDatasource(cm, &cfg.MediaAPI.Database)
 	if err != nil {
 		logrus.WithError(err).Panicf("failed to connect to media db")
 	}
 
-	fileStore, err := filestore.NewFileStore(context.Background(), &cfg.MediaAPI)
+	fileStore, err := filestore.NewFileStore(ctx, &cfg.MediaAPI)
 	if err != nil {
 		logrus.WithError(err).Panicf("failed to create media file store")
 	}
