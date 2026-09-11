@@ -75,7 +75,6 @@ func (s *NATSInstance) Prepare(process *process.ProcessContext, cfg *config.JetS
 			process.ShutdownZendrite()
 			s.Shutdown()
 			s.WaitForShutdown()
-			process.ComponentFinished()
 			return nil, nil
 		}
 	}

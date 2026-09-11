@@ -206,17 +206,9 @@ func (u *DeviceListUpdater) Start() error {
 	if max := len(newStaleLists); max > 120 {   //nolint:mnd
 		step = (time.Second * 120) / time.Duration(max) //nolint:mnd
 	}
-	for _, userID := range newStaleLists {
-		offset := offset
-		userID := userID // otherwise we are only sending the last entry
-		process.Go(u.process.Context(), func() {
-			if !process.Sleep(u.process.Context(), offset) {
-				return
-			}
-			u.notifyWorkers(userID)
-		})
-		offset += step
-	}
+	process.Stagger(u.process.Context(), newStaleLists, offset, step, func(userID string) {
+		u.process.Go(func() { u.notifyWorkers(userID) })
+	})
 	return nil
 }
 

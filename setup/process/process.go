@@ -193,3 +193,29 @@ func Do(ctx context.Context, f func()) bool {
 	f()
 	return true
 }
+
+// Stagger dispatches a batch on one tracked scheduler using one timer.
+// Callbacks run serially and should dispatch blocking work to tracked workers.
+func Stagger[T any](ctx context.Context, items []T, initial, interval time.Duration, dispatch func(T)) {
+	if len(items) == 0 {
+		return
+	}
+	next := time.Now().Add(initial)
+	Go(ctx, func() {
+		timer := time.NewTimer(time.Until(next))
+		defer timer.Stop()
+		for _, item := range items {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			dispatch(item)
+			next = next.Add(interval)
+			timer.Reset(time.Until(next))
+		}
+	})
+}

@@ -48,6 +48,7 @@ func NewInternalAPI(
 ) *internal.UserInternalAPI {
 	js, _ := natsInstance.Prepare(processContext, &zendriteCfg.Global.JetStream)
 	appServices := zendriteCfg.Derived.ApplicationServices
+	internal.StartIntrospectionCacheCleanup(processContext.Context())
 
 	pgClient := pushgateway.NewHTTPClient(zendriteCfg.UserAPI.PushGatewayDisableTLSValidation)
 

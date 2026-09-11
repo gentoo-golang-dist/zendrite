@@ -104,6 +104,10 @@ func (h *Homeserver) Run(ownership context.Context) error {
 			initialized <- err
 		}()
 		err = h.initialize(p)
+		// Cancellation during recovery is an ordinary stop, after cleanup joins.
+		if p.Context().Err() != nil && errors.Is(err, p.Context().Err()) {
+			err = nil
+		}
 	})
 	var result error
 	select {

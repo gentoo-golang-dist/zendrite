@@ -115,17 +115,15 @@ func NewOutgoingQueues(
 		if max := len(serverNames); max > 120 {    //nolint:mnd
 			step = (time.Second * 120) / time.Duration(max) //nolint:mnd
 		}
+		pending := make([]*destinationQueue, 0, len(serverNames))
 		for serverName := range serverNames {
 			if queue := queues.getQueue(serverName); queue != nil {
-				delay := offset
-				processContext.Go(func() {
-					if process.Sleep(processContext.Context(), delay) {
-						queue.wakeQueueIfNeeded()
-					}
-				})
-				offset += step
+				pending = append(pending, queue)
 			}
 		}
+		process.Stagger(processContext.Context(), pending, offset, step, func(queue *destinationQueue) {
+			queue.wakeQueueIfNeeded()
+		})
 	}
 	return queues
 }

@@ -82,7 +82,7 @@ func TestActivation(t *testing.T) {
 				t.Fatal("canceled owner remained ready")
 			}
 			err := await(t, result)
-			if err != nil && !errors.Is(err, context.Canceled) {
+			if err != nil {
 				t.Fatalf("shutdown: %v", err)
 			}
 			if !workerStopped.Load() || !cleaned.Load() || h.State() != Stopped {
@@ -180,5 +180,12 @@ func TestStartupPanicCleansUp(t *testing.T) {
 	}
 	if !cleaned.Load() || h.State() != Stopped {
 		t.Fatal("panic skipped cleanup")
+	}
+}
+
+func TestUnrelatedStartupCancellationIsFailure(t *testing.T) {
+	h := New(func(*process.ProcessContext) error { return context.Canceled }, time.Second)
+	if err := h.Run(t.Context()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("lost unrelated startup cancellation: %v", err)
 	}
 }

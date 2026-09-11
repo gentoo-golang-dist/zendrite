@@ -138,7 +138,7 @@ func (w *worker) start() {
 
 	w.ctx, w.cancel = context.WithCancelCause(w.r.ProcessContext.Context())
 
-	w.r.ProcessContext.Go(func() {
+	if !w.r.ProcessContext.Go(func() {
 		logrus.Debugf("worker for room %q started", w.roomID)
 		for {
 			select {
@@ -153,7 +153,11 @@ func (w *worker) start() {
 				w._next()
 			}
 		}
-	})
+	}) {
+		w.cancel(context.Canceled)
+		w.ctx = nil
+		w.cancel = nil
+	}
 }
 
 func (r *Inputer) startWorkerForRoom(roomID string, seq uint64) {

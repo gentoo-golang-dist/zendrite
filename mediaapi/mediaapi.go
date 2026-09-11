@@ -47,6 +47,6 @@ func AddPublicRoutes(
 	}
 
 	routing.Setup(
-		routers, cfg, mediaDB, fileStore, userAPI, client, fedClient, keyRing,
+		routers, cfg, mediaDB, fileStore, userAPI, client, fedClient, keyRing, ctx,
 	)
 }
