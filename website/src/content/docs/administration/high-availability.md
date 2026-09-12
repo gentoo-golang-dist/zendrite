@@ -1,18 +1,15 @@
 ---
-title: High availability development status
-description: Opt-in Lease election, ownership requirements, and current limitations.
+title: High availability
+description: Configure active-passive high availability on Kubernetes.
 ---
 
-Kubernetes Lease election is an experimental foundation for active-passive Zendrite deployments.
-**Automatic HA activation is unavailable until the enforceable fencing provider in issue #349 is implemented.**
-The binary refuses application startup after election when no fencing provider is installed.
-A supervisor that restarts the failed candidate can produce a crash loop; each failed promotion retains the Lease until expiry, for up to `lease_duration`.
-Leave HA disabled for normal deployments.
+High availability (HA) runs one active Zendrite instance while other instances wait as standbys.
+If the active instance fails, a standby takes over after confirming that it is safe to start.
+HA is supported only on Kubernetes and is disabled by default.
 
 ## Configuration
 
-The optional `global.ha` section defaults to disabled.
-Disabled HA requires no Kubernetes service account, API access, or election.
+Configure HA in the `global.ha` section:
 
 ```yaml
 global:
@@ -27,48 +24,21 @@ global:
     retry_period: 5s
 ```
 
-All candidates for one homeserver must use the same Lease name and namespace.
-Use a different Lease scope for each homeserver.
-Set `candidate_id` to the pod UID through deployment configuration; the process appends a fresh UUID, including after container restarts.
-Configuration values are literal strings, with no environment-variable interpolation.
-The initial backend uses in-cluster service-account credentials only.
-The implementation pins client-go v0.37.0, which requires Go 1.26, matching Zendrite.
-It uses the stable `coordination.k8s.io/v1` Lease API and ordinary leader election, without coordinated-election feature gates.
-Kubernetes deployment qualification remains part of issues #351 and #352; this change does not establish a tested cluster-version support matrix.
+Set `enabled` to `true` to enable HA.
+All instances of the same homeserver must use the same Lease name and namespace.
+Use a separate Lease for each homeserver and set `candidate_id` to each pod's UID.
 
-`lease_duration` must be a whole number of seconds, fit in the API's signed 32-bit seconds field, and be greater than `renew_deadline`.
-`renew_deadline` must exceed 1.2 times the positive `retry_period`, matching client-go's jitter constraint.
-Each Lease API request may use up to `renew_deadline`; `retry_period` controls retry scheduling rather than the request timeout.
-These timings govern detection and availability, not exclusive execution.
+The example above uses the default timing values.
+If you adjust them, `lease_duration` must be a whole number of seconds and greater than `renew_deadline`, which must exceed 1.2 times `retry_period`.
+Longer timings allow more time for Kubernetes API requests but can delay failover.
 
-## Permissions and failure behavior
+## Kubernetes permissions
 
-The service account needs namespaced `get`, `create`, and `update` permission on `leases` in API group `coordination.k8s.io`.
-For least privilege, precreate the Lease and grant `get` and `update` on that specific resource name; creation is then unnecessary.
-If a precreated Lease is deleted, candidates with only `get` and `update` permission fail when they attempt to recreate it.
-An operator must recreate the Lease or grant `create` permission before restarting the candidates.
-The election implementation does not need list, watch, patch, delete, or event permissions.
-Denied access produces an error identifying the Lease and required permissions, then terminates the candidate.
-Transient API errors use client-go retries: a standby stays alive without starting the application, while a leader that cannot renew loses ownership and exits.
-Ordinary contention keeps the unsuccessful candidates alive and inert.
-Election diagnostics use the configured logrus levels and hooks, with informational election events at info level, verbose diagnostics at debug level, and failures at error level.
+The pods' service account needs `get`, `create`, and `update` permissions on `leases` in the `coordination.k8s.io` API group within the configured namespace.
 
-## Ownership and shutdown contract
+## Failover behavior
 
-Acquisition only permits calling `OwnershipGate.Acquire` with the unique candidate identity and Lease scope.
-The provider must confirm enforceable fencing, including durable previous-owner identity outside the Lease, before returning success.
-The missing provider fails closed with an actionable error.
-A successful gate is followed by application recovery; election callbacks never directly initialize the homeserver or publish readiness.
-Cancellation during fencing or recovery closes local admission and prevents readiness.
-Application shutdown and fencing cancellation have a bounded completion budget; exceeding it requires immediate process termination.
-Leadership loss is terminal even after successful draining, with no reacquisition in the same process.
-
-`ReleaseOnCancel` is explicitly false.
-A signal, renewal failure, or interrupted promotion must not voluntarily release leadership while protected work may still be active.
-The Lease remains recorded until expiry or takeover, even after successful draining.
-Expiry, pod deletion, readiness changes, and local cancellation do not establish fencing.
-Every successor must independently satisfy the ownership gate, including when a Lease was deleted or recreated.
-See the [client-go election contract](https://pkg.go.dev/k8s.io/client-go@v0.37.0/tools/leaderelection) and the proposed ADRs in [issue #346](https://codefloe.com/pat-s/zendrite/issues/346).
-
-External fencing, durable recovery validation, deployment probes, and failure qualification remain tracked in issues #349 through #352.
-This election foundation does not promise protection from a paused former leader or exactly-once remote delivery by itself.
+Standbys do not serve traffic until takeover and startup are complete.
+An instance that loses leadership stops accepting requests, shuts down, and exits.
+If safe takeover cannot be confirmed, the standby does not start serving traffic.
+Check the application logs for election and startup failures.
