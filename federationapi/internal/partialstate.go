@@ -117,13 +117,7 @@ func (w *PartialStateWorker) Start() error {
 			step = (time.Second * 60) / time.Duration(max) //nolint:mnd
 		}
 
-		for _, roomNID := range roomNIDs {
-			roomNID := roomNID
-			time.AfterFunc(offset, func() {
-				w.QueueRoom(roomNID)
-			})
-			offset += step
-		}
+		process.Stagger(w.process.Context(), roomNIDs, offset, step, w.QueueRoom)
 	}
 
 	return nil

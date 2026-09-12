@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
 	"codefloe.com/pat-s/zendrite/setup/process"
 )
 
@@ -99,15 +101,26 @@ func (h *Homeserver) Run(ownership context.Context) error {
 		var err error
 		defer func() {
 			if failure := recover(); failure != nil {
-				err = fmt.Errorf("startup panic: %v", failure)
+				switch value := failure.(type) {
+				case error:
+					err = fmt.Errorf("startup panic: %w", value)
+				case *logrus.Entry:
+					if cause, ok := value.Data[logrus.ErrorKey].(error); ok {
+						err = fmt.Errorf("startup panic: %s: %w", value.Message, cause)
+					} else {
+						err = fmt.Errorf("startup panic: %s", value.Message)
+					}
+				default:
+					err = fmt.Errorf("startup panic: %v", failure)
+				}
+			}
+			// Cancellation during recovery is an ordinary stop, after cleanup joins.
+			if p.Context().Err() != nil && errors.Is(err, p.Context().Err()) {
+				err = nil
 			}
 			initialized <- err
 		}()
 		err = h.initialize(p)
-		// Cancellation during recovery is an ordinary stop, after cleanup joins.
-		if p.Context().Err() != nil && errors.Is(err, p.Context().Err()) {
-			err = nil
-		}
 	})
 	var result error
 	select {

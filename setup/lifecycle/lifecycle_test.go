@@ -3,9 +3,12 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/setup/process"
 )
@@ -187,5 +190,46 @@ func TestUnrelatedStartupCancellationIsFailure(t *testing.T) {
 	h := New(func(*process.ProcessContext) error { return context.Canceled }, time.Second)
 	if err := h.Run(t.Context()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("lost unrelated startup cancellation: %v", err)
+	}
+}
+
+func TestStartupPanicCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cancel      bool
+		logged      bool
+		cause       error
+		wantFailure bool
+	}{
+		{"error cancellation", true, false, context.Canceled, false},
+		{"logged cancellation", true, true, context.Canceled, false},
+		{"unrelated cancellation", false, true, context.Canceled, true},
+		{"error during shutdown", true, false, errors.New("database failure"), true},
+		{"logged error during shutdown", true, true, errors.New("database failure"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cleaned atomic.Bool
+			h := New(func(p *process.ProcessContext) error {
+				p.Defer(func() { cleaned.Store(true) })
+				if tc.cancel {
+					p.ShutdownZendrite()
+				}
+				if tc.logged {
+					logrus.WithError(tc.cause).Panic("startup failed")
+				}
+				panic(fmt.Errorf("startup failed: %w", tc.cause))
+			}, time.Second)
+			err := h.Run(t.Context())
+			if tc.wantFailure {
+				if !errors.Is(err, tc.cause) {
+					t.Fatalf("lost panic cause: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("graceful cancellation failed: %v", err)
+			}
+			if !cleaned.Load() || h.State() != Stopped {
+				t.Fatal("startup panic skipped cleanup")
+			}
+		})
 	}
 }

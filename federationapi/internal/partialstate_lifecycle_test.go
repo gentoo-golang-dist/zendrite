@@ -1,9 +1,12 @@
 package internal
 
 import (
+	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/setup/process"
 )
@@ -20,4 +23,30 @@ func TestIdlePartialStateWorkerStops(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("idle partial-state worker ignored cancellation")
 	}
+}
+
+type partialStateStartupAPI struct {
+	roomserverAPI.FederationRoomserverAPI
+}
+
+func (partialStateStartupAPI) GetAllPartialStateRooms(context.Context) ([]types.RoomNID, error) {
+	return []types.RoomNID{1, 2, 3}, nil
+}
+
+func TestPartialStateStartupStaggerStops(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := process.NewProcessContextWithParent(t.Context())
+		w := NewPartialStateWorker(p, partialStateStartupAPI{}, nil)
+		if err := w.Start(); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		p.ShutdownZendrite()
+		p.WaitForComponentsToFinish()
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+		if len(w.workerCh) != 0 || len(w.retryMap) != 0 {
+			t.Fatal("startup stagger queued work after shutdown")
+		}
+	})
 }
