@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -180,6 +181,9 @@ func TestStartupPanicCleansUp(t *testing.T) {
 	}, time.Second)
 	if err := h.Run(t.Context()); err == nil {
 		t.Fatal("startup panic was lost")
+	} else if !strings.Contains(err.Error(), "TestStartupPanicCleansUp.func1") ||
+		!strings.Contains(err.Error(), "lifecycle_test.go:") {
+		t.Fatalf("startup panic lost its origin stack: %v", err)
 	}
 	if !cleaned.Load() || h.State() != Stopped {
 		t.Fatal("panic skipped cleanup")

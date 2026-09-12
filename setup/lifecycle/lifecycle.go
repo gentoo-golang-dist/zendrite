@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -113,6 +114,7 @@ func (h *Homeserver) Run(ownership context.Context) error {
 				default:
 					err = fmt.Errorf("startup panic: %v", failure)
 				}
+				err = fmt.Errorf("%w\n%s", err, debug.Stack())
 			}
 			// Cancellation during recovery is an ordinary stop, after cleanup joins.
 			if p.Context().Err() != nil && errors.Is(err, p.Context().Err()) {
