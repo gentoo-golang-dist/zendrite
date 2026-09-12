@@ -14,6 +14,7 @@ require (
 	github.com/gen2brain/webp v0.6.4
 	github.com/getsentry/sentry-go v0.49.0
 	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-logr/logr v1.4.4
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
@@ -46,6 +47,7 @@ require (
 	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0
 	k8s.io/client-go v0.37.0
+	k8s.io/klog/v2 v2.140.0
 	maunium.net/go/mautrix v0.30.0
 	modernc.org/sqlite v1.58.0
 )
@@ -95,7 +97,6 @@ require (
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
-	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
@@ -166,7 +167,6 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/macaroon.v2 v2.1.0 // indirect
-	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd // indirect
 	modernc.org/libc v1.75.7 // indirect

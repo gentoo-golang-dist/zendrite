@@ -93,7 +93,13 @@ func control(ctx context.Context, elector election, acquired <-chan context.Cont
 			promoted <- nil
 			return
 		}
-		promoted <- app.Run(ownership)
+		err := app.Run(ownership)
+		// Stop can win between the ownership check and Run's activation lock.
+		// This is an ordinary cancellation, not an attempted lifecycle reuse.
+		if ownership.Err() != nil && errors.Is(err, lifecycle.ErrAlreadyStarted) {
+			err = nil
+		}
+		promoted <- err
 	}()
 
 	var result error

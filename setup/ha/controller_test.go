@@ -136,3 +136,72 @@ func TestDisabledDoesNotUseKubernetesOrGate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// delayedApplication pauses after control's final ownership check but before
+// the real lifecycle takes its activation lock, making the Stop/Run race exact.
+type delayedApplication struct {
+	*lifecycle.Homeserver
+	entered chan struct{}
+	proceed chan struct{}
+}
+
+func (a *delayedApplication) Run(ctx context.Context) error {
+	close(a.entered)
+	<-a.proceed
+	return a.Homeserver.Run(ctx)
+}
+
+func TestStopBeforeActivation(t *testing.T) {
+	for _, reason := range []string{"signal", "leadership loss", "uncanceled reuse"} {
+		t.Run(reason, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancelCause(t.Context())
+				defer cancel(nil)
+				leader, lose := context.WithCancelCause(ctx)
+				defer lose(nil)
+				acquired := make(chan context.Context, 1)
+				elector := electionFunc(func(ctx context.Context) {
+					acquired <- leader
+					select {
+					case <-ctx.Done():
+					case <-leader.Done():
+					}
+				})
+				app := &delayedApplication{
+					Homeserver: lifecycle.New(func(*process.ProcessContext) error { t.Error("stopped application initialized"); return nil }, time.Second),
+					entered:    make(chan struct{}), proceed: make(chan struct{}),
+				}
+				done := make(chan error, 1)
+				go func() {
+					done <- control(ctx, elector, acquired, nil, Candidate{}, gateFunc(func(context.Context, Candidate) error { return nil }), app, time.Second)
+				}()
+				<-app.entered
+				switch reason {
+				case "signal":
+					cancel(nil)
+				case "leadership loss":
+					lose(ErrLeadershipLost)
+				case "uncanceled reuse":
+					app.Stop()
+				}
+				synctest.Wait()
+				close(app.proceed)
+				err := <-done
+				switch reason {
+				case "signal":
+					if err != nil {
+						t.Fatalf("clean signal reported failure: %v", err)
+					}
+				case "leadership loss":
+					if !errors.Is(err, ErrLeadershipLost) || errors.Is(err, lifecycle.ErrAlreadyStarted) {
+						t.Fatalf("misreported leadership loss: %v", err)
+					}
+				case "uncanceled reuse":
+					if !errors.Is(err, lifecycle.ErrAlreadyStarted) {
+						t.Fatalf("masked lifecycle reuse: %v", err)
+					}
+				}
+			})
+		})
+	}
+}

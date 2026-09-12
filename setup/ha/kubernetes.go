@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	coordination "k8s.io/client-go/kubernetes/typed/coordination/v1"
@@ -22,6 +23,7 @@ func Run(ctx context.Context, cfg config.HA, app Application, gate OwnershipGate
 	if !cfg.Enabled {
 		return app.Run(ctx)
 	}
+	defer app.Stop()
 	errs := &config.ConfigErrors{}
 	cfg.Verify(errs)
 	if len(*errs) != 0 {
@@ -38,12 +40,20 @@ func Run(ctx context.Context, cfg config.HA, app Application, gate OwnershipGate
 	if err != nil {
 		return fmt.Errorf("HA requires an in-cluster Kubernetes service account: %w", err)
 	}
-	clientConfig.Timeout = cfg.RetryPeriod
-	client, err := coordination.NewForConfig(clientConfig)
+	configureLogging(logrus.StandardLogger())
+	client, err := newLeaseClient(clientConfig, cfg.RenewDeadline)
 	if err != nil {
 		return fmt.Errorf("create HA Kubernetes Lease client: %w", err)
 	}
 	return runKubernetes(ctx, cfg, client, app, gate, shutdownTimeout)
+}
+
+// newLeaseClient permits a slow request to use the renewal window. The retry
+// period controls scheduling; the election context still bounds renewal work.
+func newLeaseClient(clientConfig *rest.Config, renewDeadline time.Duration) (coordination.CoordinationV1Interface, error) {
+	clientConfig = rest.CopyConfig(clientConfig)
+	clientConfig.Timeout = renewDeadline
+	return coordination.NewForConfig(clientConfig)
 }
 
 func runKubernetes(ctx context.Context, cfg config.HA, client coordination.CoordinationV1Interface, app Application, gate OwnershipGate, shutdownTimeout time.Duration) error {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode"
@@ -44,7 +45,11 @@ func (c *HA) Verify(errs *ConfigErrors) {
 	if c.Backend != "kubernetes" {
 		errs.Add("global.ha.backend must be kubernetes")
 	}
-	for name, value := range map[string]string{"lease_name": c.LeaseName, "lease_namespace": c.LeaseNamespace} {
+	for _, field := range []struct{ name, value string }{
+		{"lease_name", c.LeaseName},
+		{"lease_namespace", c.LeaseNamespace},
+	} {
+		name, value := field.name, field.value
 		var problems []string
 		if name == "lease_namespace" {
 			problems = validation.IsDNS1123Label(value)
@@ -57,6 +62,10 @@ func (c *HA) Verify(errs *ConfigErrors) {
 	}
 	if c.CandidateID == "" || strings.TrimSpace(c.CandidateID) != c.CandidateID || strings.ContainsFunc(c.CandidateID, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
 		errs.Add("global.ha.candidate_id must be a nonempty candidate identity without surrounding whitespace or control separators (use the pod UID)")
+	}
+	// The API stores LeaseDurationSeconds as int32; do not truncate or overflow it.
+	if c.LeaseDuration%time.Second != 0 || c.LeaseDuration/time.Second > math.MaxInt32 {
+		errs.Add("global.ha.lease_duration must be whole seconds and fit in a positive signed 32-bit LeaseDurationSeconds value")
 	}
 	// Match client-go's jitter constraint without importing its election runtime here.
 	const jitterFactor = 1.2

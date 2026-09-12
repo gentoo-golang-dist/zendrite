@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -16,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	ktesting "k8s.io/client-go/testing"
 
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -187,5 +191,58 @@ func TestKubernetesFailures(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// delayedTransport models API latency without wall-clock sleeps or network I/O.
+type delayedTransport struct{ latency time.Duration }
+
+func (d delayedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	timer := time.NewTimer(d.latency)
+	defer timer.Stop()
+	select {
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	case <-timer.C:
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"apiVersion":"coordination.k8s.io/v1","kind":"Lease","metadata":{"name":"matrix"}}`)), Request: req}, nil
+	}
+}
+
+func TestLeaseRequestRenewalWindow(t *testing.T) {
+	for _, latency := range []time.Duration{2 * time.Second, 5 * time.Second} {
+		t.Run(latency.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				// A request slower than RetryPeriod (1s) can still fit RenewDeadline (4s).
+				original := &rest.Config{Host: "http://kubernetes.invalid", Timeout: time.Second, Transport: delayedTransport{latency: latency}}
+				client, err := newLeaseClient(original, 4*time.Second)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lease, err := client.Leases("matrix").Get(t.Context(), "matrix", metav1.GetOptions{})
+				if latency < 4*time.Second {
+					if err != nil {
+						t.Fatalf("slow request inside renewal window failed: %v", err)
+					}
+					if lease.Name != "matrix" {
+						t.Fatalf("unexpected lease: %+v", lease)
+					}
+				} else if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("request exceeded renewal window without timing out: %v", err)
+				}
+				if original.Timeout != time.Second {
+					t.Fatal("mutated shared REST config")
+				}
+			})
+		})
+	}
+}
+
+func TestInvalidHAStopsApplication(t *testing.T) {
+	server := lifecycle.New(func(*process.ProcessContext) error { t.Error("invalid HA initialized application"); return nil }, time.Second)
+	if err := Run(t.Context(), config.HA{Enabled: true}, server, nil, time.Second); err == nil {
+		t.Fatal("invalid HA accepted")
+	}
+	if server.State() != lifecycle.Stopped {
+		t.Fatal("early configuration failure did not stop application")
 	}
 }

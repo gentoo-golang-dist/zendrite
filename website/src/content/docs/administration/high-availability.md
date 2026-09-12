@@ -6,6 +6,7 @@ description: Opt-in Lease election, ownership requirements, and current limitati
 Kubernetes Lease election is an experimental foundation for active-passive Zendrite deployments.
 **Automatic HA activation is unavailable until the enforceable fencing provider in issue #349 is implemented.**
 The binary refuses application startup after election when no fencing provider is installed.
+A supervisor that restarts the failed candidate can produce a crash loop; each failed promotion retains the Lease until expiry, for up to `lease_duration`.
 Leave HA disabled for normal deployments.
 
 ## Configuration
@@ -35,18 +36,22 @@ The implementation pins client-go v0.37.0, which requires Go 1.26, matching Zend
 It uses the stable `coordination.k8s.io/v1` Lease API and ordinary leader election, without coordinated-election feature gates.
 Kubernetes deployment qualification remains part of issues #351 and #352; this change does not establish a tested cluster-version support matrix.
 
-`lease_duration` must be at least one second and greater than `renew_deadline`.
+`lease_duration` must be a whole number of seconds, fit in the API's signed 32-bit seconds field, and be greater than `renew_deadline`.
 `renew_deadline` must exceed 1.2 times the positive `retry_period`, matching client-go's jitter constraint.
+Each Lease API request may use up to `renew_deadline`; `retry_period` controls retry scheduling rather than the request timeout.
 These timings govern detection and availability, not exclusive execution.
 
 ## Permissions and failure behavior
 
 The service account needs namespaced `get`, `create`, and `update` permission on `leases` in API group `coordination.k8s.io`.
 For least privilege, precreate the Lease and grant `get` and `update` on that specific resource name; creation is then unnecessary.
+If a precreated Lease is deleted, candidates with only `get` and `update` permission fail when they attempt to recreate it.
+An operator must recreate the Lease or grant `create` permission before restarting the candidates.
 The election implementation does not need list, watch, patch, delete, or event permissions.
 Denied access produces an error identifying the Lease and required permissions, then terminates the candidate.
 Transient API errors use client-go retries: a standby stays alive without starting the application, while a leader that cannot renew loses ownership and exits.
 Ordinary contention keeps the unsuccessful candidates alive and inert.
+Election diagnostics use the configured logrus levels and hooks, with informational election events at info level, verbose diagnostics at debug level, and failures at error level.
 
 ## Ownership and shutdown contract
 
