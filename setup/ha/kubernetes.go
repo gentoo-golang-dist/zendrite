@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	coordination "k8s.io/client-go/kubernetes/typed/coordination/v1"
@@ -59,11 +60,11 @@ func newLeaseClient(clientConfig *rest.Config, renewDeadline time.Duration) (coo
 func runKubernetes(ctx context.Context, cfg config.HA, client coordination.CoordinationV1Interface, app Application, gate OwnershipGate, shutdownTimeout time.Duration) error {
 	candidate := Candidate{Identity: cfg.CandidateID + "_" + uuid.NewString(), LeaseName: cfg.LeaseName, LeaseNamespace: cfg.LeaseNamespace}
 	failures := make(chan error, 1)
-	lock := &permissionLock{Interface: &resourcelock.LeaseLock{
+	lock := &permissionLock{Interface: &annotatedLeaseLock{LeaseLock: &resourcelock.LeaseLock{
 		LeaseMeta:  metav1.ObjectMeta{Name: candidate.LeaseName, Namespace: candidate.LeaseNamespace, Annotations: map[string]string{compatibilityAnnotation: cfg.Compatibility}},
 		Client:     client,
 		LockConfig: resourcelock.ResourceLockConfig{Identity: candidate.Identity},
-	}, failures: failures, leases: client.Leases(candidate.LeaseNamespace), compatibility: cfg.Compatibility, leaseName: candidate.LeaseName}
+	}}, failures: failures, leases: client.Leases(candidate.LeaseNamespace), compatibility: cfg.Compatibility, leaseName: candidate.LeaseName}
 	acquired := make(chan context.Context, 1)
 	elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 		Lock:          lock,
@@ -132,3 +133,21 @@ func (l *permissionLock) Update(ctx context.Context, record resourcelock.LeaderE
 }
 
 const compatibilityAnnotation = "zendrite.codefloe.com/compatibility"
+
+// annotatedLeaseLock creates compatibility metadata atomically with ownership.
+// The client-go LeaseLock.Create implementation copies labels but drops LeaseMeta.Annotations.
+type annotatedLeaseLock struct{ *resourcelock.LeaseLock }
+
+func (l *annotatedLeaseLock) Create(ctx context.Context, record resourcelock.LeaderElectionRecord) error {
+	_, err := l.Client.Leases(l.LeaseMeta.Namespace).Create(ctx, &coordinationv1.Lease{
+		ObjectMeta: *l.LeaseMeta.DeepCopy(),
+		Spec:       resourcelock.LeaderElectionRecordToLeaseSpec(&record),
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+	// Initialize client-go's private cached Lease, including its resource version,
+	// so its normal renewal path preserves the annotation and conflict checks.
+	_, _, err = l.Get(ctx)
+	return err
+}

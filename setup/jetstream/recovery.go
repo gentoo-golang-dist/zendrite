@@ -17,6 +17,9 @@ func RecoverSync(ctx context.Context, js nats.JetStreamContext, cfg *config.JetS
 	ctx, cancel := context.WithTimeout(ctx, recoveryTimeout)
 	defer cancel()
 	for _, pair := range syncRecoveryConsumers {
+		if pair.stream == OutputPresenceEvent && (cfg.Matrix == nil || (!cfg.Matrix.Presence.EnableInbound && !cfg.Matrix.Presence.EnableOutbound)) {
+			continue
+		}
 		stream, durable := cfg.Prefixed(pair.stream), cfg.Durable(pair.consumer)+"Pull"
 		streamInfo, err := js.StreamInfo(stream, nats.Context(ctx))
 		if err != nil {

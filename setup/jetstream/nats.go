@@ -13,6 +13,7 @@ import (
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	natsclient "github.com/nats-io/nats.go"
+	natsjs "github.com/nats-io/nats.go/jetstream"
 	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -117,7 +118,7 @@ func setupNATS(process *process.ProcessContext, cfg *config.JetStream, nc *natsc
 	if err != nil {
 		logrus.WithError(err).Panic("Unable to get JetStream context")
 	}
-	checkAndConfigureStreams(process, cfg, js)
+	checkAndConfigureStreams(process, cfg, js, nc)
 	if cfg.Matrix != nil && cfg.Matrix.HA.Enabled {
 		js = protectedJetStream{js}
 	}
@@ -142,7 +143,7 @@ func natsConnectOptions(process *process.ProcessContext, cfg *config.JetStream, 
 					logrus.WithError(jerr).Panic("Unable to get JetStream context in reconnect handler")
 					return
 				}
-				checkAndConfigureStreams(process, cfg, js)
+				checkAndConfigureStreams(process, cfg, js, c)
 			})
 		}),
 	}
@@ -197,13 +198,26 @@ func isAuthError(err error) bool {
 		errors.Is(err, natsclient.ErrAccountAuthExpired)
 }
 
-func checkAndConfigureStreams(process *process.ProcessContext, cfg *config.JetStream, js natsclient.JetStreamContext) {
+//nolint:contextcheck,nolintlint // ProcessContext owns the lifetime; this suppresses transitive callgraph facts, which nolintlint cannot track.
+func checkAndConfigureStreams(process *process.ProcessContext, cfg *config.JetStream, js natsclient.JetStreamContext, nc *natsclient.Conn) {
 	if err := configureStreams(process, cfg, js); err != nil {
 		logrus.WithError(err).Panic("Unable to establish JetStream storage")
 	}
 	// Removing interest consumers can discard their outstanding messages.
 	// HA requires an explicit offline migration of legacy consumers instead.
 	if cfg.Matrix != nil && cfg.Matrix.HA.Enabled {
+		consumerJS, err := natsjs.New(nc)
+		if cfg.JetStreamDomain != "" {
+			consumerJS, err = natsjs.NewWithDomain(nc, cfg.JetStreamDomain)
+		}
+		if err != nil {
+			logrus.WithError(err).Panic("Unable to inspect HA consumers")
+		}
+		for _, stream := range streams {
+			if err := validateConsumers(process.Context(), consumerJS, cfg.Prefixed(stream.Name), cfg); err != nil {
+				logrus.WithError(err).Panic("Unable to establish JetStream consumer durability")
+			}
+		}
 		return
 	}
 
@@ -266,6 +280,10 @@ func configureStreams(process *process.ProcessContext, cfg *config.JetStream, js
 			}
 		} else {
 			current := info.Config
+			if !ha && cfg.Replicas == 0 {
+				// An omitted standalone setting does not authorize downscaling operator replicas.
+				desired.Replicas = current.Replicas
+			}
 			if ha && (current.Storage != desired.Storage || current.Retention != desired.Retention || current.MaxAge != desired.MaxAge || !slices.Equal(current.Subjects, desired.Subjects)) {
 				return fmt.Errorf("stream %s requires an offline storage/retention/subject migration; refusing to discard queued data", desired.Name)
 			}
@@ -286,9 +304,6 @@ func configureStreams(process *process.ProcessContext, cfg *config.JetStream, js
 		}
 		if ha {
 			if err = waitForReplicas(process.Context(), js, desired.Name, desired.Replicas); err != nil {
-				return err
-			}
-			if err = validateConsumers(process.Context(), js, desired.Name, desired.Replicas); err != nil {
 				return err
 			}
 		}
@@ -321,7 +336,7 @@ func waitForReplicas(ctx context.Context, js natsclient.JetStreamContext, name s
 		healthy := info.Config.Replicas == replicas && info.Cluster != nil && info.Cluster.Leader != "" && len(info.Cluster.Replicas) == replicas-1
 		if healthy {
 			for _, replica := range info.Cluster.Replicas {
-				healthy = healthy && replica.Current && !replica.Offline && replica.Lag == 0
+				healthy = healthy && replica.Current && !replica.Offline
 			}
 		}
 		if healthy {
@@ -335,26 +350,29 @@ func waitForReplicas(ctx context.Context, js natsclient.JetStreamContext, name s
 	}
 }
 
-func validateConsumers(ctx context.Context, js natsclient.JetStreamContext, stream string, replicas int) error {
-	// ConsumerNames hides API errors; use StreamInfo's count to detect incomplete enumeration.
-	info, err := js.StreamInfo(stream, natsclient.Context(ctx))
+func validateConsumers(ctx context.Context, js natsjs.JetStream, streamName string, cfg *config.JetStream) error {
+	// The error-reporting paginated API avoids one request per room and does not
+	// compare consumer counts sampled at different times. Ephemeral consumers can expire.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stream, err := js.Stream(ctx, streamName)
 	if err != nil {
 		return err
 	}
-	count := 0
-	for name := range js.ConsumerNames(stream, natsclient.Context(ctx)) {
-		consumer, readErr := js.ConsumerInfo(stream, name, natsclient.Context(ctx))
-		if readErr != nil {
-			return readErr
+	consumers := stream.ListConsumers(ctx)
+	for consumer := range consumers.Info() {
+		consumerCfg := consumer.Config
+		// The roomserver's headers-only ephemeral subscription wakes durable room
+		// workers. It owns no recoverable state and may linger after a former owner exits.
+		if streamName == cfg.Prefixed(InputRoomEvent) && consumerCfg.Durable == "" && consumerCfg.DeliverSubject != "" && consumerCfg.HeadersOnly && consumerCfg.FilterSubject == "" && len(consumerCfg.FilterSubjects) == 0 && consumerCfg.AckPolicy == natsjs.AckExplicitPolicy && consumerCfg.DeliverPolicy == natsjs.DeliverAllPolicy {
+			continue
 		}
-		count++
-		cfg := consumer.Config
-		if cfg.MemoryStorage || (cfg.Replicas != 0 && cfg.Replicas != replicas) || cfg.DeliverSubject != "" || cfg.AckPolicy != natsclient.AckExplicitPolicy {
-			return fmt.Errorf("consumer %s on %s requires an offline durability/acknowledgement migration", name, stream)
+		if consumerCfg.MemoryStorage || (consumerCfg.Replicas != 0 && consumerCfg.Replicas != cfg.Replicas) || consumerCfg.DeliverSubject != "" || consumerCfg.AckPolicy != natsjs.AckExplicitPolicy {
+			return fmt.Errorf("consumer %s on %s requires an offline durability/acknowledgement migration", consumer.Name, streamName)
 		}
 	}
-	if count != info.State.Consumers {
-		return fmt.Errorf("unable to inspect every consumer on %s", stream)
+	if err := consumers.Err(); err != nil {
+		return fmt.Errorf("list consumers on %s: %w", streamName, err)
 	}
 	return ctx.Err()
 }

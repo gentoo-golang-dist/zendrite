@@ -126,8 +126,9 @@ global:
 
   # Configuration for NATS JetStream
   jetstream:
-    # Stream replication; HA requires an external cluster with 3 or 5 replicas.
-    replicas: 1
+    # Zero preserves existing replication and defaults new streams to one replica.
+    # HA requires an external cluster with 3 or 5 replicas.
+    replicas: 0
     # A list of NATS Server addresses to connect to. If none are specified, an
     # internal NATS server will be started automatically when running Zendrite in
     # monolith mode.

@@ -13,7 +13,8 @@ These checks add storage and recovery prerequisites; they do not remove that rel
   Separate component databases, SQLite, and experimental MSCs are not supported in HA mode.
 - Configure external JetStream addresses, a nonempty homeserver-specific topic prefix, and `global.jetstream.replicas: 3` or `5`.
   HA uses file storage for every stream, including typing and presence streams.
-  Startup waits up to 30 seconds per stream for every configured replica to become current.
+  Startup waits up to 30 seconds per stream for every configured replica to become current and online.
+  It does not require a zero-lag snapshot while publishers are active.
 - Use S3 media with the same endpoint, region, bucket, and prefix on every candidate, or explicitly set `media_api.storage.local.shared: true`.
   The shared-filesystem option asserts that every candidate mounts the same durable POSIX filesystem at the configured path.
   It requires synchronous client writes and synchronous server-side persistence, atomic rename, and coherent reads across clients, for example a synchronously mounted NFS export backed by redundant stable storage.
@@ -35,7 +36,8 @@ Federation, appservice, and push retries can produce duplicate remote deliveries
 ## Existing streams and consumers
 
 Stream updates use the fully prefixed name and preserve operator settings such as size limits.
-Replication changes are applied in place, then verified against broker state.
+Explicit replication changes are applied in place, then verified against broker state.
+In standalone mode, an omitted or zero `replicas` value preserves existing replica counts and defaults newly created streams to one replica.
 HA rejects storage, retention, age, or subject changes rather than risking queued data.
 A failed stream update never deletes and recreates the stream, in either HA or standalone mode.
 Standalone retains its explicit memory-storage option and degraded memory fallback for new streams; HA never uses that fallback.
@@ -43,7 +45,9 @@ The package stream templates are never mutated by memory-mode startup.
 
 Before enabling HA on an existing installation, migrate its memory-based typing/presence streams and legacy push/ack-all consumers during an offline maintenance window.
 Drain or back up their data and durable acknowledgement positions before an operator changes them.
-HA rejects incompatible existing consumer storage, replication, or acknowledgement settings and blocks application stream/consumer deletion paths.
+HA rejects incompatible existing durable consumer storage, replication, or acknowledgement settings and blocks application stream/consumer deletion paths.
+The roomserver's headers-only ephemeral push consumer is allowed because it only wakes durable room workers and owns no recoverable state.
+Consumer validation uses paginated listing with error reporting and cancels enumeration on failure.
 Do not delete occupied streams or consumers to make validation pass.
 
 ## Candidate compatibility and upgrades
@@ -77,6 +81,7 @@ A fresh process initializes caches and synchronously restores sync stream positi
 Federation destination enumeration must succeed in HA mode; recovered destination workers retain the existing staggered retry schedule, so readiness does not wait for remote homeservers to become available.
 Durable consumers resume their persisted acknowledgement positions.
 Before opening public listeners, startup waits for the sync consumers to apply their captured stream backlog, including already delivered but unacknowledged messages.
+The presence consumer participates only when inbound or outbound presence is enabled.
 Cancellation, broker errors, or a 120-second sync recovery timeout prevent readiness.
 Typing state, HTTP transaction caches, login/SSO intermediates, and sliding-sync sessions remain transient process state; clients may need to retry or establish a fresh session after promotion.
 

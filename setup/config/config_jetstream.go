@@ -20,7 +20,8 @@ type JetStream struct {
 	JetStreamDomain string `yaml:"js_domain"`
 	// Keep all storage in memory. This is mostly useful for unit tests.
 	InMemory bool `yaml:"in_memory"`
-	// Replicas is the requested stream replication factor (zero preserves the default of one).
+	// Replicas is the requested stream replication factor.
+	// Zero preserves existing replication and defaults new streams to one replica.
 	Replicas int `yaml:"replicas"`
 	// Disable logging. This is mostly useful for unit tests.
 	NoLog bool `yaml:"-"`

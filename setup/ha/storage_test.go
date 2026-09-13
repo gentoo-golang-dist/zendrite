@@ -58,3 +58,30 @@ func TestLeaseCompatibility(t *testing.T) {
 		})
 	}
 }
+
+func TestLeaseBootstrapRetainsCompatibility(t *testing.T) {
+	client := leaseClient()
+	meta := metav1.ObjectMeta{Name: "matrix", Namespace: "test", Annotations: map[string]string{compatibilityAnnotation: "expected"}}
+	lock := &permissionLock{
+		Interface: &annotatedLeaseLock{LeaseLock: &resourcelock.LeaseLock{LeaseMeta: meta, Client: client.CoordinationV1(), LockConfig: resourcelock.ResourceLockConfig{Identity: "candidate"}}},
+		failures:  make(chan error, 1), leases: client.CoordinationV1().Leases("test"), leaseName: "matrix", compatibility: "expected",
+	}
+	record := resourcelock.LeaderElectionRecord{HolderIdentity: "candidate", LeaseDurationSeconds: 30, AcquireTime: metav1.Now(), RenewTime: metav1.Now()}
+	require.NoError(t, lock.Create(t.Context(), record))
+	created, err := client.CoordinationV1().Leases("test").Get(t.Context(), "matrix", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "expected", created.Annotations[compatibilityAnnotation])
+	// The first renewal must already have an initialized client-go resource version.
+	require.NoError(t, lock.Update(t.Context(), record))
+	observed, _, err := lock.Get(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "candidate", observed.HolderIdentity)
+	// A mismatched candidate must not overwrite the existing compatibility record.
+	lock.compatibility = "other"
+	_, _, err = lock.Get(t.Context())
+	require.ErrorContains(t, err, "compatibility mismatch")
+	require.Error(t, lock.Create(t.Context(), record))
+	stored, err := client.CoordinationV1().Leases("test").Get(t.Context(), "matrix", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "expected", stored.Annotations[compatibilityAnnotation])
+}
