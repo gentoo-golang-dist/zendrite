@@ -1,6 +1,7 @@
 package ha
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,7 +27,14 @@ func listenStatus(cfg config.HA, status *Status, metrics *config.Metrics) (net.L
 	mux := http.NewServeMux()
 	mux.Handle("/_zendrite/monitor/", status.Handler())
 	if metrics != nil && metrics.Enabled {
-		mux.Handle("GET /metrics", httputil.WrapHandlerInBasicAuth(promhttp.Handler(), metrics.BasicAuth))
+		// Refresh before serving: phase, transition and duration metrics are
+		// derived from observed transitions, so a scrape that does not look
+		// would report whatever the last probe happened to see.
+		scrape := promhttp.Handler()
+		mux.Handle("GET /metrics", httputil.WrapHandlerInBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			status.Refresh()
+			scrape.ServeHTTP(w, r)
+		}), metrics.BasicAuth))
 	}
 	listener, err := net.Listen("tcp", cfg.StatusAddress)
 	if err != nil {
@@ -34,7 +42,11 @@ func listenStatus(cfg config.HA, status *Status, metrics *config.Metrics) (net.L
 	}
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: statusReadHeaderTimeout}
 	return listener, func() {
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		// Only the listener is closed on shutdown, so Serve returns
+		// net.ErrClosed rather than http.ErrServerClosed. Logging that as an
+		// error made every clean shutdown look like a failure.
+		if err := server.Serve(listener); err != nil &&
+			!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			logrus.WithError(err).Error("HA status listener failed")
 		}
 	}, nil

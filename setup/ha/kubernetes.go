@@ -79,7 +79,7 @@ func runKubernetes(ctx context.Context, cfg config.HA, client coordination.Coord
 		LeaseMeta:  metav1.ObjectMeta{Name: candidate.LeaseName, Namespace: candidate.LeaseNamespace, Annotations: map[string]string{compatibilityAnnotation: cfg.Compatibility}},
 		Client:     client,
 		LockConfig: resourcelock.ResourceLockConfig{Identity: candidate.Identity},
-	}}, failures: failures, leases: client.Leases(candidate.LeaseNamespace), compatibility: cfg.Compatibility, leaseName: candidate.LeaseName}
+	}}, failures: failures, leases: client.Leases(candidate.LeaseNamespace), compatibility: cfg.Compatibility, leaseName: candidate.LeaseName, identity: candidate.Identity}
 	acquired := make(chan context.Context, 1)
 	elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 		Lock:          lock,
@@ -106,6 +106,7 @@ type permissionLock struct {
 	leases        coordination.LeaseInterface
 	compatibility string
 	leaseName     string
+	identity      string
 }
 
 func (l *permissionLock) report(err error) {
@@ -143,10 +144,11 @@ func (l *permissionLock) Create(ctx context.Context, record resourcelock.LeaderE
 
 func (l *permissionLock) Update(ctx context.Context, record resourcelock.LeaderElectionRecord) error {
 	err := l.Interface.Update(ctx, record)
-	if err != nil {
-		// A single failure is not loss of leadership; client-go retries until
-		// the renewal deadline. Counting them still shows control-plane
-		// trouble before it turns into an election.
+	// client-go calls Update both to renew and to acquire, so counting every
+	// failure would inflate this on every healthy standby that loses a race.
+	// Only a holder failing to renew is control-plane trouble, and a single
+	// failure is not yet a lost lease: client-go retries until the deadline.
+	if err != nil && record.HolderIdentity == l.identity {
 		renewalFailures.Inc()
 	}
 	l.report(err)

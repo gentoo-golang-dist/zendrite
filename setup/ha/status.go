@@ -3,6 +3,7 @@ package ha
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ type Status struct {
 	server     StateReporter
 	acquiredAt time.Time
 	lostAt     time.Time
+	leader     bool
 }
 
 // StateReporter is the activation's own view of itself, which is more
@@ -84,6 +86,9 @@ func (s *Status) enter(phase Phase) {
 	switch phase {
 	case PhaseFencing:
 		s.acquiredAt = s.since
+		// Leadership is recorded, not inferred from the phase name: a standby
+		// that stops would otherwise report itself as the leader.
+		s.leader = true
 		leadershipTransitions.WithLabelValues("acquired").Inc()
 	case PhaseActive:
 		if !s.acquiredAt.IsZero() {
@@ -94,10 +99,12 @@ func (s *Status) enter(phase Phase) {
 		if previous == PhaseActive || previous == PhaseRecovering || previous == PhaseFencing {
 			leadershipTransitions.WithLabelValues("lost").Inc()
 		}
+		s.leader = false
 	case PhaseStopped:
 		if !s.lostAt.IsZero() {
 			shutdownDuration.Set(s.since.Sub(s.lostAt).Seconds())
 		}
+		s.leader = false
 	case PhaseStarting, PhaseStandby, PhaseRecovering:
 	}
 }
@@ -110,12 +117,19 @@ func (s *Status) Fail(err error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.reason = err.Error()
+	// The status endpoint is served unauthenticated on all interfaces, and
+	// error text from the database layer carries the user, database name and
+	// host. The full cause goes to the log; the endpoint reports the boundary
+	// and a fixed summary.
+	logrus.WithError(err).Warn("HA candidate cannot proceed")
 	var blocked *BlockedError
 	if errors.As(err, &blocked) {
 		s.boundary = blocked.Boundary
+		s.reason = fmt.Sprintf("ownership could not be established at the %s boundary; see the candidate logs", blocked.Boundary)
 		fencingFailures.WithLabelValues(string(blocked.Boundary)).Inc()
+		return
 	}
+	s.reason = "the candidate cannot proceed; see the candidate logs"
 }
 
 // Phase reports the current phase, preferring the activation's own state once
@@ -145,6 +159,14 @@ func (p Phase) merge(server StateReporter) Phase {
 	}
 	return p
 }
+
+// Refresh observes the activation's current state and updates the metrics.
+//
+// Phase, transition and duration metrics are derived from transitions, and a
+// transition is only noticed when something looks. Without a refresh on scrape
+// the phase gauge stays pinned at whatever the last probe saw, and transitions
+// between probes are missed entirely.
+func (s *Status) Refresh() { s.Phase() }
 
 // Ready reports whether this candidate should receive Matrix traffic.
 func (s *Status) Ready() bool { return s.Phase() == PhaseActive }
@@ -190,13 +212,13 @@ func (s *Status) write(w http.ResponseWriter) {
 	s.enter(s.phase.merge(s.server))
 	body := statusBody{
 		Phase:    s.phase,
+		Leader:   s.leader,
 		Since:    s.since.UTC().Format(time.RFC3339),
 		Reason:   s.reason,
 		Boundary: s.boundary,
 	}
 	s.mu.Unlock()
 	body.Ready = body.Phase == PhaseActive
-	body.Leader = body.Phase != PhaseStarting && body.Phase != PhaseStandby
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		logrus.WithError(err).Debug("Failed to write HA status response")
 	}

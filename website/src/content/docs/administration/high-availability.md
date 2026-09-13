@@ -55,8 +55,9 @@ Without it a standby would look dead to Kubernetes and be restarted, and its met
 | `/_zendrite/monitor/status` | Phase, leadership, readiness, and the blocking reason as JSON. |
 | `/metrics` | Prometheus metrics, when `global.metrics.enabled` is set. |
 
-Point the liveness probe at `/_zendrite/monitor/up` and the readiness probe at `/_zendrite/monitor/health`.
-Using the readiness endpoint for liveness would restart every healthy standby, because a standby is intentionally unready.
+Point the liveness probe at `/_zendrite/monitor/up` and the readiness probe at `/_zendrite/monitor/health`, both on the `status_address` port rather than the Matrix port.
+The same paths also exist on the Matrix listener, which a standby never binds, so probing them there makes every standby fail its probes and restart.
+Using the readiness endpoint for liveness has the same effect, because a standby is intentionally unready.
 
 A candidate reports one of `starting`, `standby`, `fencing`, `recovering`, `active`, `draining`, or `stopped`.
 An elected candidate stays unready through `fencing` and `recovering`, so a Service only routes to it once ownership is established and recovery is complete.
@@ -173,7 +174,8 @@ See [HA storage and recovery](/installation/manual/high-availability/) for the f
 
 Every candidate must present the same signing identity, or remote servers will reject events depending on which candidate served them.
 Mount one signing key Secret into every pod; do not let each pod generate its own.
-A mismatched key is not detected by election, because election does not read it.
+Public signing identities are part of the compatibility fingerprint recorded on the Lease, so a candidate with a different key fails closed rather than serving traffic under the wrong identity.
+That is a hard stop, not a fallback: fix the Secret rather than working around the mismatch.
 
 To bootstrap, start with `replicaCount: 1` and HA enabled, and confirm the pod reaches `active`.
 The first candidate creates the annotated Lease and the ownership record.
@@ -183,8 +185,10 @@ Starting several candidates against an empty database at once is safe but harder
 ## Upgrades
 
 Rolling mixed-version upgrades are not supported: candidates pin themselves to one executable and configuration fingerprint.
-Upgrade in a maintenance window, as described in [HA storage and recovery](/installation/manual/high-availability/).
-Set `maxSurge: 0` so a new candidate is never started while an old one still holds ownership.
+A new-version pod fails the Lease compatibility check, so replacing pods one at a time deadlocks. Once the last old pod is gone, nothing can acquire the Lease without operator intervention.
+
+Upgrade in a maintenance window instead, as described in [HA storage and recovery](/installation/manual/high-availability/): scale to zero, confirm no pod is running, deliberately reset both compatibility records, then scale back up on the new version.
+`maxSurge: 0` keeps a new candidate from being started alongside an old owner, but it does not make a rolling upgrade work.
 
 ## Manual failover
 
@@ -206,8 +210,12 @@ Do not set `ha.enabled: false` while several pods are running: without election 
 
 ## Recovering from blocked fencing
 
-A candidate that cannot establish ownership stays unready and reports the boundary at `/_zendrite/monitor/status`.
+A candidate that cannot establish ownership refuses to activate and exits with a nonzero status, so Kubernetes restarts it and it contends again.
 This is intended: it fails closed rather than risking two active homeservers.
+
+Read the blocking reason from the candidate's logs.
+`/_zendrite/monitor/status` reports the boundary only during the brief window before the process exits, and `zendrite_ha_fencing_failures_total` is likely to be missed by a scrape for the same reason, so neither is a reliable record of a single failure.
+A candidate stuck in a restart loop is visible through `ZendriteHANoReadyLeader` and through the pod's restart count.
 
 Look at the named boundary first.
 A `postgresql` block usually means a backend of the previous activation is still connected, which the status reason reports as a count.
