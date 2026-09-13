@@ -27,10 +27,10 @@ type guardedFileStore struct {
 
 func (g *guardedFileStore) owned(effect string) error {
 	if g.owner == nil {
-		return fmt.Errorf("media %s refused: ownership has not been established", effect)
+		return fmt.Errorf("%w: media %s refused: ownership has not been established", ownership.ErrDispatchRefused, effect)
 	}
 	if err := g.owner.Valid(); err != nil {
-		return fmt.Errorf("media %s refused: %w", effect, err)
+		return fmt.Errorf("%w: media %s refused: %w", ownership.ErrDispatchRefused, effect, err)
 	}
 	return nil
 }

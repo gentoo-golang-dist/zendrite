@@ -94,13 +94,24 @@ Messages are never discarded on the basis of their generation: a suspended owner
 Media backends have no ownership check of their own, so a retired owner is refused at the file store: uploads, publication, thumbnail replacement, and deletion all fail.
 Reads stay open, because serving media that already exists is not an authoritative effect and a draining candidate should still answer in-flight downloads.
 
-Remote servers cannot reject a retired owner either, so outbound federation dispatch is refused before a transaction starts its round-trip.
-A transaction already dispatched may still complete; that is the documented at-least-once behavior, and the successor recovers the queue using stable transaction identifiers.
-Appservice and push delivery run inside JetStream consumers and are covered by the consumer barrier above.
+Remote servers cannot reject a retired owner either, so outbound federation dispatch is refused before a request starts its round-trip.
+This covers every call that makes a remote server accept an effect on this homeserver's behalf, not only transaction sends: joins, leaves, invites, knocks, third-party invite exchange, and one-time key claims.
+Key claims matter most, because a spent remote one-time key cannot be recovered.
+A request already dispatched may still complete; that is the documented at-least-once behavior, and the successor recovers the queue using stable transaction identifiers.
+
+A refusal is distinguishable from a remote failure, so the destination queue stops instead of recording it.
+Charging it to the remote server would persist retry state, divert traffic to relays and eventually blacklist servers that were never unreachable, in a database the successor inherits.
+
+Appservice and push deliveries begin inside a consumer callback, which the fetch and acknowledgement barriers do not cover, so each checks ownership immediately before its HTTP request.
 
 Admission is evaluated per request rather than only at readiness.
 A request already parked on an established keep-alive connection never passes a new readiness check, so waiting for Kubernetes to remove the endpoint is not sufficient.
 A candidate that loses ownership rejects client, federation, and admin traffic immediately.
+
+Probe and metrics endpoints are exempt.
+Refusing them would blind monitoring and make a candidate look dead to every probe at exactly the moment an operator needs to see why it stopped admitting traffic.
+
+A media operation refused for lost ownership returns 503 rather than 400, so a client retries instead of being told its upload was malformed.
 
 ## Kubernetes permissions
 
