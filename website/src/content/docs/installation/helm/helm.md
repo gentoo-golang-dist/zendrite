@@ -43,6 +43,31 @@ zendrite_config:
       conn_max_lifetime: -1
 ```
 
+## High availability
+
+The chart can run several candidates with one ready, safely active homeserver.
+HA is experimental; read [High availability](/administration/high-availability/) and [HA storage and recovery](/installation/manual/high-availability/) before enabling it.
+
+```yaml
+replicaCount: 3
+
+ha:
+  enabled: true
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+```
+
+`replicaCount` above 1 without `ha.enabled` is rejected, because running several active replicas without leader election corrupts shared state.
+A rolling update with a nonzero `maxSurge` is rejected as well: a surged candidate cannot be promoted while the old one still holds ownership, so the rollout would deadlock.
+
+The chart creates a service account with `get`, `update` and `create` on the homeserver's Lease, a headless status Service so standbys can be scraped, a disruption budget, and alert rules.
+It does not provision the HA prerequisites.
+Point the chart at an external HA PostgreSQL, an external replicated JetStream, and shared media, and disable the bundled PostgreSQL.
+
 ## Installing with PostgreSQL
 
 The chart comes with a dependency on Postgres, which can be installed alongside Zendrite. Enable it in your `values.yaml`:
