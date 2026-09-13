@@ -141,7 +141,9 @@ func TestFenceBackendsTerminatesRetiredActivations(t *testing.T) {
 	survivor := activationConn(t, dsn, successor)
 	require.NoError(t, survivor.PingContext(t.Context()))
 
-	terminated, err := fenceBackends(t.Context(), conn, successor)
+	horizon, err := fenceHorizon(t.Context(), conn)
+	require.NoError(t, err)
+	terminated, err := fenceBackends(t.Context(), conn, successor, horizon)
 	require.NoError(t, err)
 	require.Positive(t, terminated)
 	require.Error(t, held.PingContext(t.Context()), "a retired activation's backend must be terminated")

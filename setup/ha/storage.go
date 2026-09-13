@@ -55,7 +55,10 @@ func PrepareStorage(ctx context.Context, cfg *config.Zendrite, gate *PostgresGat
 	}
 	conn, err := connectAs(ctx, string(cfg.Global.DatabaseOptions.ConnectionString), gate)
 	if err != nil {
-		return nil, fmt.Errorf("HA PostgreSQL connection failed")
+		// A retired generation is the one cause an operator must see, and it
+		// used to be replaced by a generic connection failure. pgx redacts
+		// passwords in its own connection errors, so wrapping is safe.
+		return nil, fmt.Errorf("HA PostgreSQL connection failed: %w", err)
 	}
 	closeConn := func() {
 		const closeTimeout = 5 * time.Second

@@ -53,7 +53,7 @@ func startHomeserver(processCtx *process.ProcessContext, cfg *config.Zendrite, h
 	// PostgreSQL refuses a retired owner even if it has not noticed the loss.
 	var dbOptions []sqlutil.ConnectionOption
 	if gate != nil {
-		dbOptions = append(dbOptions, sqlutil.WithConnectionGuard(gate.ApplicationName(), gate.VerifyConnection))
+		dbOptions = append(dbOptions, sqlutil.WithConnectionGuard(gate.ApplicationName(), gate.GuardConnection))
 	}
 	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions, dbOptions...)
 	routers := httputil.NewRouters()

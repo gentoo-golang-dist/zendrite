@@ -81,10 +81,23 @@ func (g *PostgresGate) Acquire(ctx context.Context, candidate Candidate) error {
 	if err != nil {
 		return &BlockedError{Boundary: BoundaryPostgres, Err: err}
 	}
-	if err = g.sweep(ctx, conn, activation); err != nil {
+	horizon, err := fenceHorizon(ctx, conn)
+	if err != nil {
 		return &BlockedError{Boundary: BoundaryPostgres, Err: err}
 	}
-	// The advance is committed, so a late backend is refused rather than swept.
+	if err = g.sweep(ctx, conn, activation, horizon); err != nil {
+		return &BlockedError{Boundary: BoundaryPostgres, Err: err}
+	}
+	// Re-read before publishing the activation: a promoter that was frozen
+	// during its sweep may already have been retired, and must not announce
+	// ownership of a generation that no longer holds it.
+	confirmed, err := readOwnership(ctx, conn, scope)
+	if err != nil {
+		return &BlockedError{Boundary: BoundaryPostgres, Err: err}
+	}
+	if confirmed.Generation != activation.Generation {
+		return &BlockedError{Boundary: BoundaryPostgres, Err: fmt.Errorf("%w: held generation %d, current generation %d", ErrGenerationRetired, activation.Generation, confirmed.Generation)}
+	}
 	g.activation.Store(&activation)
 	logrus.WithFields(logrus.Fields{
 		"generation": activation.Generation,
@@ -117,12 +130,12 @@ func (g *PostgresGate) connect(ctx context.Context) (*pgx.Conn, error) {
 // sweep terminates retired backends until a pass observes none remaining.
 // Repeating closes the window in which a backend was mid-authentication when
 // an earlier pass enumerated pg_stat_activity.
-func (g *PostgresGate) sweep(ctx context.Context, conn *pgx.Conn, activation Activation) error {
+func (g *PostgresGate) sweep(ctx context.Context, conn *pgx.Conn, activation Activation, horizon time.Time) error {
 	for {
-		if _, err := fenceBackends(ctx, conn, activation); err != nil {
+		if _, err := fenceBackends(ctx, conn, activation, horizon); err != nil {
 			return err
 		}
-		remaining, err := retiredBackends(ctx, conn, activation)
+		remaining, err := retiredBackends(ctx, conn, activation, horizon)
 		if err != nil {
 			return err
 		}
@@ -151,9 +164,25 @@ func (g *PostgresGate) ApplicationName() string {
 	return applicationName(*activation)
 }
 
+// GuardConnection is the hook run on every new pooled connection, including
+// those re-established after a network interruption or a terminated backend.
+//
+// It closes a refused connection itself, because pgx returns an AfterConnect
+// failure without closing the connection it just opened. A retired owner under
+// load would otherwise leak a backend per refused reconnection and exhaust
+// max_connections exactly when its successor needs a pool.
+func (g *PostgresGate) GuardConnection(ctx context.Context, conn *pgx.Conn) error {
+	err := g.VerifyConnection(ctx, conn)
+	if err != nil {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ownershipCloseTimeout)
+		defer cancel()
+		_ = conn.Close(closeCtx)
+	}
+	return err
+}
+
 // VerifyConnection refuses a connection that belongs to a retired activation.
-// It runs on every application connection, including those re-established
-// after a network interruption or a terminated backend.
+// It leaves the connection open; callers that own it decide what to do.
 func (g *PostgresGate) VerifyConnection(ctx context.Context, conn *pgx.Conn) error {
 	activation := g.activation.Load()
 	if activation == nil {

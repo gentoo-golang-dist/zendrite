@@ -30,6 +30,10 @@ var ErrOwnershipRaced = errors.New("HA ownership generation advanced by another 
 // candidate must never treat this as a first bootstrap.
 var ErrOwnershipAmbiguous = errors.New("HA ownership record is missing while ownership history exists")
 
+// ErrGenerationRetired reports that the database holds a newer generation than
+// this activation. Unlike a failed check, it is proof that ownership is gone.
+var ErrGenerationRetired = errors.New("HA ownership generation is retired")
+
 // ErrOwnershipScope reports that the ownership record belongs to a different
 // homeserver. Sharing one database between homeservers is unsupported and must
 // fail closed rather than retire an unrelated deployment's generation.
@@ -193,23 +197,55 @@ func guardConnection(activation Activation) func(context.Context, *pgx.Conn) err
 			return fmt.Errorf("verify HA ownership generation: %w", err)
 		}
 		if scope != activation.Scope || generation != activation.Generation {
-			return fmt.Errorf("HA ownership generation %d is retired; current generation is %d: refusing database access", activation.Generation, generation)
+			return fmt.Errorf("%w: held generation %d, current generation %d: refusing database access", ErrGenerationRetired, activation.Generation, generation)
 		}
 		return nil
 	}
+}
+
+// fenceHorizon reports a database timestamp taken after the generation advance
+// committed. A backend that starts later necessarily reads the new generation
+// and is refused by guardConnection, so only older backends need fencing.
+//
+// Without this bound the sweep counts connections a retired owner opens while
+// it is still taking traffic, which are refused anyway, and could never reach
+// a clean pass before the ownership budget expired.
+func fenceHorizon(ctx context.Context, conn *pgx.Conn) (time.Time, error) {
+	var horizon time.Time
+	if err := conn.QueryRow(ctx, "SELECT clock_timestamp()").Scan(&horizon); err != nil {
+		return time.Time{}, fmt.Errorf("read HA fencing horizon: %w", err)
+	}
+	return horizon, nil
+}
+
+// retiredBackendPredicate matches backends of strictly earlier activations of
+// this homeserver that were already connected at the fencing horizon.
+//
+// Strictly earlier matters: a promoter frozen between its advance and its
+// sweep resumes holding a generation that has since been retired, and must not
+// terminate the live successor's backends.
+//
+// The substring call returns NULL for a name that does not match, so the cast never
+// sees a non-numeric value.
+const retiredBackendPredicate = `
+	WHERE datname = current_database()
+	AND pid <> pg_backend_pid()
+	AND backend_start <= $3
+	AND substring(application_name from $1)::bigint < $2`
+
+// generationPattern extracts the generation from an application name belonging
+// to this homeserver's election scope.
+func generationPattern(activation Activation) string {
+	return "^" + applicationNamePrefix + digest(activation.Scope) + ":([0-9]+):"
 }
 
 // fenceBackends terminates every backend belonging to an earlier activation of
 // this homeserver and reports how many it stopped. It must run only after the
 // generation advance has committed: a backend that connected earlier is already
 // visible here, and one that connects later is refused by guardConnection.
-func fenceBackends(ctx context.Context, conn *pgx.Conn, activation Activation) (int, error) {
-	const sweep = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		WHERE datname = current_database()
-		AND pid <> pg_backend_pid()
-		AND application_name LIKE $1
-		AND application_name <> $2`
-	rows, err := conn.Query(ctx, sweep, applicationNamePrefix+digest(activation.Scope)+":%", applicationName(activation))
+func fenceBackends(ctx context.Context, conn *pgx.Conn, activation Activation, horizon time.Time) (int, error) {
+	rows, err := conn.Query(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"+retiredBackendPredicate,
+		generationPattern(activation), activation.Generation, horizon)
 	if err != nil {
 		return 0, fmt.Errorf("terminate retired HA backends: %w", err)
 	}
@@ -226,14 +262,10 @@ func fenceBackends(ctx context.Context, conn *pgx.Conn, activation Activation) (
 
 // retiredBackends counts backends of earlier activations that are still
 // connected, so promotion can confirm a clean sweep before activating.
-func retiredBackends(ctx context.Context, conn *pgx.Conn, activation Activation) (int, error) {
-	const count = `SELECT count(*) FROM pg_stat_activity
-		WHERE datname = current_database()
-		AND pid <> pg_backend_pid()
-		AND application_name LIKE $1
-		AND application_name <> $2`
+func retiredBackends(ctx context.Context, conn *pgx.Conn, activation Activation, horizon time.Time) (int, error) {
 	var remaining int
-	if err := conn.QueryRow(ctx, count, applicationNamePrefix+digest(activation.Scope)+":%", applicationName(activation)).Scan(&remaining); err != nil {
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity"+retiredBackendPredicate,
+		generationPattern(activation), activation.Generation, horizon).Scan(&remaining); err != nil {
 		return 0, fmt.Errorf("count retired HA backends: %w", err)
 	}
 	return remaining, nil
