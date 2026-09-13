@@ -154,7 +154,7 @@ func (g *PostgresGate) connect(ctx context.Context) (*pgx.Conn, error) {
 //
 // Every failure names the retired activation, so a candidate that stays
 // unready reports why rather than a bare timeout.
-func (g *PostgresGate) sweep(ctx context.Context, conn *pgx.Conn, activation Activation, horizon time.Time) error {
+func (g *PostgresGate) sweep(ctx context.Context, conn querier, activation Activation, horizon time.Time) error {
 	remaining := -1
 	blockedBy := func(cause error) error {
 		if remaining < 0 {

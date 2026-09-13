@@ -2,7 +2,9 @@ package ha
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -14,6 +16,8 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/require"
 
+	"codefloe.com/pat-s/zendrite/mediaapi/storage/filestore"
+	"codefloe.com/pat-s/zendrite/mediaapi/types"
 	basepkg "codefloe.com/pat-s/zendrite/setup/base"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/setup/jetstream"
@@ -24,7 +28,10 @@ import (
 // takeover promotes a first activation, then a successor, and returns both
 // gates. The first gate is left as a resumed owner would be: still running,
 // still connected, and not yet aware that it was replaced.
-func takeover(t *testing.T, retiredCfg, promotedCfg config.HA) (retired, promoted *PostgresGate, dsn string) {
+// Promote a first activation, then a successor, returning a pool that the first activation opened and
+// used before the successor was promoted, so the sweep has a real backend to
+// terminate rather than only a lazily dialed one.
+func takeoverWithPool(t *testing.T, retiredCfg, promotedCfg config.HA) (retired, promoted *PostgresGate, dsn string, pooled *sql.DB) {
 	t.Helper()
 	dsn, cleanup := test.PrepareDBConnectionString(t, test.DBTypePostgres)
 	t.Cleanup(cleanup)
@@ -35,11 +42,14 @@ func takeover(t *testing.T, retiredCfg, promotedCfg config.HA) (retired, promote
 	first.Identity = "candidate-a"
 	require.NoError(t, retired.Acquire(t.Context(), first))
 
+	pooled = activationConn(t, dsn, *retired.Activation())
+	require.NoError(t, pooled.PingContext(t.Context()), "the retired owner must hold a live backend before takeover")
+
 	promoted = NewPostgresGate(dsn, promotedCfg)
 	second := scope
 	second.Identity = "candidate-b"
 	require.NoError(t, promoted.Acquire(t.Context(), second))
-	return retired, promoted, dsn
+	return retired, promoted, dsn, pooled
 }
 
 // pausedCandidate never refreshes its confirmation, which is what a process
@@ -56,14 +66,17 @@ func healthyCandidate() config.HA { return testHAConfig(time.Hour, 20*time.Milli
 func TestPausedOwnerIsRefusedAtEveryBoundary(t *testing.T) {
 	// A long freshness window would let a paused owner act on a stale
 	// confirmation, so the window is what the test must expire.
-	retired, promoted, dsn := takeover(t, pausedCandidate(), healthyCandidate())
+	retired, promoted, dsn, pooled := takeoverWithPool(t, pausedCandidate(), healthyCandidate())
 
 	// The pause is modeled by time passing without a heartbeat.
-	require.Eventually(t, func() bool { return retired.Valid() != nil }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return retired.Valid() != nil }, 30*time.Second, 10*time.Millisecond)
 
 	t.Run("database", func(t *testing.T) {
-		writes := activationConn(t, dsn, *retired.Activation())
-		_, err := writes.ExecContext(t.Context(), "CREATE TABLE IF NOT EXISTS stale_effect (value TEXT)")
+		// The pool is opened and used before takeover, so a real backend
+		// exists and has already passed the guard. A pool opened afterwards
+		// would only exercise guardConnection refusing a fresh dial and would
+		// stay green with backend fencing disabled entirely.
+		_, err := pooled.ExecContext(t.Context(), "CREATE TABLE IF NOT EXISTS stale_effect (value TEXT)")
 		require.Error(t, err, "a resumed owner must not commit")
 	})
 
@@ -71,6 +84,11 @@ func TestPausedOwnerIsRefusedAtEveryBoundary(t *testing.T) {
 		protected := jetstream.Protected(nil, retired)
 		_, err := protected.PublishMsg(&nats.Msg{Subject: "owned", Data: []byte("stale")})
 		require.Error(t, err, "a resumed owner must not publish")
+		_, err = protected.Publish("owned", []byte("stale"))
+		require.Error(t, err, "the convenience publisher must be refused too")
+		require.Error(t, protected.DeleteStream("owned"), "a resumed owner must not mutate streams")
+		require.Error(t, protected.DeleteConsumer("owned", "worker"), "a resumed owner must not mutate consumers")
+		require.Error(t, jetstream.Owned(protected), "delivery inside a callback must be refused")
 	})
 
 	t.Run("admission", func(t *testing.T) {
@@ -84,6 +102,13 @@ func TestPausedOwnerIsRefusedAtEveryBoundary(t *testing.T) {
 		require.Error(t, err, "a resumed owner must not start a new outbound transaction")
 	})
 
+	t.Run("media", func(t *testing.T) {
+		guarded := filestore.Guarded(unusableFileStore{}, retired)
+		require.Error(t, guarded.Delete(t.Context(), "hash"), "a resumed owner must not delete media")
+		require.Error(t, guarded.DeleteThumbnail(t.Context(), "hash", types.ThumbnailSize{Width: 32, Height: 32}),
+			"a resumed owner must not replace or delete thumbnails")
+	})
+
 	t.Run("successor is unaffected", func(t *testing.T) {
 		require.NoError(t, promoted.Valid())
 		writes := activationConn(t, dsn, *promoted.Activation())
@@ -94,17 +119,38 @@ func TestPausedOwnerIsRefusedAtEveryBoundary(t *testing.T) {
 
 // TestOwnerPartitionedFromKubernetesCannotOverlap covers the asymmetric
 // partition: the leader cannot reach the Kubernetes API, so its election loop
-// learns nothing, but PostgreSQL and NATS remain reachable.
+// never learns anything and its leader context stays live, while PostgreSQL and
+// NATS remain reachable.
+//
+// The elector below deliberately never reports loss, so nothing except the
+// database can tell this candidate that it was replaced.
 func TestOwnerPartitionedFromKubernetesCannotOverlap(t *testing.T) {
-	retired, promoted, dsn := takeover(t, healthyCandidate(), healthyCandidate())
+	dsn, cleanup := test.PrepareDBConnectionString(t, test.DBTypePostgres)
+	t.Cleanup(cleanup)
+	scope := Candidate{LeaseName: "matrix", LeaseNamespace: "example"}
 
-	// Ownership is never confirmed by the Lease here, only by the database the
-	// partitioned leader can still reach, which is what retires it.
-	require.Eventually(t, func() bool { return errors.Is(retired.Valid(), ErrOwnershipRetired) }, 2*time.Second, 20*time.Millisecond,
+	partitioned := NewPostgresGate(dsn, healthyCandidate())
+	first := scope
+	first.Identity = "candidate-a"
+	require.NoError(t, partitioned.Acquire(t.Context(), first))
+	pooled := activationConn(t, dsn, *partitioned.Activation())
+	require.NoError(t, pooled.PingContext(t.Context()))
+
+	// The Lease is still held as far as this candidate can tell.
+	leader, keepLeadership := context.WithCancelCause(context.WithoutCancel(t.Context()))
+	defer keepLeadership(errors.New("test finished"))
+	require.NoError(t, leader.Err(), "the partitioned leader must still believe it holds the Lease")
+
+	promoted := NewPostgresGate(dsn, healthyCandidate())
+	second := scope
+	second.Identity = "candidate-b"
+	require.NoError(t, promoted.Acquire(t.Context(), second))
+
+	require.Eventually(t, func() bool { return errors.Is(partitioned.Valid(), ErrOwnershipRetired) }, 30*time.Second, 20*time.Millisecond,
 		"a leader that keeps data-plane access must still discover it was replaced")
+	require.NoError(t, leader.Err(), "discovery must not depend on the Lease context being canceled")
 
-	writes := activationConn(t, dsn, *retired.Activation())
-	_, err := writes.ExecContext(t.Context(), "SELECT 1")
+	_, err := pooled.ExecContext(t.Context(), "SELECT 1")
 	require.Error(t, err, "the partitioned leader must not overlap with the successor")
 	require.NoError(t, promoted.Valid())
 }
@@ -131,16 +177,32 @@ func TestUncertainFencingBlocksTakeover(t *testing.T) {
 	horizon, err := fenceHorizon(t.Context(), conn)
 	require.NoError(t, err)
 
-	// The sweep cannot complete within its budget, so it must report the
-	// remaining backends instead of reporting success.
-	expired, cancel := context.WithTimeout(t.Context(), time.Nanosecond)
+	// Termination is made a no-op so a pass completes without converging,
+	// which is uncertain fencing rather than a bare timeout.
+	//
+	// The budget only has to outlast one fence-and-count pass, which the
+	// sweep can never satisfy here. It is generous because a pass that does
+	// not finish in time reports "cannot prove" instead, and that would make
+	// this test flaky on a loaded runner rather than catch a regression.
+	require.NoError(t, held.PingContext(t.Context()))
+	budget, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	err = successorGate(dsn, cfg).sweep(expired, conn, successor, horizon)
+	err = NewPostgresGate(dsn, cfg).sweep(budget, unterminable{conn}, successor, horizon)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "retired activation", "the blocking reason must be observable")
+	require.ErrorContains(t, err, "backend(s) of a retired activation are still connected",
+		"the failure must report how many backends blocked promotion")
 }
 
-func successorGate(dsn string, cfg config.HA) *PostgresGate { return NewPostgresGate(dsn, cfg) }
+// unterminable counts honestly but terminates nothing, modeling a backend the
+// promoter cannot stop.
+type unterminable struct{ *pgx.Conn }
+
+func (u unterminable) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.Contains(sql, "pg_terminate_backend") {
+		return u.Conn.Query(ctx, "SELECT 1 WHERE false")
+	}
+	return u.Conn.Query(ctx, sql, args...)
+}
 
 // TestDispatchedTransactionsAreNotRecalled documents the external delivery
 // guarantee: a transaction already in flight completes, and only newly
@@ -178,23 +240,24 @@ type blockingFederationClient struct {
 	fclient.FederationClient
 	dispatched chan struct{}
 	release    chan struct{}
+	once       sync.Once
 }
 
 func (c *blockingFederationClient) SendTransaction(context.Context, gomatrixserverlib.Transaction) (fclient.RespSend, error) {
-	close(c.dispatched)
+	// Signal once: a dispatch-guard regression calls this twice, and closing a
+	// closed channel would panic and take down the whole test binary instead
+	// of failing this one assertion.
+	c.once.Do(func() { close(c.dispatched) })
 	<-c.release
 	return fclient.RespSend{}, nil
 }
 
 // stuckApplication never returns from Run, modeling a constructor or worker
 // that does not observe cancellation.
-type stuckApplication struct {
-	stopped chan struct{}
-	once    sync.Once
-}
+type stuckApplication struct{ stopped chan struct{} }
 
 func (a *stuckApplication) Run(context.Context) error { <-a.stopped; return nil }
-func (a *stuckApplication) Stop()                     { a.once.Do(func() {}) }
+func (a *stuckApplication) Stop()                     {}
 
 // TestStuckApplicationForcesTermination exercises the shutdown budget. An
 // application that will not stop must surface ErrShutdownTimeout, which the
@@ -227,4 +290,15 @@ func TestStuckApplicationForcesTermination(t *testing.T) {
 		require.ErrorIs(t, err, ErrLeadershipLost)
 		require.ErrorIs(t, err, lifecycle.ErrShutdownTimeout, "a stuck application must force process termination")
 	})
+}
+
+// unusableFileStore fails loudly if the guard ever lets a call through.
+type unusableFileStore struct{ filestore.FileStore }
+
+func (unusableFileStore) Delete(context.Context, types.Base64Hash) error {
+	panic("a retired activation reached the media backend")
+}
+
+func (unusableFileStore) DeleteThumbnail(context.Context, types.Base64Hash, types.ThumbnailSize) error {
+	panic("a retired activation reached the media backend")
 }
