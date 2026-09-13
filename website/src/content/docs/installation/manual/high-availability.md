@@ -47,7 +47,7 @@ Before enabling HA on an existing installation, migrate its memory-based typing/
 Drain or back up their data and durable acknowledgement positions before an operator changes them.
 HA rejects incompatible existing durable consumer storage, replication, or acknowledgement settings and blocks application stream/consumer deletion paths.
 The roomserver's headers-only ephemeral push consumer is allowed because it only wakes durable room workers and owns no recoverable state.
-Consumer validation uses paginated listing with error reporting and cancels enumeration on failure.
+Consumer validation uses paginated listing with error reporting and cancels further enumeration requests and drains the consumer channel before returning on failure.
 Do not delete occupied streams or consumers to make validation pass.
 
 ## Candidate compatibility and upgrades

@@ -392,28 +392,66 @@ func TestConsumerValidationReportsListingErrors(t *testing.T) {
 	require.ErrorIs(t, validateConsumers(t.Context(), js, "stream", &config.JetStream{Replicas: 3}), failure)
 }
 
-func TestConsumerValidationCancelsEnumeration(t *testing.T) {
+func TestConsumerValidationDrainsBlockedEnumeration(t *testing.T) {
 	stopped := make(chan struct{})
+	infos := make(chan *natsjs.ConsumerInfo)
+	// Also unblock the producer if a regression makes validation return too soon.
+	t.Cleanup(func() {
+		for range infos {
+		}
+	})
 	js := consumerListClient{stream: consumerListStream{list: func(ctx context.Context) natsjs.ConsumerInfoLister {
-		infos := make(chan *natsjs.ConsumerInfo)
 		go func() {
-			defer close(stopped)
 			defer close(infos)
+			defer close(stopped)
 			invalid := &natsjs.ConsumerInfo{Name: "unreplicated", Config: natsjs.ConsumerConfig{Durable: "unreplicated", Replicas: 1, AckPolicy: natsjs.AckExplicitPolicy}}
-			for {
-				select {
-				case infos <- invalid:
-				case <-ctx.Done():
-					return
-				}
-			}
+			infos <- invalid
+			// Model the real lister's race: it has passed its cancellation check
+			// and must finish this unconditional send even when validation cancels.
+			infos <- invalid
+			<-ctx.Done()
 		}()
 		return consumerListResult{info: infos}
 	}}}
 	require.ErrorContains(t, validateConsumers(t.Context(), js, "stream", &config.JetStream{Replicas: 3}), "offline")
 	select {
 	case <-stopped:
-	case <-time.After(time.Second):
-		t.Fatal("enumeration was not canceled")
+	default:
+		t.Fatal("validation returned before enumeration stopped")
+	}
+}
+
+type trackedConsumerStream struct {
+	natsjs.Stream
+	listing natsjs.ConsumerInfoLister
+}
+
+func (s *trackedConsumerStream) ListConsumers(ctx context.Context) natsjs.ConsumerInfoLister {
+	s.listing = s.Stream.ListConsumers(ctx)
+	return s.listing
+}
+
+func TestConsumerValidationDrainsRealLister(t *testing.T) {
+	server := storageTestServer(t, "standalone", nil)
+	nc, err := nats.Connect(server.ClientURL())
+	require.NoError(t, err)
+	t.Cleanup(nc.Close)
+	js, err := natsjs.New(nc)
+	require.NoError(t, err)
+	stream, err := js.CreateStream(t.Context(), natsjs.StreamConfig{Name: "validation", Subjects: []string{"validation"}})
+	require.NoError(t, err)
+	for _, name := range []string{"invalid-first", "invalid-second", "invalid-third"} {
+		_, err = stream.CreateConsumer(t.Context(), natsjs.ConsumerConfig{Durable: name, MemoryStorage: true, AckPolicy: natsjs.AckExplicitPolicy})
+		require.NoError(t, err)
+	}
+	tracked := &trackedConsumerStream{Stream: stream}
+	client := consumerListClient{stream: tracked}
+	require.ErrorContains(t, validateConsumers(t.Context(), client, "validation", &config.JetStream{Replicas: 1}), "offline")
+	// Channel closure synchronizes with the real producer's deferred cleanup.
+	select {
+	case _, open := <-tracked.listing.Info():
+		require.False(t, open, "lister still has an undrained send")
+	default:
+		t.Fatal("real lister has not closed its channel")
 	}
 }

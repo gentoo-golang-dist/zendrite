@@ -206,9 +206,12 @@ func checkAndConfigureStreams(process *process.ProcessContext, cfg *config.JetSt
 	// Removing interest consumers can discard their outstanding messages.
 	// HA requires an explicit offline migration of legacy consumers instead.
 	if cfg.Matrix != nil && cfg.Matrix.HA.Enabled {
-		consumerJS, err := natsjs.New(nc)
+		var consumerJS natsjs.JetStream
+		var err error
 		if cfg.JetStreamDomain != "" {
 			consumerJS, err = natsjs.NewWithDomain(nc, cfg.JetStreamDomain)
+		} else {
+			consumerJS, err = natsjs.New(nc)
 		}
 		if err != nil {
 			logrus.WithError(err).Panic("Unable to inspect HA consumers")
@@ -360,6 +363,13 @@ func validateConsumers(ctx context.Context, js natsjs.JetStream, streamName stri
 		return err
 	}
 	consumers := stream.ListConsumers(ctx)
+	// nats.go checks cancellation before an unbuffered send, not during it.
+	// Cancel further requests and drain any in-flight send before returning.
+	defer func() {
+		cancel(nil)
+		for range consumers.Info() {
+		}
+	}()
 	for consumer := range consumers.Info() {
 		consumerCfg := consumer.Config
 		// The roomserver's headers-only ephemeral subscription wakes durable room

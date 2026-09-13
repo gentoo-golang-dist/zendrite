@@ -96,7 +96,7 @@ type permissionLock struct {
 func (l *permissionLock) report(err error) {
 	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
 		select {
-		case l.failures <- fmt.Errorf("HA Lease %s access denied: grant the service account get, create, update on coordination.k8s.io leases in this namespace (precreated Leases need get and update): %w", l.Describe(), err):
+		case l.failures <- fmt.Errorf("HA Lease %s access denied: grant the service account get, create, update on coordination.k8s.io leases in this namespace (precreated Leases need get/update and a matching compatibility annotation): %w", l.Describe(), err):
 		default:
 		}
 	}
