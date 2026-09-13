@@ -5,9 +5,10 @@ description: Configure active-passive high availability on Kubernetes.
 
 High availability (HA) runs one active Zendrite instance while other instances wait as standbys.
 If the active instance fails, a standby takes over after confirming that it is safe to start.
-The current implementation provides experimental Kubernetes Lease election and is disabled by default.
-Automatic failover is not yet supported: production promotion remains blocked until resource-enforced ownership covers every protected boundary and is verified.
-Ownership is enforced at the PostgreSQL and JetStream boundaries today; the media and outbound dispatch boundaries are still unimplemented, and a candidate refuses to activate while any of them is missing.
+The current implementation is experimental and disabled by default.
+Ownership is now enforced at every protected boundary: the database, the message broker, media, outbound dispatch, and HTTP admission.
+Do not enable it in production yet.
+The failure envelope has not been qualified, which is tracked in [#352](https://codefloe.com/pat-s/zendrite/issues/352), and the deployment integration in [#351](https://codefloe.com/pat-s/zendrite/issues/351) is still outstanding.
 The selected design protects shared resources from stale leaders without cloud-provider or hypervisor power-control integration.
 
 ## Configuration
@@ -28,8 +29,7 @@ global:
     ownership_timeout: 45s
 ```
 
-Keep `enabled` set to `false` until the resource-enforced ownership work in [#349](https://codefloe.com/pat-s/zendrite/issues/349) is complete.
-Setting it to `true` starts election but does not authorize application startup.
+Keep `enabled` set to `false` until the failure envelope is qualified in [#352](https://codefloe.com/pat-s/zendrite/issues/352).
 All instances of the same homeserver must use the same Lease name and namespace.
 Use a separate Lease for each homeserver and set `candidate_id` to each pod's UID.
 
@@ -88,6 +88,19 @@ Unconfirmed ownership is treated differently from retirement: a database blip ma
 The roomserver's room workers manage their own subscriptions and apply the same barrier.
 Acknowledging work that a retired owner did not complete would discard it, so the message is left pending for the promoted activation to redeliver instead.
 Messages are never discarded on the basis of their generation: a suspended owner can publish an event that genuinely committed before it was fenced, and dropping that message would lose it.
+
+## Media, dispatch, and admission
+
+Media backends have no ownership check of their own, so a retired owner is refused at the file store: uploads, publication, thumbnail replacement, and deletion all fail.
+Reads stay open, because serving media that already exists is not an authoritative effect and a draining candidate should still answer in-flight downloads.
+
+Remote servers cannot reject a retired owner either, so outbound federation dispatch is refused before a transaction starts its round-trip.
+A transaction already dispatched may still complete; that is the documented at-least-once behavior, and the successor recovers the queue using stable transaction identifiers.
+Appservice and push delivery run inside JetStream consumers and are covered by the consumer barrier above.
+
+Admission is evaluated per request rather than only at readiness.
+A request already parked on an established keep-alive connection never passes a new readiness check, so waiting for Kubernetes to remove the endpoint is not sufficient.
+A candidate that loses ownership rejects client, federation, and admin traffic immediately.
 
 ## Kubernetes permissions
 
