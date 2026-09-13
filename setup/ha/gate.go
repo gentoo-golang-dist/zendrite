@@ -151,21 +151,32 @@ func (g *PostgresGate) connect(ctx context.Context) (*pgx.Conn, error) {
 // sweep terminates retired backends until a pass observes none remaining.
 // Repeating closes the window in which a backend was mid-authentication when
 // an earlier pass enumerated pg_stat_activity.
+//
+// Every failure names the retired activation, so a candidate that stays
+// unready reports why rather than a bare timeout.
 func (g *PostgresGate) sweep(ctx context.Context, conn *pgx.Conn, activation Activation, horizon time.Time) error {
+	remaining := -1
+	blockedBy := func(cause error) error {
+		if remaining < 0 {
+			return fmt.Errorf("cannot prove that no backend of a retired activation remains connected: %w", cause)
+		}
+		return fmt.Errorf("%d backend(s) of a retired activation are still connected: %w", remaining, cause)
+	}
 	for {
 		if _, err := fenceBackends(ctx, conn, activation, horizon); err != nil {
-			return err
+			return blockedBy(err)
 		}
-		remaining, err := retiredBackends(ctx, conn, activation, horizon)
+		observed, err := retiredBackends(ctx, conn, activation, horizon)
 		if err != nil {
-			return err
+			return blockedBy(err)
 		}
+		remaining = observed
 		if remaining == 0 {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("%d backend(s) of a retired activation are still connected: %w", remaining, ctx.Err())
+			return blockedBy(ctx.Err())
 		case <-time.After(sweepInterval):
 		}
 	}
