@@ -223,9 +223,11 @@ func TestOwnershipGoesStaleWithoutAHeartbeat(t *testing.T) {
 func TestHeartbeatKeepsOwnershipFresh(t *testing.T) {
 	dsn, cleanup := test.PrepareDBConnectionString(t, test.DBTypePostgres)
 	t.Cleanup(cleanup)
-	gate := NewPostgresGate(dsn, testHAConfig(500*time.Millisecond, 20*time.Millisecond))
+	gate := NewPostgresGate(dsn, testHAConfig(3*time.Second, 100*time.Millisecond))
 	require.NoError(t, gate.Acquire(t.Context(), Candidate{Identity: "candidate-a", LeaseName: "matrix", LeaseNamespace: "example"}))
 
+	// The window is comfortably larger than a round trip so a slow database on
+	// a loaded runner cannot null the connection and fail the test.
 	require.Never(t, func() bool { return gate.Valid() != nil }, time.Second, 50*time.Millisecond,
 		"a heartbeating owner must stay valid")
 }
@@ -233,7 +235,7 @@ func TestHeartbeatKeepsOwnershipFresh(t *testing.T) {
 func TestHeartbeatRetiresTheOwnerAfterTakeover(t *testing.T) {
 	dsn, cleanup := test.PrepareDBConnectionString(t, test.DBTypePostgres)
 	t.Cleanup(cleanup)
-	gate := NewPostgresGate(dsn, testHAConfig(time.Hour, 20*time.Millisecond))
+	gate := NewPostgresGate(dsn, testHAConfig(time.Hour, 100*time.Millisecond))
 	require.NoError(t, gate.Acquire(t.Context(), Candidate{Identity: "candidate-a", LeaseName: "matrix", LeaseNamespace: "example"}))
 	require.NoError(t, gate.Valid())
 

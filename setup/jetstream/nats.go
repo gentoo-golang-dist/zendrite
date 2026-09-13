@@ -56,6 +56,13 @@ func (s *NATSInstance) Prepare(process *process.ProcessContext, cfg *config.JetS
 		return s.js, s.nc
 	}
 
+	// Configuration already rejects embedded NATS in HA, but the embedded path
+	// below connects without any of the ownership options, so refuse it here
+	// too rather than silently running an HA candidate with no broker barrier.
+	if s.Ownership != nil {
+		logrus.Fatal("HA requires external JetStream addresses; refusing to start the embedded NATS server")
+	}
+
 	if len(cfg.Addresses) == 0 && s.Server == nil {
 		opts := &natsserver.Options{
 			ServerName:      "monolith",
@@ -124,7 +131,7 @@ func setupNATS(process *process.ProcessContext, cfg *config.JetStream, nc *natsc
 	}
 	checkAndConfigureStreams(process, cfg, js, nc)
 	if cfg.Matrix != nil && cfg.Matrix.HA.Enabled {
-		js = protectedJetStream{JetStreamContext: js, ownership: ownership}
+		js = Protected(js, ownership)
 	}
 	return js, nc
 }
@@ -151,16 +158,15 @@ func natsConnectOptions(process *process.ProcessContext, cfg *config.JetStream, 
 					logrus.WithError(jerr).Panic("Unable to get JetStream context in reconnect handler")
 					return
 				}
+				// Reconnecting must not hand back an unprotected context:
+				// stream reconfiguration below would otherwise bypass the
+				// ownership and deletion guards for the rest of the process.
+				if ownership != nil {
+					js = Protected(js, ownership)
+				}
 				checkAndConfigureStreams(process, cfg, js, c)
 			})
 		}),
-	}
-
-	if ownership != nil {
-		// A suspended owner must not flush a backlog of stale publications
-		// when its client reconnects; the protected context cannot intercept
-		// messages the client buffered before ownership was lost.
-		opts = append(opts, natsclient.ReconnectBufSize(-1))
 	}
 
 	if cfg.DisableTLSValidation {
@@ -341,6 +347,42 @@ type Ownership interface {
 	Generation() int64
 	Identity() string
 	Valid() error
+	// Retired reports whether ownership is permanently gone, as opposed to
+	// temporarily unconfirmed. The two must not be treated alike: retirement
+	// is terminal, while staleness is a blip a consumer has to outlast.
+	Retired() bool
+}
+
+// ownershipRetryInterval is how often a stale consumer rechecks ownership.
+const ownershipRetryInterval = 500 * time.Millisecond
+
+// AwaitOwnership blocks until this activation may act again, ownership is
+// retired, or ctx is done.
+//
+// Staleness is transient. A database blip longer than the freshness window must
+// not permanently stop a consumer: its worker is never restarted, so the leader
+// would keep the Lease and serve HTTP while consuming nothing for the rest of
+// the process lifetime.
+func AwaitOwnership(ctx context.Context, owner Ownership) error {
+	if owner == nil {
+		return nil
+	}
+	ticker := time.NewTicker(ownershipRetryInterval)
+	defer ticker.Stop()
+	for {
+		err := owner.Valid()
+		if err == nil {
+			return nil
+		}
+		if owner.Retired() {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // protectedJetStream disallows destructive compatibility repairs in HA and
@@ -353,6 +395,21 @@ type Ownership interface {
 type protectedJetStream struct {
 	natsclient.JetStreamContext
 	ownership Ownership
+}
+
+// Protected binds a JetStream context to one authorized activation.
+func Protected(js natsclient.JetStreamContext, owner Ownership) natsclient.JetStreamContext {
+	return protectedJetStream{JetStreamContext: js, ownership: owner}
+}
+
+// OwnershipOf reports the activation a JetStream context is bound to, or nil
+// outside HA. Consumers that manage their own subscriptions use it to apply the
+// same ownership barrier as JetStreamConsumer.
+func OwnershipOf(js natsclient.JetStreamContext) Ownership {
+	if protected, ok := js.(protectedJetStream); ok {
+		return protected.ownership
+	}
+	return nil
 }
 
 func (protectedJetStream) DeleteStream(string, ...natsclient.JSOpt) error {

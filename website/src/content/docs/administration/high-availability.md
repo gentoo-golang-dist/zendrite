@@ -77,10 +77,15 @@ A candidate that can reach the broker but not the database also goes stale and s
 ## Broker fencing
 
 Every JetStream publication passes an ownership check and is stamped with the publishing generation in the `Zendrite-HA-Generation` header.
-Client reconnect buffering is disabled in HA, so a resumed owner cannot flush publications its NATS client buffered before ownership was lost.
 The connection name carries the activation, which makes an overlapping owner visible in broker monitoring.
 
+Publication is gated on the freshness window rather than on a broker-side check, so a retired owner can still publish for a short period after its successor activates.
+Consumers count such messages in `zendrite_ha_retired_generation_messages_total` and log them, rather than discarding them.
+They are not discarded because a suspended owner only publishes for writes it already committed, so dropping them would lose events that exist in the database.
+
 Consumers stop rather than acknowledge once ownership is lost, before fetching and again after the callback returns.
+Unconfirmed ownership is treated differently from retirement: a database blip makes a consumer wait and resume, because a worker that exits is never restarted and would leave a leader that serves traffic while consuming nothing.
+The roomserver's room workers manage their own subscriptions and apply the same barrier.
 Acknowledging work that a retired owner did not complete would discard it, so the message is left pending for the promoted activation to redeliver instead.
 Messages are never discarded on the basis of their generation: a suspended owner can publish an event that genuinely committed before it was fenced, and dropping that message would lose it.
 

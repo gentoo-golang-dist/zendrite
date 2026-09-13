@@ -263,11 +263,20 @@ func (g *PostgresGate) heartbeat(ctx context.Context) {
 			logrus.WithField("generation", g.Generation()).Warn("HA ownership was taken over by another candidate")
 			return
 		default:
-			_ = conn.Close(context.WithoutCancel(ctx))
+			// Bound this close like the deferred one: a hung close would
+			// stall the heartbeat, and a stalled heartbeat stalls every
+			// consumer that waits on ownership.
+			closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), ownershipCloseTimeout)
+			_ = conn.Close(closeCtx)
+			closeCancel()
 			conn = nil
 		}
 	}
 }
+
+// Retired reports whether ownership is permanently gone, as opposed to merely
+// unconfirmed. Consumers must outlast staleness but stop on retirement.
+func (g *PostgresGate) Retired() bool { return g.retired.Load() }
 
 // Retire stops this activation acting at every boundary. The database observes
 // loss first, so a refused connection retires the process without waiting for
