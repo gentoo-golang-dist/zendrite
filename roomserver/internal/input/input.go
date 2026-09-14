@@ -334,7 +334,14 @@ func (w *worker) _next() {
 	// promoted activation could redeliver them.
 	if err := jetstream.AwaitOwnership(ctx, jetstream.OwnershipOf(w.r.JetStream)); err != nil {
 		logrus.WithError(err).WithField("room_id", w.roomID).
-			Warn("Stopping room worker: ownership is no longer held")
+			Warn("Not processing room events: ownership is no longer held")
+		// Ownership that is merely unconfirmed for longer than this fetch
+		// deadline is transient, so queue another attempt. Returning without
+		// one would leave the worker waiting for new activity in this room,
+		// which may never come, with events already queued unprocessed.
+		if errors.Is(err, context.DeadlineExceeded) {
+			w.notify()
+		}
 		return
 	}
 	w.sentryHub.ConfigureScope(func(scope *sentry.Scope) {
