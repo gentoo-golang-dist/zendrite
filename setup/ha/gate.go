@@ -54,6 +54,11 @@ type PostgresGate struct {
 	// Ownership is only valid while that confirmation is recent, so a process
 	// that was suspended refuses to act until it has checked again.
 	verified atomic.Int64
+	// lastCheck is why the most recent confirmation attempt failed. Ownership
+	// stays valid for a whole freshness window while confirmations are
+	// failing, so without this the only symptom of a broken heartbeat is a
+	// candidate that goes stale much later for no stated reason.
+	lastCheck atomic.Pointer[string]
 }
 
 // NewPostgresGate returns a gate bound to the homeserver's global database.
@@ -232,6 +237,28 @@ func (g *PostgresGate) Valid() error {
 	return nil
 }
 
+// LastConfirmationError reports why the most recent ownership confirmation
+// failed, or an empty string when the last attempt succeeded. Ownership can be
+// valid while confirmations are failing, for as long as the freshness window
+// allows, so this is the only signal that something is wrong before ownership
+// goes stale.
+func (g *PostgresGate) LastConfirmationError() string {
+	if last := g.lastCheck.Load(); last != nil {
+		return *last
+	}
+	return ""
+}
+
+// noteCheck records the outcome of a confirmation attempt for reporting.
+func (g *PostgresGate) noteCheck(err error) {
+	if err == nil {
+		g.lastCheck.Store(nil)
+		return
+	}
+	reason := err.Error()
+	g.lastCheck.Store(&reason)
+}
+
 // heartbeat re-confirms the generation on its own guarded connection until
 // ownership ends. A proven newer generation retires the activation; any other
 // failure simply stops refreshing, so ownership goes stale and fails closed.
@@ -260,6 +287,7 @@ func (g *PostgresGate) heartbeat(ctx context.Context) {
 			fresh, err := g.connect(checkCtx)
 			cancel()
 			if err != nil {
+				g.noteCheck(err)
 				continue
 			}
 			conn = fresh
@@ -267,6 +295,7 @@ func (g *PostgresGate) heartbeat(ctx context.Context) {
 		checkCtx, cancel := context.WithTimeout(ctx, g.interval())
 		err := g.VerifyConnection(checkCtx, conn)
 		cancel()
+		g.noteCheck(err)
 		switch {
 		case err == nil:
 			g.verified.Store(time.Now().UnixNano())

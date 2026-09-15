@@ -14,6 +14,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"github.com/jackc/pgx/v5"
 	"github.com/nats-io/nats.go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"codefloe.com/pat-s/zendrite/mediaapi/storage/filestore"
@@ -57,7 +58,12 @@ func takeoverWithPool(t *testing.T, retiredCfg, promotedCfg config.HA) (retired,
 func pausedCandidate() config.HA { return testHAConfig(100*time.Millisecond, time.Hour) }
 
 // healthyCandidate keeps its confirmation fresh.
-func healthyCandidate() config.HA { return testHAConfig(time.Hour, 20*time.Millisecond) }
+//
+// The interval doubles as the budget for each confirmation attempt, so it has
+// to comfortably exceed one PostgreSQL handshake. A fresh connection costs
+// 17-27ms on a loaded runner, so a 20ms interval spends most attempts failing
+// SASL authentication on the deadline instead of confirming anything.
+func healthyCandidate() config.HA { return testHAConfig(time.Hour, 500*time.Millisecond) }
 
 // TestPausedOwnerIsRefusedAtEveryBoundary is the acceptance case for #349: a
 // leader paused beyond its lease expiry, resumed after a successor took over,
@@ -146,7 +152,13 @@ func TestOwnerPartitionedFromKubernetesCannotOverlap(t *testing.T) {
 	second.Identity = "candidate-b"
 	require.NoError(t, promoted.Acquire(t.Context(), second))
 
-	require.Eventually(t, func() bool { return errors.Is(partitioned.Valid(), ErrOwnershipRetired) }, 30*time.Second, 20*time.Millisecond,
+	// Report why confirmation is not landing rather than only that it did not.
+	// Ownership stays valid for the whole freshness window while the heartbeat
+	// fails, so a bare timeout here says nothing about the cause.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorIsf(c, partitioned.Valid(), ErrOwnershipRetired,
+			"last confirmation failure: %q", partitioned.LastConfirmationError())
+	}, 30*time.Second, 20*time.Millisecond,
 		"a leader that keeps data-plane access must still discover it was replaced")
 	require.NoError(t, leader.Err(), "discovery must not depend on the Lease context being canceled")
 
