@@ -46,6 +46,18 @@ func RequestEmailToken(req *http.Request, threePIDAPI api.ClientUserAPI, cfg *co
 	if reqErr := httputil.UnmarshalJSONRequest(req, &body); reqErr != nil {
 		return *reqErr
 	}
+	if body.IDServer == "" {
+		body.IDServer = cfg.EmailValidationServer
+		if body.IDServer == "" {
+			return util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.MatrixError{
+					ErrCode: "M_THREEPID_MEDIUM_NOT_SUPPORTED",
+					Err:     "Email verification is not configured on this homeserver",
+				},
+			}
+		}
+	}
 
 	var resp reqTokenResponse
 	var err error
