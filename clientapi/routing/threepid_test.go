@@ -426,3 +426,31 @@ func TestRequestEmailTokenWithoutIdentityServer(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestEmailTokenIdentityErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, errcode string
+		upstream, code      int
+	}{
+		{"invalid email", `{"errcode":"M_INVALID_EMAIL","error":"Invalid email address"}`, "M_INVALID_EMAIL", 400, 400},
+		{"forbidden", `{"errcode":"M_FORBIDDEN","error":"Email verification is disabled"}`, "M_FORBIDDEN", 403, 403},
+		{"rate limited", `{"errcode":"M_LIMIT_EXCEEDED","error":"Try later","retry_after_ms":60000}`, "M_LIMIT_EXCEEDED", 429, 429},
+		{"non JSON", `<html>Upstream unavailable</html>`, "M_UNKNOWN", 503, 502},
+		{"unstructured JSON", `{"message":"Upstream unavailable"}`, "M_UNKNOWN", 503, 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := threePIDConfig()
+			cfg.EmailValidationServer = "id.example"
+			client := fclient.NewClient(fclient.WithTransport(threePIDTransport(func(*http.Request) (*http.Response, error) {
+				return identityResponse(tc.upstream, tc.body), nil
+			})))
+			res := RequestEmailToken(threePIDRequest(`{"email":"alice@example.com","client_secret":"secret","send_attempt":1}`), &threePIDUserAPI{}, cfg, client)
+			requireThreePIDResponse(t, res, tc.code, tc.errcode)
+			if tc.code == tc.upstream {
+				encoded, err := json.Marshal(res.JSON)
+				require.NoError(t, err)
+				require.JSONEq(t, tc.body, string(encoded))
+			}
+		})
+	}
+}
