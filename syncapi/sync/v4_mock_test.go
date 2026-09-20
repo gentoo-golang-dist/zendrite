@@ -223,3 +223,32 @@ func createMockStateEvent(eventType, stateKey, content string) *rstypes.Headered
 
 	return &rstypes.HeaderedEvent{PDU: event}
 }
+
+// createMockStateStreamEvent creates a mock state StreamEvent (includes
+// state_key, which is what makes an event a state event at all), for tests
+// exercising state-delta computation via RecentEvents (getRequiredStateDelta).
+func createMockStateStreamEvent(eventID, eventType, stateKey string, streamPos types.StreamPosition, content string) types.StreamEvent {
+	eventJSON := []byte(`{
+		"type":"` + eventType + `",
+		"state_key":"` + stateKey + `",
+		"room_id":"!test:localhost",
+		"sender":"@test:localhost",
+		"event_id":"` + eventID + `",
+		"origin_server_ts":1234567890,
+		"depth":1,
+		"prev_events":[],
+		"auth_events":[],
+		"content":` + content + `
+	}`)
+
+	verImpl, _ := gomatrixserverlib.GetRoomVersion(gomatrixserverlib.RoomVersionV10)
+	event, err := verImpl.NewEventFromTrustedJSON(eventJSON, false)
+	if err != nil {
+		panic("createMockStateStreamEvent: failed to build mock event: " + err.Error())
+	}
+
+	return types.StreamEvent{
+		HeaderedEvent:  &rstypes.HeaderedEvent{PDU: event},
+		StreamPosition: streamPos,
+	}
+}
