@@ -9,6 +9,7 @@ package config
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -454,17 +455,29 @@ type PresenceOptions struct {
 }
 
 // RTCFocus represents a MatrixRTC focus server configuration (MSC4143).
+// The yaml tags are the admin-facing config shape; the wire format clients
+// actually parse is flat (e.g. "livekit_service_url" directly on the focus
+// object, per element-hq/lk-jwt-service's documented well-known shape), so
+// MarshalJSON below flattens it rather than using the struct tags directly.
 type RTCFocus struct {
 	// Type of focus server (e.g., "livekit")
-	Type string `json:"type" yaml:"type"`
+	Type string `yaml:"type"`
 	// LiveKit focus configuration
-	LiveKit *LiveKitFocus `json:"livekit,omitempty" yaml:"livekit,omitempty"`
+	LiveKit *LiveKitFocus `yaml:"livekit,omitempty"`
+}
+
+func (f RTCFocus) MarshalJSON() ([]byte, error) {
+	out := map[string]string{"type": f.Type}
+	if f.LiveKit != nil {
+		out["livekit_service_url"] = f.LiveKit.ServiceURL
+	}
+	return json.Marshal(out)
 }
 
 // LiveKitFocus represents LiveKit-specific focus configuration.
 type LiveKitFocus struct {
 	// ServiceURL is the lk-jwt-service URL (not LiveKit SFU URL)
-	ServiceURL string `json:"service_url" yaml:"service_url"`
+	ServiceURL string `yaml:"service_url"`
 }
 
 type DataUnit int64
