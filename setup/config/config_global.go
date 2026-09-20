@@ -146,8 +146,8 @@ func (c *Global) Verify(configErrs *ConfigErrors) {
 		if focus.Type == "" {
 			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].type is required", i))
 		}
-		if focus.Type == "livekit" && (focus.LiveKit == nil || focus.LiveKit.ServiceURL == "") {
-			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].livekit.service_url is required for type \"livekit\"", i))
+		if focus.Type == "livekit" && focus.serviceURL() == "" {
+			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].livekit_service_url is required for type \"livekit\"", i))
 		}
 	}
 
@@ -455,21 +455,37 @@ type PresenceOptions struct {
 }
 
 // RTCFocus represents a MatrixRTC focus server configuration (MSC4143).
-// The yaml tags are the admin-facing config shape; the wire format clients
-// actually parse is flat (e.g. "livekit_service_url" directly on the focus
-// object, per element-hq/lk-jwt-service's documented well-known shape), so
-// MarshalJSON below flattens it rather than using the struct tags directly.
+// The wire format clients actually parse is flat (e.g. "livekit_service_url"
+// directly on the focus object, per element-hq/lk-jwt-service's documented
+// well-known shape); LiveKitServiceURL mirrors that directly in the config.
 type RTCFocus struct {
 	// Type of focus server (e.g., "livekit")
 	Type string `yaml:"type"`
-	// LiveKit focus configuration
+	// LiveKitServiceURL is the lk-jwt-service URL for a "livekit" focus.
+	LiveKitServiceURL string `yaml:"livekit_service_url,omitempty"`
+	// LiveKit focus configuration.
+	//
+	// Deprecated: use livekit_service_url instead. Kept for backwards
+	// compatibility with configs predating that flat field.
 	LiveKit *LiveKitFocus `yaml:"livekit,omitempty"`
+}
+
+// serviceURL resolves the effective lk-jwt-service URL, preferring the flat
+// field over the deprecated nested one.
+func (f RTCFocus) serviceURL() string {
+	if f.LiveKitServiceURL != "" {
+		return f.LiveKitServiceURL
+	}
+	if f.LiveKit != nil {
+		return f.LiveKit.ServiceURL
+	}
+	return ""
 }
 
 func (f RTCFocus) MarshalJSON() ([]byte, error) {
 	out := map[string]string{"type": f.Type}
-	if f.LiveKit != nil {
-		out["livekit_service_url"] = f.LiveKit.ServiceURL
+	if url := f.serviceURL(); url != "" {
+		out["livekit_service_url"] = url
 	}
 	return json.Marshal(out)
 }
