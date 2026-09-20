@@ -8,6 +8,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -17,6 +18,7 @@ import (
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
+	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // mockSnapshot implements storage.DatabaseTransaction for testing
@@ -34,6 +36,14 @@ type mockSnapshot struct {
 	retiredInvites     map[string]*rstypes.HeaderedEvent // roomID -> retired invite
 	maxInvitePos       types.StreamPosition
 	membershipCounts   map[string]map[string]int // roomID -> membership -> count
+
+	// accountDataInRange is returned verbatim by GetAccountDataInRange,
+	// regardless of the requested range - tests decide what "changed in the
+	// range" looks like directly, the same way the real query would return
+	// changes across ALL rooms regardless of which rooms happen to be in the
+	// current sliding sync response.
+	accountDataInRange        map[string][]string // roomID ("" = global) -> data types
+	accountDataInRangeLastPos types.StreamPosition
 }
 
 type mockMembership struct {
@@ -78,6 +88,24 @@ func (m *mockSnapshot) SetStateEvent(roomID, eventType, stateKey string, event *
 // SetRecentEvents sets recent events for a room.
 func (m *mockSnapshot) SetRecentEvents(roomID string, events types.RecentEvents) {
 	m.recentEvents[roomID] = events
+}
+
+// SetAccountDataInRange configures what GetAccountDataInRange returns,
+// simulating "these room IDs (empty string = global) had these data types change
+// somewhere in the requested range" - independent of which rooms end up
+// relevant to any particular sliding sync response.
+func (m *mockSnapshot) SetAccountDataInRange(data map[string][]string, lastPos types.StreamPosition) {
+	m.accountDataInRange = data
+	m.accountDataInRangeLastPos = lastPos
+}
+
+// GetAccountDataInRange returns the fixture set via SetAccountDataInRange
+// unconditionally, mirroring the real DB: the range query itself is
+// room-agnostic (it returns every room with account data changes), so any
+// dropping of rooms not currently "in view" happens in the caller, not here -
+// which is exactly what this mock needs to expose.
+func (m *mockSnapshot) GetAccountDataInRange(ctx context.Context, userID string, r types.Range, accountDataFilterPart *synctypes.EventFilter) (map[string][]string, types.StreamPosition, error) {
+	return m.accountDataInRange, m.accountDataInRangeLastPos, nil
 }
 
 // SetRoomSummary sets the room summary for a room.
@@ -193,6 +221,25 @@ type mockRoomserverAPI struct {
 
 func (m *mockRoomserverAPI) QueryUserIDForSender(ctx context.Context, roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 	return spec.NewUserID(string(senderID), true)
+}
+
+// mockUserAPI implements userapi.SyncUserAPI for testing.
+// Uses interface embedding to satisfy the interface without implementing all methods.
+type mockUserAPI struct {
+	userapi.SyncUserAPI
+
+	globalAccountData map[string]json.RawMessage            // dataType -> content
+	roomAccountData   map[string]map[string]json.RawMessage // roomID -> dataType -> content
+}
+
+// QueryAccountData returns the fixtures configured on mockUserAPI regardless
+// of which room/type was requested - callers (e.g. processAccountDataExtension)
+// are responsible for looking up the specific room/type they need, exactly as
+// the real userapi implementation's caller does.
+func (m *mockUserAPI) QueryAccountData(ctx context.Context, req *userapi.QueryAccountDataRequest, res *userapi.QueryAccountDataResponse) error {
+	res.GlobalAccountData = m.globalAccountData
+	res.RoomAccountData = m.roomAccountData
+	return nil
 }
 
 // createMockStateEvent creates a mock HeaderedEvent for testing
