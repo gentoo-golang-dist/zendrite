@@ -1083,9 +1083,17 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 				if _, processed := roomsToPopulate[roomID]; processed {
 					continue
 				}
-				// Copy forward the "events" stream state to the new position
+				// Copy forward the "events" stream state to the new position,
+				// downgrading the room to PREVIOUSLY: it was sent before but
+				// isn't part of this response, exactly Synapse's PREVIOUSLY
+				// semantic. Copying eventsStream.RoomStatus forward unchanged
+				// here (always "live" - see determineRoomStreamState, the only
+				// other place this status is written) meant PREVIOUSLY could
+				// never actually be read back, silently disabling the
+				// gap-recovery paths in getTimelineEvents and
+				// computePDUQueryFloor that depend on it.
 				if eventsStream, ok := streams["events"]; ok {
-					if updateErr := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, "events", eventsStream.RoomStatus, eventsStream.LastToken); updateErr != nil { //nolint:contextcheck
+					if updateErr := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, "events", types.HaveSentRoomPreviously.String(), eventsStream.LastToken); updateErr != nil { //nolint:contextcheck
 						logrus.WithError(updateErr).WithFields(logrus.Fields{
 							"room_id":             roomID,
 							"connection_position": connState.ConnectionPosition,
