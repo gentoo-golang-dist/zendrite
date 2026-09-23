@@ -63,12 +63,14 @@ func NewOutputRoomEventConsumer(
 	syncProducer *producers.SyncAPI,
 ) *OutputRoomEventConsumer {
 	return &OutputRoomEventConsumer{
-		ctx:          process.Context(),
-		cfg:          cfg,
-		jetstream:    js,
-		db:           store,
-		durable:      cfg.Matrix.JetStream.Durable("UserAPIRoomServerConsumer"),
-		topic:        cfg.Matrix.JetStream.Prefixed(jetstream.OutputRoomEvent),
+		ctx:       process.Context(),
+		cfg:       cfg,
+		jetstream: js,
+		db:        store,
+		durable:   cfg.Matrix.JetStream.Durable("UserAPIRoomServerConsumer"),
+		// Consume the syncapi-forwarded topic, not the raw roomserver output -
+		// see producers.PushEventProducer for why.
+		topic:        cfg.Matrix.JetStream.Prefixed(jetstream.OutputPushEvent),
 		pgClient:     pgClient,
 		rsAPI:        rsAPI,
 		syncProducer: syncProducer,

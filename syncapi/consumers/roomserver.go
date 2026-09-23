@@ -51,6 +51,7 @@ type OutputRoomEventConsumer struct {
 	notifier       *notifier.Notifier
 	fts            fulltext.Indexer
 	asProducer     *producers.AppserviceEventProducer
+	pushProducer   *producers.PushEventProducer
 	metadataQueuer internal.RoomMetadataQueuer
 }
 
@@ -66,6 +67,7 @@ func NewOutputRoomEventConsumer(
 	rsAPI api.SyncRoomserverAPI,
 	fts *fulltext.Search,
 	asProducer *producers.AppserviceEventProducer,
+	pushProducer *producers.PushEventProducer,
 ) *OutputRoomEventConsumer {
 	return &OutputRoomEventConsumer{
 		ctx:          process.Context(),
@@ -80,6 +82,7 @@ func NewOutputRoomEventConsumer(
 		rsAPI:        rsAPI,
 		fts:          fts,
 		asProducer:   asProducer,
+		pushProducer: pushProducer,
 	}
 }
 
@@ -124,15 +127,27 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 			}
 		}
 		err = s.onNewRoomEvent(s.ctx, *output.NewRoomEvent) //nolint:contextcheck
-		if err == nil && s.asProducer != nil {
-			if err = s.asProducer.ProduceRoomEvents(msg); err != nil {
-				log.WithError(err).Warn("failed to produce OutputAppserviceEvent")
+		if err == nil {
+			if s.asProducer != nil {
+				if prodErr := s.asProducer.ProduceRoomEvents(msg); prodErr != nil {
+					log.WithError(prodErr).Warn("failed to produce OutputAppserviceEvent")
+				}
+			}
+			if s.pushProducer != nil {
+				if prodErr := s.pushProducer.ProduceRoomEvents(msg); prodErr != nil {
+					log.WithError(prodErr).Warn("failed to produce OutputPushEvent")
+				}
 			}
 		}
 	case api.OutputTypeOldRoomEvent:
 		err = s.onOldRoomEvent(s.ctx, *output.OldRoomEvent) //nolint:contextcheck
 	case api.OutputTypeNewInviteEvent:
 		s.onNewInviteEvent(s.ctx, *output.NewInviteEvent) //nolint:contextcheck
+		if s.pushProducer != nil {
+			if prodErr := s.pushProducer.ProduceRoomEvents(msg); prodErr != nil {
+				log.WithError(prodErr).Warn("failed to produce OutputPushEvent")
+			}
+		}
 	case api.OutputTypeRetireInviteEvent:
 		s.onRetireInviteEvent(s.ctx, *output.RetireInviteEvent) //nolint:contextcheck
 	case api.OutputTypeNewPeek:
