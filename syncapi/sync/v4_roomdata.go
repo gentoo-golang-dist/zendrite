@@ -72,10 +72,12 @@ func (rp *RequestPool) detectRoomMembership(
 }
 
 // shouldFetchRequiredState determines if required state should be fetched.
+// Incremental syncs used to only attempt this for "$LAZY" patterns; now that
+// getRequiredState computes a real delta (see getRequiredStateDelta) and
+// correctly returns nothing when unchanged, it's safe to always attempt it.
 func shouldFetchRequiredState(
 	requiredStateConfig *types.RequiredStateConfig,
 	isInitialForRoom bool,
-	timelineCount int,
 ) (bool, string) {
 	if requiredStateConfig == nil || len(requiredStateConfig.Include) == 0 {
 		return false, ""
@@ -85,15 +87,7 @@ func shouldFetchRequiredState(
 		return true, "initial sync for room"
 	}
 
-	if timelineCount > 0 {
-		for _, pattern := range requiredStateConfig.Include {
-			if len(pattern) == 2 && pattern[1] == "$LAZY" {
-				return true, "incremental sync with timeline events and $LAZY"
-			}
-		}
-	}
-
-	return false, ""
+	return true, "incremental sync - compute required_state delta"
 }
 
 // populateMemberCounts adds joined and invited member counts to room data.
@@ -210,7 +204,7 @@ func (rp *RequestPool) BuildRoomData(
 	roomData.Topic = rp.getRoomTopic(ctx, snapshot, roomID)
 
 	// Get required state events
-	if shouldFetch, reason := shouldFetchRequiredState(requiredStateConfig, isInitialForRoom, len(roomData.Timeline)); shouldFetch {
+	if shouldFetch, reason := shouldFetchRequiredState(requiredStateConfig, isInitialForRoom); shouldFetch {
 		logrus.WithFields(logrus.Fields{
 			"room_id":         roomID,
 			"user_id":         userID,
@@ -218,7 +212,7 @@ func (rp *RequestPool) BuildRoomData(
 			"timeline_events": len(roomData.Timeline),
 		}).Debug("[REQUIRED_STATE] Getting required state")
 
-		requiredState, stateErr := rp.getRequiredState(ctx, snapshot, roomID, userID, requiredStateConfig, roomData.Timeline)
+		requiredState, stateErr := rp.getRequiredState(ctx, snapshot, roomID, userID, requiredStateConfig, roomData.Timeline, isInitialForRoom, roomState, currentPos)
 		if stateErr != nil {
 			logrus.WithError(stateErr).WithField("room_id", roomID).Error("Failed to get required state")
 		} else {
@@ -424,6 +418,10 @@ func (rp *RequestPool) getRoomTopic(ctx context.Context, snapshot storage.Databa
 // getRequiredState retrieves and filters state events based on required_state configuration
 // Phase 4: Supports include/exclude patterns with wildcard matching
 // Phase 5: Supports $LAZY pattern for lazy member loading.
+//
+// Incremental syncs also merge in getRequiredStateDelta's result; the
+// current-state fetch still runs when lazySenders is non-empty, for $LAZY's
+// point-in-time snapshot.
 func (rp *RequestPool) getRequiredState(
 	ctx context.Context,
 	snapshot storage.DatabaseTransaction,
@@ -431,6 +429,9 @@ func (rp *RequestPool) getRequiredState(
 	userID string,
 	config *types.RequiredStateConfig,
 	timeline []synctypes.ClientEvent,
+	isInitialForRoom bool,
+	roomState types.RoomStreamState,
+	currentPos types.StreamingToken,
 ) ([]synctypes.ClientEvent, error) {
 	reqStateRegion, _ := internal.StartRegion(ctx, "SlidingSync.getRequiredState")
 	defer reqStateRegion.EndRegion()
@@ -441,28 +442,39 @@ func (rp *RequestPool) getRequiredState(
 	// Analyze the include patterns to determine if we can use targeted queries
 	// instead of loading all state and filtering in Go.
 	var filtered []*rstypes.HeaderedEvent
-	if rp.canUseTargetedStateQueries(config) {
-		var err error
-		filtered, err = rp.fetchTargetedState(ctx, snapshot, roomID, userID, config, lazySenders)
-		if err != nil {
-			return nil, err
-		}
-		reqStateRegion.SetTag("query_mode", "targeted")
-	} else {
-		// Fallback: wildcard patterns require loading all state
-		emptyFilter := synctypes.StateFilter{}
-		allState, err := snapshot.GetStateEventsForRoom(ctx, roomID, &emptyFilter)
-		if err != nil {
-			return nil, err
-		}
-		reqStateRegion.SetTag("query_mode", "full")
-		reqStateRegion.SetTag("total_state_events", len(allState))
+	if isInitialForRoom || len(lazySenders) > 0 {
+		if rp.canUseTargetedStateQueries(config) {
+			var err error
+			filtered, err = rp.fetchTargetedState(ctx, snapshot, roomID, userID, config, lazySenders)
+			if err != nil {
+				return nil, err
+			}
+			reqStateRegion.SetTag("query_mode", "targeted")
+		} else {
+			// Fallback: wildcard patterns require loading all state
+			emptyFilter := synctypes.StateFilter{}
+			allState, err := snapshot.GetStateEventsForRoom(ctx, roomID, &emptyFilter)
+			if err != nil {
+				return nil, err
+			}
+			reqStateRegion.SetTag("query_mode", "full")
+			reqStateRegion.SetTag("total_state_events", len(allState))
 
-		for _, event := range allState {
-			if rp.matchesRequiredState(event, userID, config, lazySenders) {
-				filtered = append(filtered, event)
+			for _, event := range allState {
+				if rp.matchesRequiredState(event, userID, config, lazySenders) {
+					filtered = append(filtered, event)
+				}
 			}
 		}
+	}
+
+	if !isInitialForRoom {
+		deltaEvents, err := rp.getRequiredStateDelta(ctx, snapshot, roomID, userID, config, lazySenders, roomState, currentPos)
+		if err != nil {
+			return nil, err
+		}
+		filtered = mergeUniqueStateEvents(filtered, deltaEvents)
+		reqStateRegion.SetTag("delta_state_events", len(deltaEvents))
 	}
 
 	// Apply exclude patterns
@@ -491,6 +503,92 @@ func (rp *RequestPool) getRequiredState(
 	}
 
 	return clientEvents, nil
+}
+
+// getRequiredStateDelta fetches state events matching config's patterns that
+// changed within (roomState.LastToken, currentPos]. Mirrors Synapse's
+// get_current_state_deltas, reusing the already gap-aware RecentEvents.
+func (rp *RequestPool) getRequiredStateDelta(
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction,
+	roomID string,
+	userID string,
+	config *types.RequiredStateConfig,
+	lazySenders map[string]bool,
+	roomState types.RoomStreamState,
+	currentPos types.StreamingToken,
+) ([]*rstypes.HeaderedEvent, error) {
+	if roomState.LastToken == nil {
+		// No prior per-room position to delta from. Shouldn't normally happen
+		// for a non-initial room, but be safe: skip rather than risk scanning
+		// an unbounded range.
+		return nil, nil
+	}
+
+	deltaFilter := &synctypes.RoomEventFilter{Limit: 1000} //nolint:mnd // state changes per sync are rare; this is a safety cap, not a tuning knob
+	recentEvents, err := snapshot.RecentEvents(
+		ctx,
+		[]string{roomID},
+		types.Range{
+			From:      currentPos.PDUPosition,
+			To:        roomState.LastToken.PDUPosition,
+			Backwards: true,
+		},
+		deltaFilter,
+		true, // chronological order
+		true, // only sync events
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	events, ok := recentEvents[roomID]
+	if !ok {
+		return nil, nil
+	}
+
+	var result []*rstypes.HeaderedEvent
+	for _, ev := range events.Events {
+		if ev.StateKey() == nil {
+			continue // not a state event
+		}
+		if rp.matchesRequiredState(ev.HeaderedEvent, userID, config, lazySenders) {
+			result = append(result, ev.HeaderedEvent)
+		}
+	}
+	return result, nil
+}
+
+// mergeUniqueStateEvents appends additional to existing, skipping entries
+// whose (type, state_key) already appears in existing - the current-state and
+// delta fetches can legitimately overlap (e.g. a $LAZY member who also changed).
+func mergeUniqueStateEvents(existing, additional []*rstypes.HeaderedEvent) []*rstypes.HeaderedEvent {
+	if len(additional) == 0 {
+		return existing
+	}
+
+	seen := make(map[string]bool, len(existing)+len(additional))
+	stateEventKey := func(ev *rstypes.HeaderedEvent) string {
+		stateKey := ""
+		if ev.StateKey() != nil {
+			stateKey = *ev.StateKey()
+		}
+		return ev.Type() + "|" + stateKey
+	}
+	for _, ev := range existing {
+		seen[stateEventKey(ev)] = true
+	}
+
+	result := existing
+	for _, ev := range additional {
+		key := stateEventKey(ev)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, ev)
+	}
+	return result
 }
 
 // canUseTargetedStateQueries checks whether the required_state patterns can be
