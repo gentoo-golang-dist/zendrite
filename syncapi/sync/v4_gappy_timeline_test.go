@@ -36,9 +36,9 @@ func TestGetTimelineEvents_RoomReenteringAfterGap_DoesNotDropEvents(t *testing.T
 	snapshot := newMockSnapshot()
 	snapshot.SetRecentEvents(roomID, types.RecentEvents{
 		Events: []types.StreamEvent{
-			createMockTimelineEvent("$gap1:localhost", "m.room.message", 60, `{"msgtype":"m.text","body":"missed while asleep 1"}`),
-			createMockTimelineEvent("$gap2:localhost", "m.room.message", 75, `{"msgtype":"m.text","body":"missed while asleep 2"}`),
-			createMockTimelineEvent("$live:localhost", "m.room.message", 95, `{"msgtype":"m.text","body":"sent after reconnect"}`),
+			createMockTimelineEvent("$gap1:localhost", 60, `{"msgtype":"m.text","body":"missed while asleep 1"}`),
+			createMockTimelineEvent("$gap2:localhost", 75, `{"msgtype":"m.text","body":"missed while asleep 2"}`),
+			createMockTimelineEvent("$live:localhost", 95, `{"msgtype":"m.text","body":"sent after reconnect"}`),
 		},
 	})
 
@@ -84,8 +84,8 @@ func TestGetTimelineEvents_RoomContinuouslyLive_OnlyReturnsNewEvents(t *testing.
 	snapshot := newMockSnapshot()
 	snapshot.SetRecentEvents(roomID, types.RecentEvents{
 		Events: []types.StreamEvent{
-			createMockTimelineEvent("$old:localhost", "m.room.message", 40, `{"msgtype":"m.text","body":"already delivered previously"}`),
-			createMockTimelineEvent("$new:localhost", "m.room.message", 95, `{"msgtype":"m.text","body":"brand new"}`),
+			createMockTimelineEvent("$old:localhost", 40, `{"msgtype":"m.text","body":"already delivered previously"}`),
+			createMockTimelineEvent("$new:localhost", 95, `{"msgtype":"m.text","body":"brand new"}`),
 		},
 	})
 

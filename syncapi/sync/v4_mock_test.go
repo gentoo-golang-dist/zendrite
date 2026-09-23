@@ -258,9 +258,9 @@ func createMockStateEvent(eventType, stateKey, content string) *rstypes.Headered
 // given stream position, for tests exercising getTimelineEvents' range
 // computation. Unlike createMockStateEvent, it omits state_key entirely, since
 // a present state_key (even "") makes an event a state event.
-func createMockTimelineEvent(eventID, eventType string, streamPos types.StreamPosition, content string) types.StreamEvent {
+func createMockTimelineEvent(eventID string, streamPos types.StreamPosition, content string) types.StreamEvent {
 	eventJSON := []byte(`{
-		"type":"` + eventType + `",
+		"type":"m.room.message",
 		"room_id":"!test:localhost",
 		"sender":"@test:localhost",
 		"event_id":"` + eventID + `",
