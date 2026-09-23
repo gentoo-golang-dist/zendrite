@@ -89,6 +89,15 @@ func (s *OutputRoomEventConsumer) Start() error {
 	); err != nil {
 		return err
 	}
+	// This consumer used to read the raw roomserver output. Delete the durable
+	// left behind on that stream: OutputRoomEvent is interest-based with no
+	// MaxAge, so an abandoned consumer pins every message on it forever.
+	err := s.jetstream.DeleteConsumer(
+		s.cfg.Matrix.JetStream.Prefixed(jetstream.OutputRoomEvent), s.durable+"Pull",
+	)
+	if err != nil && !errors.Is(err, nats.ErrConsumerNotFound) {
+		return err
+	}
 	return nil
 }
 

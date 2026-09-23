@@ -123,31 +123,35 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 			// in the special case where the event redacts itself, just pass the message through because
 			// we will never see the other part of the pair
 			if event.Redacts() != event.EventID() {
+				// syncapi stores the redaction only once it is validated, but
+				// userapi still needs it now: it keeps a notification-less
+				// record so that read receipts pointing at a redaction resolve.
+				if s.producePushEvent(msg) != nil {
+					return false
+				}
 				return true
 			}
 		}
 		err = s.onNewRoomEvent(s.ctx, *output.NewRoomEvent) //nolint:contextcheck
 		if err == nil {
+			// Assign publish failures to err so that the roomserver message is
+			// NAKed and redelivered. Acking here would drop the appservice
+			// event or the push notification permanently.
 			if s.asProducer != nil {
 				if prodErr := s.asProducer.ProduceRoomEvents(msg); prodErr != nil {
 					log.WithError(prodErr).Warn("failed to produce OutputAppserviceEvent")
+					err = prodErr
 				}
 			}
-			if s.pushProducer != nil {
-				if prodErr := s.pushProducer.ProduceRoomEvents(msg); prodErr != nil {
-					log.WithError(prodErr).Warn("failed to produce OutputPushEvent")
-				}
+			if prodErr := s.producePushEvent(msg); prodErr != nil {
+				err = prodErr
 			}
 		}
 	case api.OutputTypeOldRoomEvent:
 		err = s.onOldRoomEvent(s.ctx, *output.OldRoomEvent) //nolint:contextcheck
 	case api.OutputTypeNewInviteEvent:
 		s.onNewInviteEvent(s.ctx, *output.NewInviteEvent) //nolint:contextcheck
-		if s.pushProducer != nil {
-			if prodErr := s.pushProducer.ProduceRoomEvents(msg); prodErr != nil {
-				log.WithError(prodErr).Warn("failed to produce OutputPushEvent")
-			}
-		}
+		err = s.producePushEvent(msg)
 	case api.OutputTypeRetireInviteEvent:
 		s.onRetireInviteEvent(s.ctx, *output.RetireInviteEvent) //nolint:contextcheck
 	case api.OutputTypeNewPeek:
@@ -182,6 +186,20 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 	}
 
 	return true
+}
+
+// producePushEvent republishes the raw roomserver message on the push topic so
+// that userapi can consume it. A publish failure is returned rather than
+// swallowed: the caller must NAK, otherwise the push notification is lost.
+func (s *OutputRoomEventConsumer) producePushEvent(msg *nats.Msg) error {
+	if s.pushProducer == nil {
+		return nil
+	}
+	if err := s.pushProducer.ProduceRoomEvents(msg); err != nil {
+		log.WithError(err).Warn("failed to produce OutputPushEvent")
+		return err
+	}
+	return nil
 }
 
 func (s *OutputRoomEventConsumer) onRedactEvent(
