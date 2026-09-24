@@ -269,3 +269,11 @@ A healthy long-running handler extends its delivery once per second while its ow
 This lets a successor recover work held by a suspended process without waiting for that process to resume or deleting durable consumers.
 Workers recheck ownership after fetching, and retired room workers must not acknowledge or answer a successor's synchronous request.
 Non-HA delivery timing remains unchanged.
+
+### Recovery while a broker is unavailable
+
+Configure each broker address separately so the client can try another broker when an initial connection fails.
+A single headless service address can resolve to an unresponsive broker before the client has discovered its peers.
+Existing replicated streams need an elected leader and a current majority for activation; creation or replica-count changes still wait for every configured replica.
+No recovery path reduces the configured replica count or deletes queued data.
+Active traffic and candidate probes consult fencing validity as well as lifecycle state, so a resumed retired owner cannot re-enter routing while lease renewal is still timing out.
