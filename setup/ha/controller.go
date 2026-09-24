@@ -160,6 +160,11 @@ func control(ctx context.Context, elector election, acquired <-chan context.Cont
 	select {
 	case <-abandoned:
 		result = ErrOwnershipUnconfirmed
+		// Stop renewing now rather than after draining, which can take the
+		// whole shutdown budget while the database is unreachable. The Lease
+		// is not released, only left to expire, and a successor still has to
+		// fence before it acts.
+		cancelElection(result)
 	case result = <-promoted:
 		app.Stop()
 		if ctx.Err() != nil && errors.Is(result, context.Canceled) {

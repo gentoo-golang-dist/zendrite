@@ -262,9 +262,11 @@ func TestControlGivesUpAbandonedOwnership(t *testing.T) {
 		leader, lose := context.WithCancelCause(ctx)
 		defer lose(nil)
 		acquired := make(chan context.Context, 1)
+		var stoppedBy error
 		elector := electionFunc(func(ctx context.Context) {
 			acquired <- leader
 			<-ctx.Done()
+			stoppedBy = context.Cause(ctx)
 		})
 		server := lifecycle.New(func(*process.ProcessContext) error { return nil }, time.Second)
 		gate := abandoningGate{gateFunc: func(context.Context, Candidate) error { return nil }, abandon: make(chan struct{})}
@@ -285,6 +287,9 @@ func TestControlGivesUpAbandonedOwnership(t *testing.T) {
 		}
 		if server.Ready() {
 			t.Fatal("a candidate that gave up ownership still published readiness")
+		}
+		if !errors.Is(stoppedBy, ErrOwnershipUnconfirmed) {
+			t.Fatalf("Lease renewal must stop as soon as ownership is abandoned, not after draining; election stopped by %v", stoppedBy)
 		}
 	})
 }
