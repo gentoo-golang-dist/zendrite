@@ -139,10 +139,10 @@ func (m *mockSnapshot) GetStateEventsForRoom(ctx context.Context, roomID string,
 // inclusive upper bound), so range-computation bugs in callers are actually
 // exercised instead of being masked by returning everything unconditionally.
 func (m *mockSnapshot) RecentEvents(ctx context.Context, roomIDs []string, r types.Range, eventFilter *synctypes.RoomEventFilter, chronologicalOrder bool, onlySyncEvents bool) (map[string]types.RecentEvents, error) {
-	lo, hi := r.To, r.From
-	if lo > hi {
-		lo, hi = hi, lo
-	}
+	// Low()/High() key off r.Backwards, so an inverted From/To is reported as
+	// the empty range the real DB would produce rather than being silently
+	// normalised away by magnitude.
+	lo, hi := r.Low(), r.High()
 
 	result := make(map[string]types.RecentEvents)
 	for _, roomID := range roomIDs {
