@@ -43,7 +43,9 @@ func TestProcessAccountDataExtension_RoomReenteringAfterGap_StillDeliversAccount
 	snapshot.SetAccountDataChange(roomSteady, "m.fully_read", 95)
 	snapshot.SetAccountDataChange(roomGappy, "m.fully_read", 60)
 
+	db := newMockStreamStateDB()
 	rp := &RequestPool{
+		db: db,
 		userAPI: &mockUserAPI{
 			roomAccountData: map[string]map[string]json.RawMessage{
 				roomSteady: {"m.fully_read": fullyReadSteady},
@@ -57,9 +59,10 @@ func TestProcessAccountDataExtension_RoomReenteringAfterGap_StillDeliversAccount
 
 	connState := &V4ConnectionState{
 		ConnectionKey: 1,
-		// ConnectionPosition left at 0: this simulates a response where we don't
-		// want persistAccountDataRoomState to write anything (irrelevant to this
-		// test, which only exercises the read/floor side).
+		// A real response position: gap recovery is only attempted when the
+		// result can be recorded, so pinning this to 0 would silently disable
+		// the behavior under test.
+		ConnectionPosition: 42,
 		PreviousStreamStates: map[string]map[string]*types.SlidingSyncStreamState{
 			roomSteady: {
 				accountDataStream: {LastToken: (&types.StreamingToken{AccountDataPosition: 90}).String()},
@@ -87,4 +90,14 @@ func TestProcessAccountDataExtension_RoomReenteringAfterGap_StillDeliversAccount
 		"a continuously-live room's account data must still be delivered")
 	assert.Contains(t, resp.Rooms, roomGappy,
 		"account data missed while a room was excluded from responses must be delivered once it's relevant again, not dropped forever")
+
+	// Both rooms must record how far they were actually served, or the gap
+	// reopens on the next response.
+	for _, roomID := range []string{roomSteady, roomGappy} {
+		key := streamKey(roomID, accountDataStream)
+		require.Contains(t, db.writes, key, "every relevant room records its delivered position")
+		assert.Equal(t, int64(42), db.writes[key].position)
+	}
+	assert.True(t, connState.AccountDataWritten[roomGappy],
+		"a freshly written room must not then be copied forward at its stale position")
 }

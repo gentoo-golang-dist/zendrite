@@ -99,15 +99,15 @@ func (m *mockSnapshot) SetAccountDataChange(roomID, dataType string, pos types.S
 }
 
 // GetAccountDataInRange filters the fixtures set via SetAccountDataChange down
-// to the requested range, mirroring the real DB's (r.To, r.From] semantics.
+// to the requested range, mirroring the real DB's (Low(), High()] semantics:
+// exclusive lower bound, inclusive upper bound. An empty result reports
+// lastPos as High(), as both real backends do, so callers that advance a token
+// on "nothing changed" behave the same here as in production.
 func (m *mockSnapshot) GetAccountDataInRange(ctx context.Context, userID string, r types.Range, accountDataFilterPart *synctypes.EventFilter) (map[string][]string, types.StreamPosition, error) {
-	lo, hi := r.To, r.From
-	if lo > hi {
-		lo, hi = hi, lo
-	}
+	lo, hi := r.Low(), r.High()
 
 	result := make(map[string][]string)
-	var lastPos types.StreamPosition
+	lastPos := lo
 	for _, c := range m.accountDataChanges {
 		if c.pos <= lo || c.pos > hi {
 			continue
@@ -116,6 +116,9 @@ func (m *mockSnapshot) GetAccountDataInRange(ctx context.Context, userID string,
 		if c.pos > lastPos {
 			lastPos = c.pos
 		}
+	}
+	if len(result) == 0 {
+		lastPos = hi
 	}
 	return result, lastPos, nil
 }

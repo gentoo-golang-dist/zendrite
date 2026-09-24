@@ -436,6 +436,26 @@ func (rp *RequestPool) processE2EEExtension(
 // for the timeline.
 const accountDataStream = "account_data"
 
+// accountDataQueryLimit caps a single account data range query. A result that
+// hits it is truncated to the OLDEST rows, since the query orders by id ASC,
+// so the caller must not advance any room past the position it did return.
+const accountDataQueryLimit = 1000
+
+func warnIfAccountDataTruncated(dataTypes map[string][]string, limit int, from types.StreamPosition) {
+	rows := 0
+	for _, types := range dataTypes {
+		rows += len(types)
+	}
+	if rows < limit {
+		return
+	}
+	logrus.WithFields(logrus.Fields{
+		"rows":  rows,
+		"limit": limit,
+		"from":  from,
+	}).Warn("[ACCOUNT_DATA] Query hit the row limit; the newest changes are deferred to the next response")
+}
+
 // accountDataFloorForRoom returns the lower bound for a room's account data
 // query: connectionFrom, or the room's own account_data LastToken if that's
 // older (the room fell behind while excluded from prior responses). Returns
@@ -458,30 +478,60 @@ func accountDataFloorForRoom(connState *V4ConnectionState, roomID string, connec
 	return connectionFrom
 }
 
-// persistAccountDataRoomState writes this connection's account_data position
-// for every relevant room, and copies forward unchanged state for rooms not
-// relevant here - see copyForwardStreamStates for why. No-ops on
-// interrupt/timeout/disconnect responses (ConnectionPosition == 0).
+// persistAccountDataRoomState records, per room, the account data position that
+// was actually delivered in this response. The roomPositions map must give the
+// position each room was served up to, which is not necessarily toPos: the
+// query is limited, so a truncated result must not advance a room past what it
+// returned.
+//
+// Rooms absent from roomPositions are carried over by
+// copyForwardAccountDataState, which runs for every response rather than only
+// this one, so a request that does not reach here still keeps their floors.
+//
+// No-ops on interrupt/timeout/disconnect responses (ConnectionPosition == 0),
+// which return the unchanged pos and create no position to write to.
 func (rp *RequestPool) persistAccountDataRoomState(
 	ctx context.Context,
 	connState *V4ConnectionState,
-	relevantRoomIDs map[string]bool,
+	roomPositions map[string]types.StreamPosition,
 	toPos types.StreamingToken,
 ) {
 	if connState == nil || connState.ConnectionPosition == 0 {
 		return
 	}
+	if connState.AccountDataWritten == nil {
+		connState.AccountDataWritten = make(map[string]bool, len(roomPositions))
+	}
 
-	lastToken := toPos.String()
-	for roomID := range relevantRoomIDs {
-		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, accountDataStream, "live", lastToken); err != nil {
+	for roomID, pos := range roomPositions {
+		delivered := toPos
+		delivered.AccountDataPosition = pos
+		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, accountDataStream, "live", delivered.String()); err != nil {
 			logrus.WithError(err).WithField("room_id", roomID).Warn("[ACCOUNT_DATA] Failed to persist account_data stream state")
+			continue
 		}
+		connState.AccountDataWritten[roomID] = true
+	}
+}
+
+// copyForwardAccountDataState carries every room's stored account_data position
+// onto this connection position, for rooms persistAccountDataRoomState did not
+// already write.
+//
+// It must run on every response, not just those that processed the account_data
+// extension. Old positions are cascade-deleted on the next request, so a single
+// response that skipped the extension - because the client did not enable it,
+// or because the query errored - would otherwise leave the new position with no
+// account_data rows at all, resetting every room's floor to 0 and forcing a
+// full rescan and re-delivery.
+func (rp *RequestPool) copyForwardAccountDataState(ctx context.Context, connState *V4ConnectionState) {
+	if connState == nil || connState.ConnectionPosition == 0 {
+		return
 	}
 
 	for roomID, streams := range connState.PreviousStreamStates {
-		if relevantRoomIDs[roomID] {
-			continue // already (re)written above with the fresh position
+		if connState.AccountDataWritten[roomID] {
+			continue // already written with a fresh position
 		}
 		prevState, ok := streams[accountDataStream]
 		if !ok {
@@ -526,39 +576,85 @@ func (rp *RequestPool) processAccountDataExtension(
 		"relevant_rooms":  len(relevantRoomIDs),
 	}).Debug("[ACCOUNT_DATA] Filtered rooms for extension")
 
-	// Widen the query floor to the oldest point any relevant room actually
-	// needs, so a room that fell behind or is new to this connection doesn't
-	// have its account data silently skipped.
-	queryFrom := from
-	for roomID := range relevantRoomIDs {
-		if floor := accountDataFloorForRoom(connState, roomID, from); floor < queryFrom {
-			queryFrom = floor
+	// Gap recovery is only attempted when this response can record the result.
+	// An interrupt response (ConnectionPosition == 0) returns the unchanged pos
+	// and writes no state, so widening there would redo the same scan and
+	// re-send the same payload on every long-poll timeout, forever.
+	canPersist := connState != nil && connState.ConnectionPosition != 0
+
+	// Group the rooms that need a wider floor than the connection's own by the
+	// floor they need, so that one extra query serves all rooms sharing it
+	// (rooms new to this connection all share floor 0). Rooms that kept up are
+	// served by the base query below, which is also the only query global
+	// account data is taken from: widening a single shared query to the oldest
+	// floor would re-deliver every relevant room's full history along with it.
+	gapFloors := make(map[types.StreamPosition][]string)
+	if canPersist {
+		for roomID := range relevantRoomIDs {
+			floor := accountDataFloorForRoom(connState, roomID, from)
+			if floor >= from {
+				continue
+			}
+			gapFloors[floor] = append(gapFloors[floor], roomID)
 		}
 	}
 
 	// Create range for account data query
 	r := types.Range{
-		From: queryFrom,
+		From: from,
 		To:   toPos.AccountDataPosition,
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"user_id":        userID,
 		"from":           from,
-		"query_from":     queryFrom,
 		"to":             toPos.AccountDataPosition,
 		"is_initial":     fromPos == nil,
 		"relevant_rooms": len(relevantRoomIDs),
+		"gap_floors":     len(gapFloors),
 	}).Debug("[ACCOUNT_DATA] Querying account data range")
 
 	// Get account data changes in this range
 	// Use filter with high limit to get all account data (typically < 100 events)
 	filter := synctypes.EventFilter{
-		Limit: 1000, //nolint:mnd // High limit to get all account data
+		Limit: accountDataQueryLimit,
 	}
 	dataTypes, lastPos, err := snapshot.GetAccountDataInRange(ctx, userID, r, &filter)
 	if err != nil {
 		return nil, 0, fmt.Errorf("GetAccountDataInRange failed: %w", err)
+	}
+	warnIfAccountDataTruncated(dataTypes, accountDataQueryLimit, from)
+
+	// Position each relevant room was actually served up to. The base query
+	// covers the rooms that kept up; gap rooms start at their own floor, which
+	// is where they stay if their query fails, so a failure re-tries the gap
+	// next time instead of skipping it.
+	roomPositions := make(map[string]types.StreamPosition, len(relevantRoomIDs))
+	for roomID := range relevantRoomIDs {
+		roomPositions[roomID] = lastPos
+	}
+	for floor, rooms := range gapFloors {
+		for _, roomID := range rooms {
+			roomPositions[roomID] = floor
+		}
+		gapTypes, gapLastPos, gapErr := snapshot.GetAccountDataInRange(ctx, userID, types.Range{
+			From: floor,
+			To:   toPos.AccountDataPosition,
+		}, &filter)
+		if gapErr != nil {
+			logrus.WithError(gapErr).WithFields(logrus.Fields{
+				"floor": floor,
+				"rooms": len(rooms),
+			}).Warn("[ACCOUNT_DATA] Gap query failed; leaving those rooms to retry next response")
+			continue
+		}
+		warnIfAccountDataTruncated(gapTypes, accountDataQueryLimit, floor)
+		for _, roomID := range rooms {
+			if types, ok := gapTypes[roomID]; ok {
+				dataTypes[roomID] = types
+			}
+			roomPositions[roomID] = gapLastPos
+		}
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -624,7 +720,7 @@ func (rp *RequestPool) processAccountDataExtension(
 		"num_room_keys": len(resp.Rooms),
 	}).Debug("[ACCOUNT_DATA] Returning account data response")
 
-	rp.persistAccountDataRoomState(ctx, connState, relevantRoomIDs, toPos)
+	rp.persistAccountDataRoomState(ctx, connState, roomPositions, toPos)
 
 	// Return lastPos so v4 sync can update the account data position in the response token
 	return resp, lastPos, nil
