@@ -261,3 +261,11 @@ Failover includes Lease expiry, election retry jitter, fencing, recovery, and ro
 Shorter Lease and retry periods can reduce detection time but make leadership more sensitive to control-plane stalls and increase renewal traffic.
 Keep `lease_duration > renew_deadline > 1.2 * retry_period`, and validate actual service recovery with the intended timings.
 Reducing election timings never skips resource fencing or backlog recovery.
+
+## Suspended owners and broker delivery
+
+HA pull requests expire after one second, and unacknowledged durable deliveries become eligible for redelivery after five seconds.
+A healthy long-running handler extends its delivery once per second while its ownership remains valid.
+This lets a successor recover work held by a suspended process without waiting for that process to resume or deleting durable consumers.
+Workers recheck ownership after fetching, and retired room workers must not acknowledge or answer a successor's synchronous request.
+Non-HA delivery timing remains unchanged.
