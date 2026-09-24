@@ -51,6 +51,7 @@ type OutputRoomEventConsumer struct {
 	notifier       *notifier.Notifier
 	fts            fulltext.Indexer
 	asProducer     *producers.AppserviceEventProducer
+	pushProducer   *producers.PushEventProducer
 	metadataQueuer internal.RoomMetadataQueuer
 }
 
@@ -66,6 +67,7 @@ func NewOutputRoomEventConsumer(
 	rsAPI api.SyncRoomserverAPI,
 	fts *fulltext.Search,
 	asProducer *producers.AppserviceEventProducer,
+	pushProducer *producers.PushEventProducer,
 ) *OutputRoomEventConsumer {
 	return &OutputRoomEventConsumer{
 		ctx:          process.Context(),
@@ -80,6 +82,7 @@ func NewOutputRoomEventConsumer(
 		rsAPI:        rsAPI,
 		fts:          fts,
 		asProducer:   asProducer,
+		pushProducer: pushProducer,
 	}
 }
 
@@ -120,19 +123,41 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 			// in the special case where the event redacts itself, just pass the message through because
 			// we will never see the other part of the pair
 			if event.Redacts() != event.EventID() {
+				// syncapi stores the redaction only once it is validated, but
+				// userapi still needs it now: it keeps a notification-less
+				// record so that read receipts pointing at a redaction resolve.
+				if s.producePushEvent(msg) != nil {
+					return false
+				}
 				return true
 			}
 		}
 		err = s.onNewRoomEvent(s.ctx, *output.NewRoomEvent) //nolint:contextcheck
-		if err == nil && s.asProducer != nil {
-			if err = s.asProducer.ProduceRoomEvents(msg); err != nil {
-				log.WithError(err).Warn("failed to produce OutputAppserviceEvent")
+		if err == nil {
+			// Assign publish failures to err so that the roomserver message is
+			// NAKed and redelivered. Acking here would drop the appservice
+			// event or the push notification permanently.
+			if s.asProducer != nil {
+				if prodErr := s.asProducer.ProduceRoomEvents(msg); prodErr != nil {
+					log.WithError(prodErr).Warn("failed to produce OutputAppserviceEvent")
+					err = prodErr
+				}
+			}
+			if prodErr := s.producePushEvent(msg); prodErr != nil {
+				err = prodErr
 			}
 		}
 	case api.OutputTypeOldRoomEvent:
 		err = s.onOldRoomEvent(s.ctx, *output.OldRoomEvent) //nolint:contextcheck
 	case api.OutputTypeNewInviteEvent:
-		s.onNewInviteEvent(s.ctx, *output.NewInviteEvent) //nolint:contextcheck
+		// Publish only once the invite is persisted, so the device is never
+		// woken for an invite that /sync cannot yet return. A failed publish is
+		// not NAKed here: AddInviteEvent has no ON CONFLICT, so the redelivery
+		// would insert a duplicate row and re-advance the invite stream,
+		// re-delivering the invite to the client on every /sync.
+		if s.onNewInviteEvent(s.ctx, *output.NewInviteEvent) == nil { //nolint:contextcheck
+			_ = s.producePushEvent(msg)
+		}
 	case api.OutputTypeRetireInviteEvent:
 		s.onRetireInviteEvent(s.ctx, *output.RetireInviteEvent) //nolint:contextcheck
 	case api.OutputTypeNewPeek:
@@ -167,6 +192,20 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 	}
 
 	return true
+}
+
+// producePushEvent republishes the raw roomserver message on the push topic so
+// that userapi can consume it. A publish failure is returned rather than
+// swallowed: the caller must NAK, otherwise the push notification is lost.
+func (s *OutputRoomEventConsumer) producePushEvent(msg *nats.Msg) error {
+	if s.pushProducer == nil {
+		return nil
+	}
+	if err := s.pushProducer.ProduceRoomEvents(msg); err != nil {
+		log.WithError(err).Warn("failed to produce OutputPushEvent")
+		return err
+	}
+	return nil
 }
 
 func (s *OutputRoomEventConsumer) onRedactEvent(
@@ -459,19 +498,25 @@ func (s *OutputRoomEventConsumer) notifyJoinedPeeks(ctx context.Context, ev *rst
 	return sp, nil
 }
 
+// onNewInviteEvent returns nil once the invite is durably stored, or when there
+// is nothing to store because the invite is not for a local user. The error is
+// used to gate the push publication, not to NAK the message.
 func (s *OutputRoomEventConsumer) onNewInviteEvent(
 	ctx context.Context, msg api.OutputNewInviteEvent,
-) {
+) error {
 	if msg.Event.StateKey() == nil {
-		return
+		return nil
 	}
 
 	userID, err := s.rsAPI.QueryUserIDForSender(ctx, msg.Event.RoomID(), spec.SenderID(*msg.Event.StateKey()))
-	if err != nil || userID == nil {
-		return
+	if err != nil {
+		return err
+	}
+	if userID == nil {
+		return nil
 	}
 	if !s.cfg.Matrix.IsLocalServerName(userID.Domain()) {
-		return
+		return nil
 	}
 
 	msg.Event.UserID = *userID
@@ -485,11 +530,12 @@ func (s *OutputRoomEventConsumer) onNewInviteEvent(
 			"pdupos":     pduPos,
 			log.ErrorKey: err,
 		}).Errorf("roomserver output log: write invite failure")
-		return
+		return err
 	}
 
 	s.inviteStream.Advance(pduPos)
 	s.notifier.OnNewInvite(types.StreamingToken{InvitePosition: pduPos}, *msg.Event.StateKey())
+	return nil
 }
 
 func (s *OutputRoomEventConsumer) onRetireInviteEvent(

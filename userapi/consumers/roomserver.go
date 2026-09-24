@@ -63,12 +63,14 @@ func NewOutputRoomEventConsumer(
 	syncProducer *producers.SyncAPI,
 ) *OutputRoomEventConsumer {
 	return &OutputRoomEventConsumer{
-		ctx:          process.Context(),
-		cfg:          cfg,
-		jetstream:    js,
-		db:           store,
-		durable:      cfg.Matrix.JetStream.Durable("UserAPIRoomServerConsumer"),
-		topic:        cfg.Matrix.JetStream.Prefixed(jetstream.OutputRoomEvent),
+		ctx:       process.Context(),
+		cfg:       cfg,
+		jetstream: js,
+		db:        store,
+		durable:   cfg.Matrix.JetStream.Durable("UserAPIRoomServerConsumer"),
+		// Consume the syncapi-forwarded topic, not the raw roomserver output -
+		// see producers.PushEventProducer for why.
+		topic:        cfg.Matrix.JetStream.Prefixed(jetstream.OutputPushEvent),
 		pgClient:     pgClient,
 		rsAPI:        rsAPI,
 		syncProducer: syncProducer,
@@ -86,6 +88,23 @@ func (s *OutputRoomEventConsumer) Start() error {
 		s.onMessage, nats.DeliverAll(), nats.ManualAck(),
 	); err != nil {
 		return err
+	}
+	// This consumer used to read the raw roomserver output. Delete the durables
+	// left behind on that stream: OutputRoomEvent is interest-based with no
+	// MaxAge, so an abandoned consumer pins every message on it forever. Both
+	// names are tried because pre-Pull-era deployments have the unsuffixed one.
+	//
+	// HA refuses consumer deletion outright, so there the cleanup is an offline
+	// migration step. Failing to clean up never aborts startup: the caller
+	// panics on a Start error, and an orphaned consumer is not worth that.
+	if jetstream.OwnershipOf(s.jetstream) == nil {
+		stream := s.cfg.Matrix.JetStream.Prefixed(jetstream.OutputRoomEvent)
+		for _, durable := range []string{s.durable + "Pull", s.durable} {
+			err := s.jetstream.DeleteConsumer(stream, durable)
+			if err != nil && !errors.Is(err, nats.ErrConsumerNotFound) {
+				log.WithError(err).Warnf("Failed to clean up old consumer %q on stream %q", durable, stream)
+			}
+		}
 	}
 	return nil
 }
