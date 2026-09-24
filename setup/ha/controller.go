@@ -148,8 +148,18 @@ func control(ctx context.Context, elector election, acquired <-chan context.Cont
 		promoted <- err
 	}()
 
+	// A gate that cannot confirm ownership for long enough gives it up, so a
+	// candidate that can reach the database can take over. Gates without that
+	// signal leave the channel nil, which never fires.
+	var abandoned <-chan struct{}
+	if a, ok := gate.(interface{ Abandoned() <-chan struct{} }); ok {
+		abandoned = a.Abandoned()
+	}
+
 	var result error
 	select {
+	case <-abandoned:
+		result = ErrOwnershipUnconfirmed
 	case result = <-promoted:
 		app.Stop()
 		if ctx.Err() != nil && errors.Is(result, context.Canceled) {
