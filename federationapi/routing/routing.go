@@ -840,6 +840,6 @@ func (f *FederationWakeups) Wakeup(ctx context.Context, origin spec.ServerName) 
 			return
 		}
 	}
-	f.FsAPI.MarkServersAlive([]spec.ServerName{origin}) //nolint:contextcheck
+	f.FsAPI.MarkServersAlive([]spec.ServerName{origin})
 	f.origins.Store(origin, time.Now())
 }
