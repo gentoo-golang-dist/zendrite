@@ -350,6 +350,12 @@ type FederationRoomserverAPI interface {
 	QueryRestrictedJoinAllowed(ctx context.Context, roomID spec.RoomID, senderID spec.SenderID) (string, error)
 	PerformInboundPeek(ctx context.Context, req *PerformInboundPeekRequest, res *PerformInboundPeekResponse) error
 	HandleInvite(ctx context.Context, event *types.HeaderedEvent) error
+	// RetractPendingMembership applies a kick or ban received over federation
+	// to a local user's invite or knock for a room this server is not in,
+	// reporting whether it did. Such events cannot be authorized against the
+	// room state, so only the inviter can rescind an invite, and only servers
+	// named by the knock's room state can reject a knock.
+	RetractPendingMembership(ctx context.Context, event *types.HeaderedEvent) (bool, error)
 
 	PerformInvite(ctx context.Context, req *PerformInviteRequest) error
 	// Query a given amount (or less) of events prior to a given set of events.

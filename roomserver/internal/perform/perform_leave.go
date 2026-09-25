@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"codefloe.com/pat-s/zendrite/roomserver/internal/helpers"
 	"codefloe.com/pat-s/zendrite/roomserver/internal/input"
 	"codefloe.com/pat-s/zendrite/roomserver/storage"
+	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
@@ -235,10 +237,92 @@ func (r *Leaver) performLeaveRoomByID(
 	return nil, nil
 }
 
+// RetractPendingMembership retires a local user's invite or knock for a room
+// this server is not in, when the inviter rescinds the invite or a server in
+// the room rejects the knock. It returns the output events and whether it
+// applied.
+func (r *Leaver) RetractPendingMembership(
+	ctx context.Context, event *types.HeaderedEvent,
+) ([]rsAPI.OutputEvent, bool, error) {
+	membership, err := event.Membership()
+	if err != nil || event.Type() != spec.MRoomMember || event.StateKey() == nil ||
+		(membership != spec.Leave && membership != spec.Ban) {
+		return nil, false, nil
+	}
+	roomID := event.RoomID()
+	target, err := r.RSAPI.QueryUserIDForSender(ctx, roomID, spec.SenderID(*event.StateKey()))
+	if err != nil || target == nil || !r.Cfg.Matrix.IsLocalServerName(target.Domain()) {
+		return nil, false, nil
+	}
+	sender, err := r.RSAPI.QueryUserIDForSender(ctx, roomID, event.SenderID())
+	if err != nil || sender == nil {
+		return nil, false, nil
+	}
+	inRoomRes := rsAPI.QueryServerJoinedToRoomResponse{}
+	if err = r.RSAPI.QueryServerJoinedToRoom(ctx, &rsAPI.QueryServerJoinedToRoomRequest{RoomID: roomID.String()}, &inRoomRes); err != nil {
+		return nil, false, fmt.Errorf("QueryServerJoinedToRoom: %w", err)
+	}
+	if inRoomRes.IsInRoom {
+		// The event can be authorized against the room state as usual.
+		return nil, false, nil
+	}
+
+	targetID := spec.SenderID(*event.StateKey())
+	var pendingEventID string
+	var trusted []spec.ServerName
+	if invited, inviter, eventID, _, inviteErr := helpers.IsInvitePending(ctx, r.DB, roomID.String(), targetID); inviteErr == nil && invited {
+		// Only the inviter can rescind an invite, as in Synapse.
+		if event.SenderID() != inviter {
+			return nil, false, nil
+		}
+		pendingEventID = eventID
+		trusted = []spec.ServerName{sender.Domain()}
+	} else if knocked, eventID, knock, knockErr := helpers.IsKnockPending(ctx, r.DB, roomID.String(), targetID); knockErr == nil && knocked {
+		pendingEventID = eventID
+		trusted = r.knockServers(roomID, knock)
+	}
+	if pendingEventID == "" || !slices.Contains(trusted, sender.Domain()) {
+		return nil, false, nil
+	}
+
+	info, err := r.DB.RoomInfo(ctx, roomID.String())
+	if err != nil || info == nil {
+		return nil, false, fmt.Errorf("failed to get RoomInfo: %w", err)
+	}
+	updater, err := r.DB.MembershipUpdater(ctx, roomID.String(), string(targetID), true, info.RoomVersion)
+	if err != nil {
+		return nil, false, fmt.Errorf("r.DB.MembershipUpdater: %w", err)
+	}
+	if err = updater.Delete(); err != nil {
+		_ = updater.Rollback()
+		return nil, false, fmt.Errorf("updater.Delete: %w", err)
+	}
+	if err = updater.Commit(); err != nil {
+		return nil, false, fmt.Errorf("updater.Commit: %w", err)
+	}
+	return []rsAPI.OutputEvent{{
+		Type: rsAPI.OutputTypeRetireInviteEvent,
+		RetireInviteEvent: &rsAPI.OutputRetireInviteEvent{
+			EventID:          pendingEventID,
+			RoomID:           roomID.String(),
+			Membership:       membership,
+			RetiredByEventID: event.EventID(),
+			TargetSenderID:   targetID,
+		},
+	}}, true, nil
+}
+
 // knockServers lists the servers to rescind a knock through: the room ID's
 // domain, if it has one, and the senders of the room state returned with the
 // knock, starting with the creator's.
 func (r *Leaver) knockServers(roomID spec.RoomID, knockEvent gomatrixserverlib.PDU) []spec.ServerName {
+	return r.pendingStateServers(roomID, knockEvent, "knock_room_state")
+}
+
+// pendingStateServers lists the servers known to be in a room this server is
+// not in, from the room ID's domain and the senders of the stripped state
+// stored under unsignedKey on an invite or knock, the creator's first.
+func (r *Leaver) pendingStateServers(roomID spec.RoomID, event gomatrixserverlib.PDU, unsignedKey string) []spec.ServerName {
 	var servers []spec.ServerName
 	seen := map[spec.ServerName]bool{}
 	add := func(server spec.ServerName) {
@@ -249,7 +333,7 @@ func (r *Leaver) knockServers(roomID spec.RoomID, knockEvent gomatrixserverlib.P
 		servers = append(servers, server)
 	}
 	add(roomIDDomain(roomID))
-	state := gjson.GetBytes(knockEvent.Unsigned(), "knock_room_state").Array()
+	state := gjson.GetBytes(event.Unsigned(), unsignedKey).Array()
 	sort.SliceStable(state, func(i, j int) bool {
 		return state[i].Get("type").Str == spec.MRoomCreate && state[j].Get("type").Str != spec.MRoomCreate
 	})

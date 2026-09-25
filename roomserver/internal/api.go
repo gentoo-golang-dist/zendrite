@@ -319,6 +319,16 @@ func (r *RoomserverInternalAPI) HandleInvite(
 	return r.OutputProducer.ProduceRoomEvents(inviteEvent.RoomID().String(), outputEvents)
 }
 
+func (r *RoomserverInternalAPI) RetractPendingMembership(
+	ctx context.Context, event *types.HeaderedEvent,
+) (bool, error) {
+	outputEvents, applied, err := r.Leaver.RetractPendingMembership(ctx, event)
+	if err != nil || !applied {
+		return applied, err
+	}
+	return true, r.OutputProducer.ProduceRoomEvents(event.RoomID().String(), outputEvents)
+}
+
 func (r *RoomserverInternalAPI) PerformCreateRoom(
 	ctx context.Context, userID spec.UserID, roomID spec.RoomID, createRequest *api.PerformCreateRoomRequest,
 ) (string, *util.JSONResponse) {
