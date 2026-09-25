@@ -50,6 +50,7 @@ type RoomserverInternalAPI struct {
 	*perform.Upgrader
 	*perform.Admin
 	*perform.Creator
+	Knocker                *perform.Knocker
 	ProcessContext         *process.ProcessContext
 	DB                     storage.Database
 	Cfg                    *config.Zendrite
@@ -175,6 +176,13 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 		Cfg:        &r.Cfg.RoomServer,
 		FSAPI:      r.fsAPI,
 		Inputer:    r.Inputer,
+	}
+	r.Knocker = &perform.Knocker{
+		Cfg:     &r.Cfg.RoomServer,
+		DB:      r.DB,
+		FSAPI:   r.fsAPI,
+		RSAPI:   r,
+		Inputer: r.Inputer,
 	}
 	r.Leaver = &perform.Leaver{
 		Cfg:     &r.Cfg.RoomServer,
@@ -338,6 +346,22 @@ func (r *RoomserverInternalAPI) PerformLeave(
 		return nil
 	}
 	return r.OutputProducer.ProduceRoomEvents(req.RoomID, outputEvents)
+}
+
+func (r *RoomserverInternalAPI) PerformKnock(
+	ctx context.Context,
+	req *api.PerformKnockRequest,
+) (string, error) {
+	roomID, outputEvents, err := r.Knocker.PerformKnock(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if len(outputEvents) > 0 {
+		if err = r.OutputProducer.ProduceRoomEvents(roomID, outputEvents); err != nil {
+			return "", err
+		}
+	}
+	return roomID, nil
 }
 
 func (r *RoomserverInternalAPI) PerformForget(
