@@ -569,7 +569,8 @@ func strippedStateWithEvent(
 	// First see if there's stripped state in the unsigned key of the event.
 	// If there is then unmarshal it into the response. This will contain the
 	// partial room state such as join rules, room name etc.
-	if roomState := gjson.GetBytes(event.Unsigned(), unsignedKey); roomState.Exists() {
+	// Older invites may store an empty object here rather than a list.
+	if roomState := gjson.GetBytes(event.Unsigned(), unsignedKey); roomState.IsArray() {
 		if event.Version() == gomatrixserverlib.RoomVersionPseudoIDs && eventFormat != synctypes.FormatSyncFederation {
 			updated, err := synctypes.GetUpdatedInviteRoomState(func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 				return rsAPI.QueryUserIDForSender(ctx, roomID, senderID)

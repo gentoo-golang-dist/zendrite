@@ -1039,7 +1039,7 @@ func (rp *RequestPool) buildStrippedRoomData(
 	// For federated invites, the room state is embedded in the invite event's unsigned field
 	// as "invite_room_state". This is the same approach V3 sync uses (see NewInviteResponse).
 	if inviteEvent != nil {
-		if inviteRoomState := gjson.GetBytes(inviteEvent.Unsigned(), unsignedKey); inviteRoomState.Exists() {
+		if inviteRoomState := gjson.GetBytes(inviteEvent.Unsigned(), unsignedKey); inviteRoomState.IsArray() {
 			// Parse the invite_room_state array
 			for _, stateEvent := range inviteRoomState.Array() {
 				// Convert raw JSON to ClientEvent

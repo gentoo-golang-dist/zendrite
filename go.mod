@@ -1,7 +1,7 @@
 module codefloe.com/pat-s/zendrite
 
 require (
-	codefloe.com/pat-s/gomatrixserverlib v1.1.0
+	codefloe.com/pat-s/gomatrixserverlib v1.1.1-0.20260925073646-2965edc6b700
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/DeRuina/timberjack v1.4.7
 	github.com/altcha-org/altcha-lib-go v1.0.0

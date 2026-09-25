@@ -151,15 +151,17 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 			state:    inviteState(t, v12State, false),
 			wantCode: http.StatusOK,
 		},
+		// MSC4311's migration section: state which is missing or still in
+		// stripped form only warns, so servers predating MSC4311 can invite.
 		"v12 with stripped state": {
 			room: v12Room, invite: v12Invite,
 			state:    inviteState(t, v12State, true),
-			wantCode: http.StatusBadRequest, wantErrCode: spec.ErrorMissingParam,
+			wantCode: http.StatusOK,
 		},
 		"v12 without create event": {
 			room: v12Room, invite: v12Invite,
 			state:    inviteState(t, v12State[1:], false),
-			wantCode: http.StatusBadRequest, wantErrCode: spec.ErrorMissingParam,
+			wantCode: http.StatusOK,
 		},
 		"v12 with another room's create event": {
 			room: v12Room, invite: v12Invite,
@@ -168,7 +170,7 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 		},
 		"v12 without state": {
 			room: v12Room, invite: v12Invite,
-			wantCode: http.StatusBadRequest, wantErrCode: spec.ErrorMissingParam,
+			wantCode: http.StatusOK,
 		},
 		"v10 with PDU state": {
 			room: v10Room, invite: v10Invite,
@@ -194,8 +196,12 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 			}
 
 			require.Len(t, rsAPI.handled, 1)
-			// Clients only ever see the stripped form, which must include the create event.
-			var sawCreate bool
+			// Clients only ever see the stripped form, including the create
+			// event whenever the inviting server sent one.
+			var sentCreate, sawCreate bool
+			for _, entry := range tc.state {
+				sentCreate = sentCreate || gjson.GetBytes(entry, "type").Str == spec.MRoomCreate
+			}
 			for _, entry := range gjson.GetBytes(rsAPI.handled[0].Unsigned(), "invite_room_state").Array() {
 				for _, field := range []string{"event_id", "signatures", "hashes", "origin_server_ts"} {
 					assert.False(t, entry.Get(field).Exists(), "invite_room_state leaked %s: %s", field, entry.Raw)
@@ -204,7 +210,7 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 					sawCreate = true
 				}
 			}
-			assert.True(t, sawCreate, "invite_room_state lacks m.room.create")
+			assert.Equal(t, sentCreate, sawCreate, "m.room.create in invite_room_state")
 		})
 	}
 }
