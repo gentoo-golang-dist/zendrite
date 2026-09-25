@@ -6,25 +6,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
+	"sync"
 	"time"
 )
 
-func freePort() (int, error) {
-	l, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	return portOf(l.Addr())
-}
+var (
+	portsMu sync.Mutex
+	ports   = map[int]bool{}
+)
 
-func portOf(addr net.Addr) (int, error) {
-	tcp, ok := addr.(*net.TCPAddr)
-	if !ok {
-		return 0, fmt.Errorf("%s is not a TCP address", addr)
+// freePort reserves a port for a server the harness starts later.
+//
+// Ports come from below the kernel's ephemeral range (32768 and up by
+// default), because the kernel hands those out for outbound connections: a
+// port that was free when chosen could be taken by one of the many client
+// connections before the server binds it. No port is handed out twice.
+func freePort() (int, error) {
+	portsMu.Lock()
+	defer portsMu.Unlock()
+	for range 1000 {
+		port := 20000 + rand.IntN(12000)
+		if ports[port] {
+			continue
+		}
+		l, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
+		}
+		_ = l.Close()
+		ports[port] = true
+		return port, nil
 	}
-	return tcp.Port, nil
+	return 0, errors.New("no free port below the ephemeral range")
 }
 
 type permanentError struct{ error }

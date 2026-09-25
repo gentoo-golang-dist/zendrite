@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -180,6 +181,20 @@ func verifyClientState(ctx context.Context, r *result, w *workload, e *environme
 			}
 		}
 		if n > 1 {
+			// Record which events carry the body, so a duplicate can be told
+			// apart from one event that /messages returned twice.
+			var ids []string
+			for _, ev := range history {
+				if ev.Content.Body == s.Nonce {
+					ids = append(ids, ev.EventID)
+				}
+			}
+			diagnosis := fmt.Sprintf("transaction %s, acknowledged event %s, attempts %d, first %s, acked %s\nevents with its body in /messages: %v\n\n",
+				s.Txn, s.EventID, s.Attempts, s.First.Format(time.RFC3339Nano), s.AckedAt.Format(time.RFC3339Nano), ids)
+			for _, id := range slices.Compact(slices.Sorted(slices.Values(ids))) {
+				diagnosis += e.pg.diagnoseEvent(ctx, id) + "\n"
+			}
+			_ = os.WriteFile(filepath.Join(e.logs, "duplicate-"+s.Txn+".txt"), []byte(diagnosis), 0o644)
 			// Transaction IDs are deduplicated in a process-local cache, as
 			// the HA documentation states. A request the old owner accepted
 			// into the room input stream, but could not answer before it

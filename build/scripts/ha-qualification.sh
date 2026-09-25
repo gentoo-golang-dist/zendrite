@@ -38,7 +38,11 @@ declare -A ENVTEST_SHA512=(
 )
 
 export HACHAOS_TIER="${HACHAOS_TIER:-ci}"
-export HACHAOS_ARTIFACTS="${HACHAOS_ARTIFACTS:-$ROOT/.hachaos/artifacts/$(date -u +%Y%m%dT%H%M%SZ)-$HACHAOS_TIER}"
+HACHAOS_ARTIFACTS="${HACHAOS_ARTIFACTS:-$ROOT/.hachaos/artifacts/$(date -u +%Y%m%dT%H%M%SZ)-$HACHAOS_TIER}"
+# go test runs in the package directory, so a relative path would land there.
+mkdir -p "$HACHAOS_ARTIFACTS"
+HACHAOS_ARTIFACTS="$(cd "$HACHAOS_ARTIFACTS" && pwd)"
+export HACHAOS_ARTIFACTS
 
 if [[ "${HACHAOS_CONTAINER:-}" == 1 ]]; then
   mkdir -p "$HACHAOS_ARTIFACTS"
@@ -108,6 +112,11 @@ for result in "$HACHAOS_ARTIFACTS"/*/result.json; do
   dir="$(dirname "$result")"
   echo "==== $(basename "$dir"): timeline"
   grep -E '"kind":"(fault|process|router)"' "$dir/timeline.jsonl" | tail -n 60 || true
+  for diagnosis in "$dir"/duplicate-*.txt "$dir"/missing-*.txt; do
+    [[ -f "$diagnosis" ]] || continue
+    echo "==== $(basename "$dir"): $(basename "$diagnosis")"
+    head -n 40 "$diagnosis"
+  done
   for log in "$dir"/cand-*.log; do
     echo "==== $(basename "$dir"): $(basename "$log") warnings and errors"
     grep -E 'level=(warning|error|fatal|panic)|^====' "$log" | tail -n 40 || true
