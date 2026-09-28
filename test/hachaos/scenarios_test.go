@@ -624,6 +624,7 @@ func runScenario(t *testing.T, s settings, sc scenario) (r result) {
 	measureRecovery(&r, w, e)
 	settle := 2 * time.Minute
 	verifyClientState(ctx, &r, w, e, settle)
+	verifyMSCs(ctx, &r, w.msc, settle)
 	verifyMedia(ctx, &r, w, before)
 	verifySearch(ctx, &r, w, settle)
 	verifyOwnership(ctx, &r, e, sr.pauses)
