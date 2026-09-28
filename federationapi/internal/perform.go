@@ -24,11 +24,6 @@ import (
 	"codefloe.com/pat-s/zendrite/roomserver/version"
 )
 
-// outboundPeekExpired reports whether the peek must be renewed at now.
-func outboundPeekExpired(peek federationTypes.OutboundPeek, now spec.Timestamp) bool {
-	return int64(now) > peek.RenewedTimestamp+peek.RenewalInterval
-}
-
 // PerformLeaveRequest implements api.FederationInternalAPI.
 func (r *FederationInternalAPI) PerformDirectoryLookup(
 	ctx context.Context,
@@ -388,6 +383,11 @@ func (r *FederationInternalAPI) PerformOutboundPeek(
 	)
 
 	return lastErr
+}
+
+// outboundPeekExpired reports whether the peek must be renewed at now.
+func outboundPeekExpired(peek federationTypes.OutboundPeek, now spec.Timestamp) bool {
+	return int64(now) > peek.RenewedTimestamp+peek.RenewalInterval
 }
 
 func (r *FederationInternalAPI) performOutboundPeekUsingServer(

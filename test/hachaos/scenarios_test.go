@@ -490,6 +490,7 @@ func scenarios() []scenario {
 				return s.e.waitStandbys(ctx, 2*time.Minute)
 			},
 		},
+		mscIndexFailureScenario(),
 	}
 }
 
@@ -511,6 +512,7 @@ var scenarioGroups = map[string]string{
 	"leadership-lost-during-startup":     "lifecycle",
 	"queued-federation-delivery":         "lifecycle",
 	"coordinated-upgrade":                "lifecycle",
+	"msc-relationship-index-failure":     "dependency",
 }
 
 func selectScenarios(t *testing.T, s settings) []scenario {

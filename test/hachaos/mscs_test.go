@@ -4,6 +4,7 @@ package hachaos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -455,4 +456,85 @@ func (e *environment) relationshipEdges(ctx context.Context, child string) strin
 		return "none"
 	}
 	return out
+}
+
+// mscIndexFailureScenario reproduces the relationship index losing writes:
+// PostgreSQL rejects every relationship index insert while replies keep being
+// accepted, and the owner is frozen and replaced before the fault heals. The
+// probe's verification then requires every accepted reply to be indexed.
+func mscIndexFailureScenario() scenario {
+	return scenario{
+		name:        "msc-relationship-index-failure",
+		description: "PostgreSQL rejects MSC2836 relationship index writes while thread replies are accepted, and the active candidate is frozen and replaced before the writes are allowed again.",
+		tiers:       allTiers,
+		run: func(ctx context.Context, s *run) error {
+			p := s.w.msc
+			if p == nil {
+				return errors.New("the scenario needs the MSC probe; unset HACHAOS_MSCS")
+			}
+			s.e.timeline.add(eventFault, "postgres", "reject MSC2836 relationship index inserts")
+			installed := time.Now()
+			if err := s.e.pg.query(ctx, func(conn *pgx.Conn) error {
+				_, err := conn.Exec(ctx, `CREATE FUNCTION hachaos_reject_msc_edge() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'hachaos: injected relationship index failure'; END $$;
+CREATE TRIGGER hachaos_reject_msc_edge BEFORE INSERT ON msc2836_edges FOR EACH ROW EXECUTE FUNCTION hachaos_reject_msc_edge()`)
+				return err
+			}); err != nil {
+				return fmt.Errorf("install the index fault: %w", err)
+			}
+			heal := func() error {
+				return s.e.pg.query(context.WithoutCancel(ctx), func(conn *pgx.Conn) error {
+					_, err := conn.Exec(context.WithoutCancel(ctx), `DROP TRIGGER IF EXISTS hachaos_reject_msc_edge ON msc2836_edges; DROP FUNCTION IF EXISTS hachaos_reject_msc_edge()`)
+					return err
+				})
+			}
+			defer func() { _ = heal() }()
+
+			// Prove the fault is hit: a reply is accepted while its index
+			// write is refused.
+			if err := waitFor(ctx, time.Minute, func() error {
+				p.mu.Lock()
+				var accepted []string
+				for _, reply := range p.replies {
+					if reply.rec.Acked && reply.rec.First.After(installed) {
+						accepted = append(accepted, reply.rec.EventID)
+					}
+				}
+				p.mu.Unlock()
+				for _, eventID := range accepted {
+					if s.e.relationshipEdges(ctx, eventID) == "none" {
+						s.r.notef("reply %s was accepted while its relationship index write was refused", eventID)
+						return nil
+					}
+				}
+				return errors.New("no accepted reply is missing from the index yet")
+			}); err != nil {
+				return err
+			}
+
+			leader, err := s.active()
+			if err != nil {
+				return err
+			}
+			s.faultf(leader.name, "SIGSTOP active candidate while relationship index writes fail")
+			if err = s.pause(leader); err != nil {
+				return err
+			}
+			if err = s.successor(leader, 3*s.e.timings.Lease+time.Minute); err != nil {
+				_ = s.resume(leader)
+				return err
+			}
+			// The successor inherits the refused writes and keeps failing.
+			time.Sleep(5 * time.Second)
+			s.e.timeline.add(eventFault, "postgres", "heal: accept MSC2836 relationship index inserts")
+			if err = heal(); err != nil {
+				_ = s.resume(leader)
+				return fmt.Errorf("heal the index fault: %w", err)
+			}
+			if err = s.resume(leader); err != nil {
+				return err
+			}
+			s.expectRefused(ctx, leader, 5*time.Second)
+			return nil
+		},
+	}
 }
