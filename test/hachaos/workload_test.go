@@ -321,7 +321,8 @@ func (w *workload) syncOnce(ctx context.Context, c *mxClient, since string, seen
 	requestCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	resp, err := c.sync(requestCtx, since, timeout)
 	cancel()
-	if local && timeout > 0 {
+	// A long-poll cut off by the halt is not a failed sync.
+	if local && timeout > 0 && (err == nil || ctx.Err() == nil) {
 		w.record(kindSync, start, err == nil)
 	}
 	if err != nil {
