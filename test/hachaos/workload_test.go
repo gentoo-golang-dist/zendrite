@@ -245,6 +245,16 @@ func (w *workload) retry(ctx context.Context, kind string, rec *sendRecord, op f
 		attemptCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		err := op(attemptCtx)
 		cancel()
+		if err != nil && ctx.Err() != nil {
+			// The workload stopped mid-request. That says nothing about the
+			// server, and recording it as a failure would read as a
+			// disruption that never recovered.
+			w.mu.Lock()
+			rec.Attempts++
+			rec.LastErr = err.Error()
+			w.mu.Unlock()
+			return
+		}
 		w.record(kind, start, err == nil)
 		w.mu.Lock()
 		rec.Attempts++

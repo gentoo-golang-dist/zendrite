@@ -4,6 +4,7 @@ package hachaos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -716,5 +717,25 @@ func TestPDUPosition(t *testing.T) {
 		if got := pduPosition(token); got != want {
 			t.Errorf("pduPosition(%q) = %d, want %d", token, got, want)
 		}
+	}
+}
+
+// TestRetryIgnoresHaltedAttempt covers a write in flight when the workload
+// stops: it is not a server failure, so it must not read as a disruption that
+// never recovered.
+func TestRetryIgnoresHaltedAttempt(t *testing.T) {
+	w := &workload{}
+	ctx, stop := context.WithCancelCause(t.Context())
+	rec := &sendRecord{}
+	w.retry(ctx, kindWrite, rec, func(attempt context.Context) error {
+		stop(errors.New("workload stopped"))
+		<-attempt.Done()
+		return attempt.Err()
+	})
+	if rec.Acked || rec.Attempts != 1 || rec.LastErr == "" {
+		t.Fatalf("halted write recorded as %+v", *rec)
+	}
+	if _, failed := w.lastFailureAfter(kindWrite, time.Time{}); failed {
+		t.Fatal("a write aborted by the workload stopping counts as a failed attempt")
 	}
 }
