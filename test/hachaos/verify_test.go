@@ -736,8 +736,8 @@ func TestRetryIgnoresHaltedAttempt(t *testing.T) {
 	if rec.Acked || rec.Attempts != 1 || rec.LastErr == "" {
 		t.Fatalf("halted write recorded as %+v", *rec)
 	}
-	if _, failed := w.lastFailureAfter(kindWrite, time.Time{}); failed {
-		t.Fatal("a write aborted by the workload stopping counts as a failed attempt")
+	if last, failed := w.lastFailureAfter(kindWrite, time.Time{}); failed {
+		t.Fatalf("a write aborted by the workload stopping counts as a failed attempt, ending %s", last)
 	}
 }
 
