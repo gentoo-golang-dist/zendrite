@@ -108,6 +108,7 @@ func startWorkload(ctx context.Context, e *environment) (*workload, error) {
 	// A retried createRoom may create a second room; the workload simply
 	// uses whichever attempt succeeded.
 	if err = retrying(ctx, func() error {
+		defer e.watchSetup(ctx, "create-room")()
 		var err error
 		w.room, err = w.alice.createRoom(ctx, "hachaos")
 		return err
