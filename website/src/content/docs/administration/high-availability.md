@@ -268,7 +268,7 @@ A refused standby logs `HA standby is not prepared to take over` with the reason
 
 ### Supported upgrades
 
-The upgrade matrix is recorded in [`setup/ha/testdata/levels.json`](https://codefloe.com/pat-s/zendrite/src/branch/main/setup/ha/testdata/levels.json), one entry per level, and CI refuses a change to the shared-state surface that does not declare a new level.
+The upgrade matrix is recorded in `setup/ha/testdata/levels.json` in the source repository, one entry per level, and CI refuses a change to the shared-state surface that does not declare a new level.
 
 | Level | Introduced | Upgrades from | Rolls back to |
 | --- | --- | --- | --- |
