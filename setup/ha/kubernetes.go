@@ -19,6 +19,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/internal/ownership"
 	"codefloe.com/pat-s/zendrite/setup/config"
+	"codefloe.com/pat-s/zendrite/setup/jetstream"
 )
 
 // Run preserves standalone behavior without constructing any Kubernetes client
@@ -149,6 +150,10 @@ func runKubernetes(ctx context.Context, cfg config.HA, client coordination.Coord
 	if err == nil && ctx.Err() != nil {
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.RenewDeadline)
 		defer cancel()
+		// A pull request this process left at the broker could otherwise
+		// take the successor's first message for this room, which would then
+		// wait the whole acknowledgement timeout before redelivery.
+		jetstream.WaitForOwnedPulls(releaseCtx)
 		releaseLease(releaseCtx, lock, candidate.Identity)
 	}
 	return err

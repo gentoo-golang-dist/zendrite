@@ -82,6 +82,7 @@ The report lists them separately, with the maximum and 99th percentile write lat
 | `coordinated-upgrade` | A build the upgrade contract does not admit must not become prepared or take the released Lease; the maintenance-window upgrade must keep every write. |
 | `rolling-upgrade` | Every candidate is replaced by the next level, the active one last, and no request may fail. |
 | `rolling-upgrade-successor-fails` | The candidate taking over during a rolling upgrade is killed while it activates. |
+| `rolling-upgrade-broker-leader-lost` | The broker leading the room input stream is killed while the owner hands over during a rolling upgrade. |
 | `msc-relationship-index-failure` | PostgreSQL rejects MSC2836 relationship index writes, and the active candidate is replaced before they are allowed again. |
 
 ## Running it

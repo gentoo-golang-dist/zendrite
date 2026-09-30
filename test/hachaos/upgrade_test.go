@@ -77,6 +77,43 @@ func successorFailsScenario() scenario {
 	}
 }
 
+// brokerLossScenario loses the broker leading the room input stream while the
+// owner hands over, so the successor activates against a stream that is
+// electing a new leader.
+func brokerLossScenario() scenario {
+	return scenario{
+		name:        "rolling-upgrade-broker-leader-lost",
+		description: "During a rolling upgrade to the next build, the broker leading the room input stream is killed while the owner hands over, and restarted 20 seconds later. The upgrade must complete and every acknowledged write must survive.",
+		tiers:       allTiers,
+		run: func(ctx context.Context, s *run) error {
+			if s.e.settings.next == "" {
+				return errors.New("HACHAOS_ZENDRITE_NEXT is not set")
+			}
+			s.faultf("deployment", "rolling upgrade to %s", filepath.Base(s.e.settings.next))
+			return s.roll(ctx, s.e.settings.next, func(owner *slot) error {
+				err := waitFor(ctx, time.Minute, func() error {
+					st, err := owner.status(ctx)
+					if err != nil || st.Phase != "handing-over" {
+						return errors.New("the owner is not handing over yet")
+					}
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+				node, err := s.e.nats.streamLeader("InputRoomEvent")
+				if err != nil {
+					return err
+				}
+				s.e.timeline.add(eventFault, node.name, "SIGKILL the input stream leader during the handover")
+				node.proc.kill()
+				time.Sleep(20 * time.Second)
+				return s.e.nats.restart(ctx, node)
+			})
+		},
+	}
+}
+
 // roll replaces every candidate's build one at a time, standbys first, as a
 // rollout with maxSurge 0 and maxUnavailable 1 does. The owner is stopped
 // last with SIGTERM and hands over. When set, duringHandover runs while the

@@ -116,7 +116,7 @@ Candidate identity and ownership generation are deliberately never labels, becau
 | `zendrite_ha_build_compatible` | 0 when the deployment's upgrade contract does not admit this build. |
 | `zendrite_ha_build_info{protocol,level,upgrade_from,rollback_to}` | This build's upgrade contract; always 1. |
 
-Alert on no ready leader, repeated elections, stuck recovery, and repeated fencing failures.
+Alert on no ready leader, repeated elections, stuck recovery, repeated fencing failures, and a candidate whose build the upgrade contract refuses.
 The chart ships these rules; see [Helm setup](/installation/helm/helm/).
 
 Note that `zendrite_ha_shutdown_duration_seconds` is set as the process drains, so a scrape may not catch it before the process exits.

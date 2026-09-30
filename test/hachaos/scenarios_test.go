@@ -492,6 +492,7 @@ func scenarios() []scenario {
 		},
 		rollingUpgradeScenario(),
 		successorFailsScenario(),
+		brokerLossScenario(),
 		mscIndexFailureScenario(),
 	}
 }
@@ -516,6 +517,7 @@ var scenarioGroups = map[string]string{
 	"coordinated-upgrade":                "lifecycle",
 	"rolling-upgrade":                    "lifecycle",
 	"rolling-upgrade-successor-fails":    "lifecycle",
+	"rolling-upgrade-broker-leader-lost": "dependency",
 	"msc-relationship-index-failure":     "dependency",
 }
 
