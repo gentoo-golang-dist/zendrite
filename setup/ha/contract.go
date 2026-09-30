@@ -50,14 +50,24 @@ var release = Contract{Protocol: 1, Level: 1, UpgradeFrom: 1, RollbackTo: 1}
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades
 // and refusals. It is only set at link time, as
-// "-X codefloe.com/pat-s/zendrite/setup/ha.contractOverride=protocol:level:upgrade_from:rollback_to",
-// never by configuration.
+// "-X codefloe.com/pat-s/zendrite/setup/ha.contractOverride=<value>", never by
+// configuration. The value is protocol:level:upgrade_from:rollback_to, or
+// one relative to the release contract: "adjacent" is the next level, which
+// upgrades from and rolls back to this one, and "unadmitted" is two levels
+// ahead and upgrades only from itself.
 var contractOverride string
 
 // Release reports this build's contract.
 func Release() Contract {
-	if contractOverride == "" {
+	switch contractOverride {
+	case "":
 		return release
+	case "adjacent":
+		return Contract{Protocol: release.Protocol, Level: release.Level + 1, UpgradeFrom: release.Level, RollbackTo: release.Level}
+	case "unadmitted":
+		const ahead = 2
+		level := release.Level + ahead
+		return Contract{Protocol: release.Protocol, Level: level, UpgradeFrom: level, RollbackTo: level}
 	}
 	c, err := parseContract(contractOverride)
 	if err != nil {

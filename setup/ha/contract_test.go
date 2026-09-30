@@ -62,3 +62,16 @@ func TestContractValidate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Contract{Protocol: 1, Level: 5, UpgradeFrom: 4, RollbackTo: 3}, c)
 }
+
+func TestContractOverride(t *testing.T) {
+	defer func(previous string) { contractOverride = previous }(contractOverride)
+	base := Release()
+	contractOverride = "adjacent"
+	adjacent := Release()
+	require.Equal(t, base.Level+1, adjacent.Level)
+	require.NoError(t, adjacent.Admit("deployment", base.Next("deployment", "", Recorded{})))
+	contractOverride = "unadmitted"
+	require.ErrorIs(t, Release().Admit("deployment", base.Next("deployment", "", Recorded{})), ErrIncompatibleBuild)
+	contractOverride = "1:4:3:2"
+	require.Equal(t, Contract{Protocol: 1, Level: 4, UpgradeFrom: 3, RollbackTo: 2}, Release())
+}
