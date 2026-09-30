@@ -329,7 +329,9 @@ func TestStandbyPreparation(t *testing.T) {
 	recorded := Recorded{Fingerprint: "deployment", Protocol: 1, Level: 1, Floor: 1, Version: "v1"}
 	status := NewStatus()
 	status.Observe(PhaseStandby, "")
-	require.True(t, status.Healthy(), "a standby is healthy until preparation reports otherwise")
+	require.True(t, status.Healthy(), "without HA preparation, a standby is healthy")
+	status.ExpectPreparation("v3", contract)
+	require.False(t, status.Healthy(), "a standby that has not checked yet is not prepared")
 
 	status.Prepared("v3", contract, recorded, contract.Admit("deployment", recorded))
 	require.Equal(t, http.StatusServiceUnavailable, probe(t, status, "/_zendrite/monitor/candidate"))

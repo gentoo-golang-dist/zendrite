@@ -68,6 +68,7 @@ func Run(ctx context.Context, cfg config.HA, metrics *config.Metrics, app Applic
 	go serve()
 	logrus.WithField("address", listener.Addr().String()).Info("HA status listener started")
 	if p, ok := gate.(preparer); ok {
+		status.ExpectPreparation(cfg.Version, Release())
 		prepareCtx, stopPreparing := context.WithCancelCause(ctx)
 		defer stopPreparing(nil)
 		go prepare(prepareCtx, p, cfg, status)

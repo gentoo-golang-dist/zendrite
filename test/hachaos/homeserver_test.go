@@ -215,7 +215,7 @@ type upgradeStatus struct {
 
 // prepared reports whether a standby may take over, as its readiness does.
 func (st candidateStatus) prepared() bool {
-	return st.Phase == "standby" && st.Reason == "" && (st.Upgrade == nil || st.Upgrade.Prepared)
+	return st.Phase == "standby" && st.Reason == "" && st.Upgrade != nil && st.Upgrade.Prepared
 }
 
 var probeClient = &http.Client{Timeout: 500 * time.Millisecond}

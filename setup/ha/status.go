@@ -228,6 +228,20 @@ func (s *Status) Healthy() bool {
 // prepared is called with mu held.
 func (s *Status) prepared() bool { return s.preparation == nil || s.preparation.err == nil }
 
+// errPreparationPending reports that a standby has not yet checked whether it
+// may take over. Until it has, it must not look prepared: a rollout would
+// otherwise replace the next candidate before this one was checked at all.
+var errPreparationPending = errors.New("this standby has not yet checked whether it may take over")
+
+// ExpectPreparation makes a standby unhealthy until its first preparation
+// check completes.
+func (s *Status) ExpectPreparation(version string, contract Contract) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.preparation = &preparation{version: version, contract: contract, err: errPreparationPending}
+	standbyPrepared.Set(0)
+}
+
 // Prepared records a standby's check of whether it may take over: whether it
 // reaches the database, and whether the deployment's upgrade contract admits
 // its build. A standby that may not take over is not healthy, so a rollout
@@ -250,6 +264,7 @@ func (s *Status) Prepared(version string, contract Contract, recorded Recorded, 
 		standbyPrepared.Set(0)
 	}
 	switch {
+	case errors.Is(err, errPreparationPending):
 	case err != nil && (previous == nil || previous.err == nil || previous.err.Error() != err.Error()):
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"build_level":      contract.Level,
@@ -350,6 +365,8 @@ func (p *preparation) body() *upgradeBody {
 	switch {
 	case !body.Compatible:
 		body.Reason = "the deployment's upgrade contract does not admit this build; an offline upgrade is required, see the candidate logs"
+	case errors.Is(p.err, errPreparationPending):
+		body.Reason = "checking whether this build may take over"
 	case p.err != nil:
 		body.Reason = "cannot read the deployment's compatibility record; see the candidate logs"
 	}
