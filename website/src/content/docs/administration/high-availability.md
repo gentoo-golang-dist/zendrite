@@ -247,7 +247,9 @@ Not supported, and not planned for this iteration:
 - Non-Kubernetes election backends.
 
 The [qualification report](/development/ha-qualification-report/) measures recovery against the ADR reference workload.
-Larger deployments should measure their own, because a full search index rebuild can exceed the 120 second takeover target.
+A successor opens its listeners without waiting for its search index, so the size of the search history does not delay takeover.
+Search itself answers HTTP 503 until the rebuild finishes, which takes time in proportion to the searchable history: about 32 seconds for 84,000 messages on one production candidate.
+Each activation logs `Activation phase finished` with the duration of every startup phase, and `Search index rebuilt` with the rebuild's duration.
 
 ## Failover behavior
 
@@ -267,6 +269,10 @@ This makes healthy standbys Ready without adding them directly to Matrix traffic
 
 Failover includes Lease expiry, election retry jitter, fencing, recovery, and routing convergence.
 Shorter Lease and retry periods can reduce detection time but make leadership more sensitive to control-plane stalls and increase renewal traffic.
+An etcd leader election stalls Lease writes while the cluster elects a new leader, often for several seconds, and longer when etcd members span data centers.
+A leader whose renewal cannot complete within `renew_deadline` gives up leadership and exits, even though the control plane recovers moments later.
+With `renew_deadline: 6s`, one production deployment lost its owner to a Lease write that took about 8 seconds during an etcd leader change.
+Choose a `renew_deadline` that outlasts the control plane's worst expected write stall, and alert on `zendrite_ha_renewal_failures_total` to see how close renewals come.
 Keep `lease_duration > renew_deadline > 1.2 * retry_period`, and validate actual service recovery with the intended timings.
 Reducing election timings never skips resource fencing or backlog recovery.
 
