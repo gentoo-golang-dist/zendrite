@@ -262,7 +262,7 @@ func verifyUninterrupted(r *result, w *workload, e *environment, s *run) {
 	if report.OutboundFailed > 0 {
 		r.notef("%d outbound federation requests failed during the upgrade and were retried by the successor", report.OutboundFailed)
 	}
-	if report.Search.Requests > 0 {
+	if report.Search.Unavailable > 0 {
 		r.notef("search, the documented exception: %d of %d probes answered 503 while the successor rebuilt its index, the longest run for %s",
 			report.Search.Unavailable, report.Search.Requests, report.Search.Longest.Round(time.Millisecond))
 	}
