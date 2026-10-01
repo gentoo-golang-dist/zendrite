@@ -9,6 +9,7 @@ package sqlite3
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"codefloe.com/pat-s/zendrite/internal"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
@@ -67,7 +68,22 @@ AND (t.topological_position < $3 OR (t.topological_position = $3 AND t.stream_po
 ORDER BY t.topological_position DESC, t.stream_position DESC LIMIT $5
 `
 
+// Find which events have children of a bundled relation type, so that callers
+// only aggregate the few events that need it. The ($2) and ($3) lists are
+// expanded per query.
+const selectRelationTypesForEventsSQL = "" +
+	"SELECT DISTINCT event_id, rel_type FROM syncapi_relations" +
+	" WHERE room_id = $1 AND id <= $2 AND rel_type IN ($3) AND event_id IN ($4)"
+
+// Each query stays below SQLite's bound parameter limit, and binds the room ID
+// and watermark ahead of the relation type and event ID lists.
+const (
+	relationTypesBatchSize   = 900
+	relationTypesFixedParams = 2
+)
+
 type relationsStatements struct {
+	db                             *sql.DB
 	selectThreadRelationsStmt      *sql.Stmt
 	streamIDStatements             *StreamIDStatements
 	insertRelationStmt             *sql.Stmt
@@ -79,6 +95,7 @@ type relationsStatements struct {
 
 func NewSqliteRelationsTable(db *sql.DB, streamID *StreamIDStatements) (tables.Relations, error) {
 	s := &relationsStatements{
+		db:                 db,
 		streamIDStatements: streamID,
 	}
 	_, err := db.Exec(relationsSchema)
@@ -184,4 +201,55 @@ func (s *relationsStatements) SelectThreadRelations(ctx context.Context, txn *sq
 		result = append(result, entry)
 	}
 	return result, rows.Err()
+}
+
+// SelectRelationTypesForEvents returns, per parent event, which of relTypes have children up to the watermark.
+func (s *relationsStatements) SelectRelationTypesForEvents(ctx context.Context, txn *sql.Tx, roomID string, eventIDs, relTypes []string, watermark types.StreamPosition) (map[string]map[string]bool, error) {
+	result := make(map[string]map[string]bool)
+	if len(relTypes) == 0 {
+		return result, nil
+	}
+	for start := 0; start < len(eventIDs); start += relationTypesBatchSize {
+		batch := eventIDs[start:min(start+relationTypesBatchSize, len(eventIDs))]
+		query := strings.Replace(selectRelationTypesForEventsSQL, "($3)", sqlutil.QueryVariadicOffset(len(relTypes), relationTypesFixedParams), 1)
+		query = strings.Replace(query, "($4)", sqlutil.QueryVariadicOffset(len(batch), relationTypesFixedParams+len(relTypes)), 1)
+		params := make([]any, 0, relationTypesFixedParams+len(relTypes)+len(batch))
+		params = append(params, roomID, watermark)
+		for _, relType := range relTypes {
+			params = append(params, relType)
+		}
+		for _, eventID := range batch {
+			params = append(params, eventID)
+		}
+		var rows *sql.Rows
+		var err error
+		if txn != nil {
+			rows, err = txn.QueryContext(ctx, query, params...)
+		} else {
+			rows, err = s.db.QueryContext(ctx, query, params...)
+		}
+		if err != nil {
+			return nil, err
+		}
+		err = scanRelationTypes(rows, result)
+		internal.CloseAndLogIfError(ctx, rows, "SelectRelationTypesForEvents: rows.close() failed")
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func scanRelationTypes(rows *sql.Rows, result map[string]map[string]bool) error {
+	var eventID, relType string
+	for rows.Next() {
+		if err := rows.Scan(&eventID, &relType); err != nil {
+			return err
+		}
+		if result[eventID] == nil {
+			result[eventID] = make(map[string]bool)
+		}
+		result[eventID][relType] = true
+	}
+	return rows.Err()
 }

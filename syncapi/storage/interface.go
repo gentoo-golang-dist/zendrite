@@ -125,6 +125,8 @@ type DatabaseTransaction interface {
 	GetPresences(ctx context.Context, userID []string) ([]*types.PresenceInternal, error)
 	PresenceAfter(ctx context.Context, after types.StreamPosition, filter synctypes.EventFilter) (map[string]*types.PresenceInternal, error)
 	ThreadRelations(ctx context.Context, roomID string, watermark types.StreamPosition, before types.TopologyToken, limit int) ([]types.ThreadRelation, error)
+	// RelationTypesFor reports which of relTypes have children for each parent event, up to the relation watermark.
+	RelationTypesFor(ctx context.Context, roomID string, eventIDs, relTypes []string, watermark types.StreamPosition) (map[string]map[string]bool, error)
 	RelationsFor(ctx context.Context, roomID, eventID, relType, eventType string, from, to types.StreamPosition, backwards bool, limit int) (events []types.StreamEvent, prevBatch, nextBatch string, err error)
 	// UnPartialStatedRoomsInRange returns room IDs that became fully-stated (completed
 	// partial state resync) for a user in the given range. MSC3706 faster joins.

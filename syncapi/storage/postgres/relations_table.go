@@ -69,8 +69,15 @@ AND (t.topological_position < $3 OR (t.topological_position = $3 AND t.stream_po
 ORDER BY t.topological_position DESC, t.stream_position DESC LIMIT $5
 `
 
+// Find which events have children of a bundled relation type, so that callers
+// only aggregate the few events that need it.
+const selectRelationTypesForEventsSQL = "" +
+	"SELECT DISTINCT event_id, rel_type FROM syncapi_relations" +
+	" WHERE room_id = $1 AND event_id = ANY($2) AND rel_type = ANY($3) AND id <= $4"
+
 type relationsStatements struct {
 	selectThreadRelationsStmt      *sql.Stmt
+	selectRelationTypesStmt        *sql.Stmt
 	insertRelationStmt             *sql.Stmt
 	selectRelationsInRangeAscStmt  *sql.Stmt
 	selectRelationsInRangeDescStmt *sql.Stmt
@@ -87,6 +94,7 @@ func NewPostgresRelationsTable(db *sql.DB) (tables.Relations, error) {
 	return s, sqlutil.StatementList{
 		{&s.insertRelationStmt, insertRelationSQL},
 		{&s.selectThreadRelationsStmt, selectThreadRelationsSQL},
+		{&s.selectRelationTypesStmt, selectRelationTypesForEventsSQL},
 		{&s.selectRelationsInRangeAscStmt, selectRelationsInRangeAscSQL},
 		{&s.selectRelationsInRangeDescStmt, selectRelationsInRangeDescSQL},
 		{&s.deleteRelationStmt, deleteRelationSQL},
@@ -177,6 +185,30 @@ func (s *relationsStatements) SelectThreadRelations(ctx context.Context, txn *sq
 			return nil, err
 		}
 		result = append(result, entry)
+	}
+	return result, rows.Err()
+}
+
+// SelectRelationTypesForEvents returns, per parent event, which of relTypes have children up to the watermark.
+func (s *relationsStatements) SelectRelationTypesForEvents(ctx context.Context, txn *sql.Tx, roomID string, eventIDs, relTypes []string, watermark types.StreamPosition) (map[string]map[string]bool, error) {
+	result := make(map[string]map[string]bool)
+	if len(eventIDs) == 0 || len(relTypes) == 0 {
+		return result, nil
+	}
+	rows, err := sqlutil.TxStmt(txn, s.selectRelationTypesStmt).QueryContext(ctx, roomID, eventIDs, relTypes, watermark)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectRelationTypesForEvents: rows.close() failed")
+	var eventID, relType string
+	for rows.Next() {
+		if err = rows.Scan(&eventID, &relType); err != nil {
+			return nil, err
+		}
+		if result[eventID] == nil {
+			result[eventID] = make(map[string]bool)
+		}
+		result[eventID][relType] = true
 	}
 	return result, rows.Err()
 }

@@ -135,6 +135,14 @@ func Relations(
 		)
 	}
 
+	bundler, err := internal.NewRelationBundler(req.Context(), snapshot, rsAPI, *userID)
+	if err != nil {
+		return util.ErrorResponse(err)
+	}
+	if err = bundler.Bundle(req.Context(), filteredEvents, res.Chunk, synctypes.FormatAll); err != nil {
+		return util.ErrorResponse(err)
+	}
+
 	succeeded = true
 	return util.JSONResponse{
 		Code: http.StatusOK,

@@ -228,3 +228,37 @@ func TestThreadRelationsTable(t *testing.T) {
 		require.Equal(t, []string{"b", "a", "c"}, children)
 	})
 }
+
+func TestSelectRelationTypesForEvents(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		ctx := t.Context()
+		tab, _, closeDB := newRelationsTable(t, dbType)
+		defer closeDB()
+		for _, rel := range []struct{ room, parent, child, relType string }{
+			{roomID, "a", "a1", "m.thread"},
+			{roomID, "a", "a2", "m.thread"},
+			{roomID, "a", "a3", "m.replace"},
+			{roomID, "b", "b1", "m.annotation"},
+			{"!other:server", "c", "c1", "m.reference"},
+		} {
+			require.NoError(t, tab.InsertRelation(ctx, nil, rel.room, rel.parent, rel.child, "m.room.message", rel.relType))
+		}
+		watermark, err := tab.SelectMaxRelationID(ctx, nil)
+		require.NoError(t, err)
+		// A relation inserted after the snapshot's watermark is not reported.
+		require.NoError(t, tab.InsertRelation(ctx, nil, roomID, "d", "d1", "m.room.message", "m.reference"))
+
+		relTypes := []string{"m.thread", "m.replace", "m.reference"}
+		got, err := tab.SelectRelationTypesForEvents(ctx, nil, roomID, []string{"a", "b", "c", "d", "missing"}, relTypes, types.StreamPosition(watermark))
+		require.NoError(t, err)
+		require.Equal(t, map[string]map[string]bool{"a": {"m.thread": true, "m.replace": true}}, got)
+
+		got, err = tab.SelectRelationTypesForEvents(ctx, nil, roomID, []string{"a", "d"}, []string{"m.reference"}, types.StreamPosition(watermark+1))
+		require.NoError(t, err)
+		require.Equal(t, map[string]map[string]bool{"d": {"m.reference": true}}, got)
+
+		got, err = tab.SelectRelationTypesForEvents(ctx, nil, roomID, nil, relTypes, types.StreamPosition(watermark))
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+}

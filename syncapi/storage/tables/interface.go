@@ -235,6 +235,10 @@ type Presence interface {
 
 type Relations interface {
 	SelectThreadRelations(ctx context.Context, txn *sql.Tx, roomID string, watermark types.StreamPosition, before types.TopologyToken, limit int) ([]types.ThreadRelation, error)
+	// SelectRelationTypesForEvents returns, for each of the given parent events, the set of
+	// relTypes that have at least one child with a relation ID no greater than watermark.
+	// Events without such children are absent from the result.
+	SelectRelationTypesForEvents(ctx context.Context, txn *sql.Tx, roomID string, eventIDs, relTypes []string, watermark types.StreamPosition) (map[string]map[string]bool, error)
 	// Inserts a relation which refers from the child event ID to the event ID in the given room.
 	// If the relation already exists then this function will do nothing and return no error.
 	InsertRelation(ctx context.Context, txn *sql.Tx, roomID, eventID, childEventID, childEventType, relType string) (err error)

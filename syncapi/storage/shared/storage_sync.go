@@ -860,6 +860,11 @@ func (d *DatabaseTransaction) ThreadRelations(ctx context.Context, roomID string
 	return d.Relations.SelectThreadRelations(ctx, d.txn, roomID, watermark, before, limit)
 }
 
+// RelationTypesFor reports which of relTypes have children for each parent event, up to the relation watermark.
+func (d *DatabaseTransaction) RelationTypesFor(ctx context.Context, roomID string, eventIDs, relTypes []string, watermark types.StreamPosition) (map[string]map[string]bool, error) {
+	return d.Relations.SelectRelationTypesForEvents(ctx, d.txn, roomID, eventIDs, relTypes, watermark)
+}
+
 // EventsByTimestamp returns candidates in timestamp order using an exclusive cursor after the first batch.
 func (d *DatabaseTransaction) EventsByTimestamp(ctx context.Context, roomID string, timestamp int64, afterID types.StreamPosition, backwards bool, limit int) ([]types.StreamEvent, error) {
 	return d.OutputEvents.SelectEventsByTimestamp(ctx, d.txn, roomID, timestamp, afterID, backwards, limit)

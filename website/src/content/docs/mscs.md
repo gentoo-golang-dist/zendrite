@@ -21,11 +21,21 @@ Feature support does not imply support for an entire specification version; see 
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
-| [MSC2675](https://github.com/matrix-org/matrix-spec-proposals/pull/2675) | Serverside aggregations of message relationships | 1.3 | Partial: relation retrieval exists; pagination and parent visibility gaps remain |
-| [MSC2676](https://github.com/matrix-org/matrix-spec-proposals/pull/2676) | Message editing | 1.4 | Partial: raw edits supported; server-side bundles missing |
-| [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Partial: relation storage and retrieval; aggregation not certified |
-| [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) | Threading | N/A | Opt-in (`msc2836`) |
+| [MSC2675](https://github.com/matrix-org/matrix-spec-proposals/pull/2675) | Serverside aggregations of message relationships | 1.3 | Partial: [bundled aggregations](#bundled-aggregations) are served; relations pagination and parent visibility gaps remain |
+| [MSC2676](https://github.com/matrix-org/matrix-spec-proposals/pull/2676) | Message editing | 1.4 | Implemented: the latest valid edit is bundled under `m.replace`, in the v1.7 format |
+| [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Partial: relation storage and retrieval; the spec defines no server-side aggregation for annotations |
+| [MSC3267](https://github.com/matrix-org/matrix-spec-proposals/pull/3267) | Reference relations | 1.5 | Implemented: references are bundled under `m.reference` |
+| [MSC3440](https://github.com/matrix-org/matrix-spec-proposals/pull/3440) | Threading via `m.thread` | 1.4 | Implemented: `m.thread` aggregations and `GET /v1/rooms/{roomId}/threads`. Sending a thread reply to an event that is itself a relation is not rejected |
+| [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) | Threading (generic relationships) | N/A | Opt-in (`msc2836`) |
 | [MSC2285](https://github.com/matrix-org/matrix-spec-proposals/pull/2285) | Private read receipts | 1.4 | Implemented |
+
+### Bundled aggregations
+
+Zendrite adds `unsigned.m.relations` to events served by `/messages`, `/context`, `/event`, `/relations`, `/search` and `/threads`, and to `/sync` and sliding sync timelines that are `limited`.
+An unlimited timeline already carries every child event the client has not seen, so the client aggregates those itself.
+Each bundle holds the thread summary (`m.thread`), the most recent valid edit (`m.replace`) and the referencing events (`m.reference`).
+Only child events the requesting user may see are aggregated, and events from ignored users are left out.
+State events, and aggregations that arrive with events over federation, are never served with bundles.
 
 ## Rooms & Spaces
 
