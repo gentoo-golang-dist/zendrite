@@ -486,7 +486,8 @@ func validateThreadRelation(ctx context.Context, rsAPI api.ClientRoomserverAPI, 
 		return &util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
 	}
 	for _, root := range res.Events {
-		if root.EventID() == rootID && gjson.GetBytes(root.Content(), `m\.relates_to.rel_type`).Str != "" {
+		// The roomserver does not filter by room, and another room's event must not be probed.
+		if root.EventID() == rootID && root.RoomID().String() == roomID && gjson.GetBytes(root.Content(), `m\.relates_to.rel_type`).Str != "" {
 			return &util.JSONResponse{
 				Code: http.StatusBadRequest,
 				JSON: spec.Unknown("Cannot start a thread from an event with a relation"),

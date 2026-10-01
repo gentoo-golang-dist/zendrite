@@ -3,6 +3,7 @@ package consumers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -21,7 +22,12 @@ import (
 // threadRoomserver serves a two-member room for push rule evaluation.
 type threadRoomserver struct {
 	rsapi.UserRoomserverAPI
-	member synctypes.ClientEvent
+	member      synctypes.ClientEvent
+	eventsError error
+}
+
+func (r *threadRoomserver) QueryEventsByID(context.Context, *rsapi.QueryEventsByIDRequest, *rsapi.QueryEventsByIDResponse) error {
+	return r.eventsError
 }
 
 func (r *threadRoomserver) QueryMembershipsForRoom(_ context.Context, _ *rsapi.QueryMembershipsForRoomRequest, res *rsapi.QueryMembershipsForRoomResponse) error {
@@ -87,5 +93,17 @@ func TestThreadReplyCountedInThread(t *testing.T) {
 		main, threads := last.SplitByThread()
 		require.Equal(t, 1, main.UnreadNotificationCount, "the root is in the main timeline")
 		require.Equal(t, map[string]eventutil.ThreadNotificationCounts{root.EventID(): {UnreadNotificationCount: 1}}, threads)
+
+		// When the event's thread cannot be resolved, its stored notification
+		// is still published, counted in the main timeline.
+		consumer.rsAPI = &threadRoomserver{member: member, eventsError: errors.New("roomserver unavailable")}
+		reference := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{
+			"msgtype": "m.text", "body": "see above", "m.relates_to": map[string]any{"rel_type": "m.reference", "event_id": root.EventID()},
+		})
+		publisher.msgs = nil
+		require.Error(t, consumer.processMessage(t.Context(), reference, 3))
+		require.NotEmpty(t, publisher.msgs)
+		require.NoError(t, json.Unmarshal(publisher.msgs[len(publisher.msgs)-1].Data, &last))
+		require.Equal(t, 3, last.UnreadNotificationCount)
 	})
 }

@@ -34,8 +34,11 @@ func TestValidateThreadRelation(t *testing.T) {
 	reply := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "reply", "m.relates_to": map[string]any{"m.in_reply_to": map[string]any{"event_id": plain.EventID()}}})
 	inThread := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "in thread", "m.relates_to": map[string]any{"rel_type": "m.thread", "event_id": plain.EventID()}})
 	edit := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "* edit", "m.relates_to": map[string]any{"rel_type": "m.replace", "event_id": plain.EventID()}})
+	otherRoom := test.NewRoom(t, alice)
+	otherRoot := otherRoom.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "root"})
+	foreignEdit := otherRoom.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "* edit", "m.relates_to": map[string]any{"rel_type": "m.replace", "event_id": otherRoot.EventID()}})
 	rs := &threadRootRoomserver{events: map[string]*types.HeaderedEvent{}}
-	for _, event := range []*types.HeaderedEvent{plain, reply, inThread, edit} {
+	for _, event := range []*types.HeaderedEvent{plain, reply, inThread, edit, foreignEdit} {
 		rs.events[event.EventID()] = event
 	}
 	thread := func(rootID string) map[string]any {
@@ -45,13 +48,14 @@ func TestValidateThreadRelation(t *testing.T) {
 		content  map[string]any
 		rejected bool
 	}{
-		"plain root":           {thread(plain.EventID()), false},
-		"reply as root":        {thread(reply.EventID()), false},
-		"unknown root":         {thread("$unknown"), false},
-		"not a thread":         {map[string]any{"body": "x", "m.relates_to": map[string]any{"rel_type": "m.reference", "event_id": edit.EventID()}}, false},
-		"no relation":          {map[string]any{"body": "x"}, false},
-		"thread reply as root": {thread(inThread.EventID()), true},
-		"edit as root":         {thread(edit.EventID()), true},
+		"plain root":            {thread(plain.EventID()), false},
+		"reply as root":         {thread(reply.EventID()), false},
+		"unknown root":          {thread("$unknown"), false},
+		"not a thread":          {map[string]any{"body": "x", "m.relates_to": map[string]any{"rel_type": "m.reference", "event_id": edit.EventID()}}, false},
+		"no relation":           {map[string]any{"body": "x"}, false},
+		"other room's relation": {thread(foreignEdit.EventID()), false},
+		"thread reply as root":  {thread(inThread.EventID()), true},
+		"edit as root":          {thread(edit.EventID()), true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			res := validateThreadRelation(t.Context(), rs, room.ID, tc.content)

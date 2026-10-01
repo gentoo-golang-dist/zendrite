@@ -425,23 +425,25 @@ func (s *OutputRoomEventConsumer) processMessage(ctx context.Context, event *rst
 		}
 	}
 
+	var users []string
 	threadID, err := receipts.EventThreadID(ctx, s.rsAPI, event)
-	if err != nil {
-		return err
-	}
-	users, err := s.db.StoreNotificationEvent(ctx, event.RoomID().String(), event.EventID(), threadID, streamPos)
-	if err != nil {
-		return err
+	if err == nil {
+		users, err = s.db.StoreNotificationEvent(ctx, event.RoomID().String(), event.EventID(), threadID, streamPos)
 	}
 	// Counts are published once the event's thread is recorded, so that a
 	// new notification is counted in its thread rather than the main timeline.
+	// They are published even if recording failed, counting the event in the
+	// main timeline, because the notifications are already stored and pushed.
 	for _, userID := range notified {
 		if slices.Contains(users, userID) {
 			continue
 		}
-		if err = s.syncProducer.GetAndSendNotificationData(ctx, userID, event.RoomID().String()); err != nil {
-			log.WithField("user_id", userID).WithError(err).Error("Unable to send notification counts")
+		if publishErr := s.syncProducer.GetAndSendNotificationData(ctx, userID, event.RoomID().String()); publishErr != nil {
+			log.WithField("user_id", userID).WithError(publishErr).Error("Unable to send notification counts")
 		}
+	}
+	if err != nil {
+		return err
 	}
 	for _, userID := range users {
 		if err = s.syncProducer.GetAndSendNotificationData(ctx, userID, event.RoomID().String()); err != nil {
