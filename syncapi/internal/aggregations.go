@@ -247,12 +247,12 @@ func (b *RelationBundler) bundleEditsAndReferences(ctx context.Context, event *r
 		}
 	}
 	// A redacted original carries no edits, and an edit cannot itself be edited.
-	if (relTypes != nil && !relTypes[relReplace]) || event.Redacted() || b.ignored(sender) || gjson.GetBytes(event.Content(), `m\.relates_to.rel_type`).Str == relReplace {
+	if (relTypes != nil && !relTypes[relReplace]) || isRedacted(event) || b.ignored(sender) || gjson.GetBytes(event.Content(), `m\.relates_to.rel_type`).Str == relReplace {
 		return nil
 	}
 	var edit *rstypes.HeaderedEvent
 	err = b.eachRelation(ctx, event, relReplace, func(child *rstypes.HeaderedEvent, _ types.StreamPosition, editor string) error {
-		if child.StateKey() != nil || child.Type() != event.Type() || editor != sender || child.Redacted() {
+		if child.StateKey() != nil || child.Type() != event.Type() || editor != sender || isRedacted(child) {
 			return nil
 		}
 		if child.Type() != "m.room.encrypted" && !gjson.GetBytes(child.Content(), `m\.new_content`).IsObject() {
@@ -367,6 +367,12 @@ func stripRelations(client *synctypes.ClientEvent) error {
 	}
 	client.Unsigned = unsigned
 	return nil
+}
+
+// isRedacted also recognizes events redacted in storage, which are loaded
+// with stripped content and redacted_because but without the redacted flag.
+func isRedacted(event *rstypes.HeaderedEvent) bool {
+	return event.Redacted() || gjson.GetBytes(event.Unsigned(), "redacted_because").Exists()
 }
 
 func unsignedOrEmpty(unsigned []byte) []byte {

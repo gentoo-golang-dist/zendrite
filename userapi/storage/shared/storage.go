@@ -277,7 +277,7 @@ func (d *Database) QueryPushRules(
 		return nil, err
 	}
 
-	pushrules.AddMentionRules(&pushRules.Global, localpart, serverName)
+	pushrules.UpgradeDefaultRules(&pushRules.Global, localpart, serverName)
 	return &pushRules, nil
 }
 
@@ -350,7 +350,7 @@ func upgradeMentionAccountData(data json.RawMessage, localpart string, serverNam
 	if global == nil {
 		return data, nil
 	}
-	pushrules.AddMentionRules(global, localpart, serverName)
+	pushrules.UpgradeDefaultRules(global, localpart, serverName)
 	raw, err := json.Marshal(global)
 	if err != nil {
 		return nil, err
