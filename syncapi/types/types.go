@@ -680,6 +680,12 @@ type RelationEntry struct {
 	EventID  string
 }
 
+// TopologicalRelation identifies a child event and its position in room topology.
+type TopologicalRelation struct {
+	EventID  string
+	Position TopologyToken
+}
+
 // ThreadRelation identifies a thread reply and its position in room topology.
 type ThreadRelation struct {
 	RootEventID string
