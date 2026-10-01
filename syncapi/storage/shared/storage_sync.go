@@ -860,6 +860,11 @@ func (d *DatabaseTransaction) ThreadRelations(ctx context.Context, roomID string
 	return d.Relations.SelectThreadRelations(ctx, d.txn, roomID, watermark, before, limit)
 }
 
+// RelationsInTopologicalRange returns a page of a parent's children in topology order.
+func (d *DatabaseTransaction) RelationsInTopologicalRange(ctx context.Context, roomID, eventID, relType, eventType string, maxDepth int, from, to types.TopologyToken, backwards bool, limit int) ([]types.TopologicalRelation, error) {
+	return d.Relations.SelectRelationsInTopologicalRange(ctx, d.txn, roomID, eventID, relType, eventType, maxDepth, from, to, backwards, limit)
+}
+
 // RelationTypesFor reports which of relTypes have children for each parent event, up to the relation watermark.
 func (d *DatabaseTransaction) RelationTypesFor(ctx context.Context, roomID string, eventIDs, relTypes []string, watermark types.StreamPosition) (map[string]map[string]bool, error) {
 	return d.Relations.SelectRelationTypesForEvents(ctx, d.txn, roomID, eventIDs, relTypes, watermark)
