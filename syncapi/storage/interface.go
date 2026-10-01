@@ -231,7 +231,7 @@ type SharedUsers interface {
 
 type Notifications interface {
 	// UpsertRoomUnreadNotificationCounts updates the notification statistics about a (user, room) key.
-	UpsertRoomUnreadNotificationCounts(ctx context.Context, userID, roomID string, notificationCount, highlightCount int) (types.StreamPosition, error)
+	UpsertRoomUnreadNotificationCounts(ctx context.Context, userID string, data *eventutil.NotificationData) (types.StreamPosition, error)
 }
 
 type SlidingSync interface {

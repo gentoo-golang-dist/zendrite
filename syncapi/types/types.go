@@ -463,6 +463,9 @@ type JoinResponse struct {
 	Ephemeral            *ClientEvents `json:"ephemeral,omitempty"`
 	AccountData          *ClientEvents `json:"account_data,omitempty"`
 	*UnreadNotifications `json:"unread_notifications,omitempty"`
+	// UnreadThreadNotifications holds per-thread counts, keyed by thread
+	// root, when the filter asks for them (MSC3773).
+	UnreadThreadNotifications map[string]*UnreadNotifications `json:"unread_thread_notifications,omitempty"`
 }
 
 func (jr JoinResponse) MarshalJSON() ([]byte, error) {
@@ -499,6 +502,7 @@ func (jr JoinResponse) MarshalJSON() ([]byte, error) {
 		// if everything else is nil, also remove UnreadNotifications
 		if a.State == nil && a.Ephemeral == nil && a.AccountData == nil && a.Timeline == nil && a.Summary == nil {
 			a.UnreadNotifications = nil
+			a.UnreadThreadNotifications = nil
 		}
 	}
 	return json.Marshal(a)
