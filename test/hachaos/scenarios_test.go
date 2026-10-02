@@ -30,7 +30,10 @@ type scenario struct {
 	// uninterrupted marks planned operations, during which no client or
 	// inbound federation request may fail at all.
 	uninterrupted bool
-	run           func(ctx context.Context, s *run) error
+	// target, when set, replaces the recovery objective for a fault that a
+	// candidate must ride out without a takeover.
+	target time.Duration
+	run    func(ctx context.Context, s *run) error
 }
 
 var allTiers = []string{tierCI, tierFull, tierReference}
@@ -582,6 +585,10 @@ func runScenario(t *testing.T, s settings, sc scenario) (r result) {
 	ctx := t.Context()
 	r = result{Name: sc.name, Description: sc.description, Tier: s.tier, Timings: s.timings}
 	r.Recovery.Target = s.target
+	if sc.target > 0 {
+		r.Recovery.Target = sc.target
+		r.notef("recovery objective for this scenario: %s", sc.target)
+	}
 	r.Recovery.SuspendsObjective = sc.suspends
 	defer func() {
 		r.Duration = time.Since(started)
@@ -637,7 +644,7 @@ func runScenario(t *testing.T, s settings, sc scenario) (r result) {
 	// chance to succeed against the successor.
 	// Remote servers back off after a failed send, so inbound federation
 	// can lag client traffic; wait for both, up to the objective.
-	recoverBy := r.FaultAt.Add(s.target)
+	recoverBy := r.FaultAt.Add(r.Recovery.Target)
 	for time.Now().Before(recoverBy) {
 		_, wrote := recoveredAt(w.outcomes(kindWrite), r.FaultAt)
 		_, federated := recoveredAt(e.federationOutcomes(true), r.FaultAt)

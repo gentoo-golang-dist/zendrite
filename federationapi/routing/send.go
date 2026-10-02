@@ -42,7 +42,24 @@ const (
 	MetricsWorkMissingPrevEvents = "missing_prev_events"
 )
 
-var inFlightTxnsPerOrigin sync.Map // transaction ID -> chan util.JSONResponse
+var inFlightTxnsPerOrigin sync.Map // origin and transaction ID -> *inFlightTxn
+
+// inFlightTxn is a transaction being processed. Every request carrying the
+// same transaction ID while it runs receives its result once done is closed.
+type inFlightTxn struct {
+	done chan struct{}
+	res  util.JSONResponse
+}
+
+// transactionTimeout bounds processing a transaction once it was accepted.
+//
+// Processing does not stop when the sender disconnects: a sender that times
+// out retries the transaction, often with the same ID, and an attempt
+// abandoned halfway would leave some of its EDUs queued and others dropped
+// while the retry joining it was told the outcome of the abandoned one. The
+// bound matches the broker's deduplication window, so a publication retried
+// throughout it is still stored once. Var for tests.
+var transactionTimeout = 2 * time.Minute
 
 // Send implements /_matrix/federation/v1/send/{txnID}.
 func Send(
@@ -62,8 +79,8 @@ func Send(
 	// the transaction is still being worked on. The new client can wait
 	// for it to complete rather than creating more work.
 	index := string(request.Origin()) + "\000" + string(txnID)
-	v, loaded := inFlightTxnsPerOrigin.LoadOrStore(index, make(chan util.JSONResponse, 1))
-	ch, ok := v.(chan util.JSONResponse)
+	v, loaded := inFlightTxnsPerOrigin.LoadOrStore(index, &inFlightTxn{done: make(chan struct{})})
+	inFlight, ok := v.(*inFlightTxn)
 	if !ok {
 		panic("unexpected type in inFlightTxnsPerOrigin")
 	}
@@ -77,20 +94,33 @@ func Send(
 			// If the caller gives up then return straight away. We don't
 			// want to attempt to process what they sent us any further.
 			return util.JSONResponse{Code: http.StatusRequestTimeout}
-		case res := <-ch:
+		case <-inFlight.done:
 			// The original task just finished processing so let's return
 			// the result of it.
-			if res.Code == 0 {
-				return util.JSONResponse{Code: http.StatusAccepted}
-			}
-			return res
+			return inFlight.res
 		}
 	}
-	// Otherwise, store that we're currently working on this txn from
-	// this origin. When we're done processing, close the channel.
-	defer close(ch)
+	// Otherwise, we are working on this txn from this origin. Requests
+	// joining it receive its result; if processing panics, they are told to
+	// retry.
+	inFlight.res = util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+	defer close(inFlight.done)
 	defer inFlightTxnsPerOrigin.Delete(index)
+	inFlight.res = processTransaction(httpReq, request, txnID, cfg, rsAPI, keyAPI, keys, mu, producer)
+	return inFlight.res
+}
 
+func processTransaction(
+	httpReq *http.Request,
+	request *fclient.FederationRequest,
+	txnID gomatrixserverlib.TransactionID,
+	cfg *config.FederationAPI,
+	rsAPI api.FederationRoomserverAPI,
+	keyAPI userAPI.FederationUserAPI,
+	keys gomatrixserverlib.JSONVerifier,
+	mu *internal.MutexByRoom,
+	producer *producers.SyncAPIProducer,
+) util.JSONResponse {
 	var txnEvents struct {
 		PDUs []json.RawMessage       `json:"pdus"`
 		EDUs []gomatrixserverlib.EDU `json:"edus"`
@@ -127,7 +157,9 @@ func Send(
 
 	util.GetLogger(httpReq.Context()).Debugf("Received transaction %q from %q containing %d PDUs, %d EDUs", txnID, request.Origin(), len(t.PDUs), len(t.EDUs))
 
-	resp, jsonErr := t.ProcessTransaction(httpReq.Context())
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(httpReq.Context()), transactionTimeout)
+	defer cancel()
+	resp, jsonErr := t.ProcessTransaction(ctx)
 	if jsonErr != nil {
 		util.GetLogger(httpReq.Context()).WithField("jsonErr", jsonErr).Error("t.processTransaction failed")
 		return *jsonErr
@@ -137,10 +169,8 @@ func Send(
 	// Status code 200:
 	// The result of processing the transaction. The server is to use this response
 	// even in the event of one or more PDUs failing to be processed.
-	res := util.JSONResponse{
+	return util.JSONResponse{
 		Code: http.StatusOK,
 		JSON: resp,
 	}
-	ch <- res
-	return res
 }

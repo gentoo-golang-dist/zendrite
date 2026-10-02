@@ -24,6 +24,11 @@ func brokerAbsence(tier string) time.Duration {
 	return 4 * time.Minute
 }
 
+// brokerLossTarget is the recovery objective when one broker of three is lost.
+// No takeover is needed: the candidate must notice the silent broker and
+// reconnect to another, which the client's ping check bounds at 30 seconds.
+const brokerLossTarget = 60 * time.Second
+
 // inboundSenderTimeout is how long the remote server waits for the HA server
 // to answer a transaction in the broker scenarios, as Synapse's federation
 // client or a proxy's server timeout would, before abandoning the request.
@@ -38,6 +43,7 @@ func brokerHostFrozenScenario() scenario {
 		name:        "nats-broker-host-frozen",
 		description: "The broker the active candidate is connected to stops responding without closing its connections, as on a host that goes NotReady, while the remote server abandons transactions it has waited 20 seconds for. After an extended absence the broker is replaced on its retained storage.",
 		tiers:       allTiers,
+		target:      brokerLossTarget,
 		run: func(ctx context.Context, s *run) error {
 			leader, err := s.active()
 			if err != nil {
@@ -72,6 +78,7 @@ func brokerReplacedEmptyScenario() scenario {
 		name:        "nats-broker-replaced-empty",
 		description: "The broker leading the receipt stream is killed, and after an extended absence replaced by a broker with the same name and empty storage, which must catch up from its peers.",
 		tiers:       allTiers,
+		target:      brokerLossTarget,
 		run: func(ctx context.Context, s *run) error {
 			node, err := s.e.nats.streamLeader("OutputReceiptEvent")
 			if err != nil {
