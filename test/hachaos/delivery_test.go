@@ -105,7 +105,7 @@ func verifyFederatedDelivery(ctx context.Context, r *result, w *workload, e *env
 	}
 	txns := e.fed.inboundTxns()
 	if len(missing) > 0 {
-		_ = os.WriteFile(filepath.Join(e.logs, "missing-federated-to-device.txt"), []byte(traceItems(txns, missing, func(t inboundTxn) []string { return t.ToDevice })), 0o644)
+		_ = os.WriteFile(filepath.Join(e.logs, "missing-federated-to-device.txt"), []byte(traceItems(txns, missing, func(t inboundTxn) []string { return t.ToDevice })+diagnoseToDevice(ctx, w, e, missing)), 0o644)
 	}
 	for _, s := range receipts {
 		if s.Acked {
@@ -146,6 +146,28 @@ func verifyRemoteReceipt(ctx context.Context, r *result, w *workload, e *environ
 		}
 		_ = os.WriteFile(filepath.Join(e.logs, "missing-federated-receipt.txt"), []byte(traceItems(txns, items, func(t inboundTxn) []string { return t.Receipts })), 0o644)
 	}
+}
+
+// diagnoseToDevice follows missing to-device messages past the federation
+// response: published to the broker or not, consumed by the sync API, still
+// held for the device, and the to-device positions of Bob's syncs.
+func diagnoseToDevice(ctx context.Context, w *workload, e *environment, missing []string) string {
+	var b strings.Builder
+	b.WriteString("\nto-device publications of the missing messages (at, nonce, sender, message ID):\n")
+	for _, p := range e.nats.toDevicePublications() {
+		if slices.Contains(missing, p.Nonce) {
+			fmt.Fprintf(&b, "  %s %s %s %s\n", p.At.Format(time.RFC3339Nano), p.Nonce, p.Sender, p.MsgID)
+		}
+	}
+	b.WriteString("\n" + e.nats.consumerState("OutputSendToDeviceEvent", "SyncAPISendToDeviceConsumerPull") + "\n\n")
+	b.WriteString(e.pg.toDeviceState(ctx, w.bob.user, w.bob.device, missing))
+	b.WriteString("\n/sync requests by " + w.bob.user + " (start, end, since, next_batch):\n")
+	for _, t := range w.syncTraces() {
+		if t.User == w.bob.user {
+			fmt.Fprintf(&b, "  %s %s %s %s to-device %v\n", t.Start.Format("15:04:05.000"), t.End.Format("15:04:05.000"), t.Since, t.NextBatch, t.ToDevice)
+		}
+	}
+	return b.String()
 }
 
 // readReceiptOf returns the event a user's m.read receipt points at.

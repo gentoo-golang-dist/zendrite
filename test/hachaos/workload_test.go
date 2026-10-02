@@ -389,10 +389,15 @@ type syncTrace struct {
 	End       time.Time `json:"end"`
 	Limited   bool      `json:"limited,omitempty"`
 	Events    []string  `json:"events,omitempty"`
+	// ToDevice lists the nonces of the to-device messages delivered.
+	ToDevice []string `json:"to_device,omitempty"`
 }
 
 func (w *workload) trace(c *mxClient, since string, resp *syncResponse, start time.Time) {
 	t := syncTrace{User: c.user, Since: since, NextBatch: resp.NextBatch, Start: start, End: time.Now()}
+	for _, ev := range resp.ToDevice.Events {
+		t.ToDevice = append(t.ToDevice, ev.Content.Nonce)
+	}
 	if joined, ok := resp.Rooms.Join[w.room]; ok {
 		t.Limited = joined.Timeline.Limited
 		for _, ev := range joined.Timeline.Events {
