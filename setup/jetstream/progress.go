@@ -2,6 +2,7 @@ package jetstream
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -9,9 +10,18 @@ import (
 	"codefloe.com/pat-s/zendrite/setup/process"
 )
 
+// defaultConsumerStatsInterval is how often a consumer's backlog is read from
+// the broker.
+const defaultConsumerStatsInterval = 30 * time.Second
+
 // consumerStatsInterval is how often a consumer's backlog is read from the
-// broker. Tests shorten it.
-var consumerStatsInterval = 30 * time.Second
+// broker, in nanoseconds. Tests shorten it while monitors from earlier tests
+// are still running, so it is atomic.
+var consumerStatsInterval atomic.Int64
+
+func init() { //nolint:gochecknoinits // A default for an atomic, which has no literal form.
+	consumerStatsInterval.Store(int64(defaultConsumerStatsInterval))
+}
 
 // monitorBacklog refreshes consumer_pending_messages from the broker until
 // ctx ends.
@@ -24,7 +34,7 @@ var consumerStatsInterval = 30 * time.Second
 // as during a leader election, leaves the last value standing.
 func monitorBacklog(ctx context.Context, sub *nats.Subscription, durable string) {
 	pending := consumerPending.WithLabelValues(durable)
-	for process.Sleep(ctx, consumerStatsInterval) {
+	for process.Sleep(ctx, time.Duration(consumerStatsInterval.Load())) {
 		if info, err := sub.ConsumerInfo(); err == nil {
 			pending.Set(float64(info.NumPending))
 		}

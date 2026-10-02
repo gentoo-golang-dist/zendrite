@@ -25,9 +25,8 @@ func gaugeValue(g prometheus.Gauge) float64 {
 // finishes while more messages arrive. No delivery reports them, so only the
 // broker poll shows the backlog growing behind the stuck message.
 func TestBacklogVisibleWhileConsumerIsStuck(t *testing.T) {
-	restore := consumerStatsInterval
-	consumerStatsInterval = 50 * time.Millisecond
-	t.Cleanup(func() { consumerStatsInterval = restore })
+	restore := consumerStatsInterval.Swap(int64(50 * time.Millisecond))
+	t.Cleanup(func() { consumerStatsInterval.Store(restore) })
 
 	s := storageTestServer(t, "standalone", nil)
 	js := storageTestClient(t, s)
