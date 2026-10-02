@@ -34,6 +34,7 @@ type natsCluster struct {
 type natsNode struct {
 	name    string
 	config  string
+	store   string
 	port    int
 	monitor int
 	proxy   *proxy
@@ -111,6 +112,7 @@ func startNATS(ctx context.Context, dir, logs, bin string, o *owners, tl *timeli
 		if err := os.MkdirAll(store, 0o755); err != nil {
 			return nil, err
 		}
+		node.store = store
 		node.config = filepath.Join(dir, node.name+".conf")
 		body := fmt.Sprintf(natsConfig, node.name, node.port, node.monitor, store, clusterPorts[i], strings.Join(routes, ", "))
 		if err := os.WriteFile(node.config, []byte(body), 0o644); err != nil {

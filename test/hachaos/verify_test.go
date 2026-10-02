@@ -33,8 +33,10 @@ type result struct {
 	Generations []ownershipRecord `json:"generations,omitempty"`
 	Counts      counts            `json:"counts"`
 	// Upgrade reports a planned upgrade's uninterrupted-service measurements.
-	Upgrade  *upgradeReport `json:"upgrade,omitempty"`
-	Duration time.Duration  `json:"duration"`
+	Upgrade *upgradeReport `json:"upgrade,omitempty"`
+	// Delivery traces what the remote server sent over federation.
+	Delivery delivery      `json:"delivery"`
+	Duration time.Duration `json:"duration"`
 }
 
 // recovery is measured from fault injection to the first success. A nil
@@ -46,7 +48,10 @@ type recovery struct {
 	Sync               *time.Duration `json:"sync,omitempty"`
 	FederationInbound  *time.Duration `json:"federation_inbound,omitempty"`
 	FederationOutbound *time.Duration `json:"federation_outbound,omitempty"`
-	Disrupted          bool           `json:"disrupted"`
+	// BrokerCatchUp runs from a broker rejoining the cluster to every stream
+	// and durable consumer replica being current again.
+	BrokerCatchUp *time.Duration `json:"broker_catch_up,omitempty"`
+	Disrupted     bool           `json:"disrupted"`
 	// SuspendsObjective marks scenarios where the design deliberately stops
 	// serving until a dependency returns, such as a control-plane outage.
 	SuspendsObjective bool `json:"suspends_objective,omitempty"`

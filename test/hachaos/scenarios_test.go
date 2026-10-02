@@ -494,6 +494,9 @@ func scenarios() []scenario {
 		successorFailsScenario(),
 		brokerLossScenario(),
 		mscIndexFailureScenario(),
+		brokerHostFrozenScenario(),
+		brokerReplacedEmptyScenario(),
+		publishAcksLostScenario(),
 	}
 }
 
@@ -519,6 +522,9 @@ var scenarioGroups = map[string]string{
 	"rolling-upgrade-successor-fails":    "lifecycle",
 	"rolling-upgrade-broker-leader-lost": "dependency",
 	"msc-relationship-index-failure":     "dependency",
+	"nats-broker-host-frozen":            "broker",
+	"nats-broker-replaced-empty":         "broker",
+	"nats-publish-acks-lost":             "broker",
 }
 
 func selectScenarios(t *testing.T, s settings) []scenario {
@@ -602,6 +608,8 @@ func runScenario(t *testing.T, s settings, sc scenario) (r result) {
 		return r
 	}
 	defer w.halt()
+	sampler := startMetricsSampler(e)
+	defer sampler.stop()
 	for _, n := range w.setupNotes {
 		r.notef("%s", n)
 	}
@@ -647,10 +655,20 @@ func runScenario(t *testing.T, s settings, sc scenario) (r result) {
 	r.Counts.Unavailable = int(w.unavailable.Load())
 	settle := 2 * time.Minute
 	verifyClientState(ctx, &r, w, e, settle)
+	verifyFederatedDelivery(ctx, &r, w, e, settle)
 	verifyMSCs(ctx, &r, w.msc, settle)
 	verifyMedia(ctx, &r, w, before)
 	verifySearch(ctx, &r, w, settle)
 	verifyOwnership(ctx, &r, e, sr.pauses)
+	if sr.rejoined.IsZero() {
+		if err = waitFor(ctx, settle, e.nats.brokerCaughtUp); err != nil {
+			r.failf("broker replicas are not current: %v", err)
+		}
+	} else {
+		verifyBrokerCatchUp(ctx, &r, e, sr.rejoined, settle)
+	}
+	r.Delivery.Metrics = sampler.stop()
+	noteDelivery(&r)
 	saveScenario(e, &r, w, started)
 	return r
 }
@@ -665,7 +683,9 @@ func saveScenario(e *environment, r *result, w *workload, started time.Time) {
 	if w != nil {
 		sends, remoteSends, toDevice, receipts := w.snapshot()
 		saved["sends"], saved["remote_sends"], saved["to_device"], saved["receipts"], saved["syncs"] = sends, remoteSends, toDevice, receipts, w.syncTraces()
+		saved["remote_to_device"], saved["remote_receipts"] = w.federatedSnapshot()
 	}
+	saved["inbound_transactions"] = e.fed.inboundTxns()
 	body, err := json.MarshalIndent(saved, "", "  ")
 	if err != nil {
 		return
