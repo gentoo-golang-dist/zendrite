@@ -463,5 +463,7 @@ The guarantees depend on what the transaction carries:
 - **Read receipts.** Receipts are also retried this way, but they coalesce: a newer receipt from the same user replaces an older one, so only the newest is guaranteed to become visible.
 - **Typing notifications and presence.** These are best effort and expire within seconds, so one that could not be queued is dropped rather than making the sender resend the transaction.
 
-An accepted transaction is processed to completion for up to two minutes, even if the sender disconnects, so a sender that times out and retries the same transaction ID receives the outcome of the attempt still running rather than a partial result.
+An accepted transaction is processed to completion for up to two minutes, even if the sender disconnects, so a sender that times out and retries the same transaction receives the outcome of the attempt still running rather than a partial result.
+A retry joins a running attempt only when it carries the same events and EDUs; a retry that reuses the transaction ID with more content, as older Zendrite and Dendrite senders do, is processed on its own.
+Zendrite itself now sends a retry under a new transaction ID whenever its content changed, since a destination may answer a known ID with its earlier outcome.
 Each refused transaction is logged as `Refusing federation transaction for a retry` and counted in `zendrite_federationapi_recv_transactions_total{outcome="retry"}`.

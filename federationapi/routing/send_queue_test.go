@@ -49,10 +49,12 @@ func (s *slowJetStream) PublishMsg(_ *nats.Msg, opts ...nats.PubOpt) (*nats.PubA
 			ctx = c.Context
 		}
 	}
+	s.mu.Lock()
 	if s.started != nil {
 		close(s.started)
 		s.started = nil
 	}
+	s.mu.Unlock()
 	wait := time.After(s.delay)
 	if s.release != nil {
 		wait = nil
@@ -75,14 +77,18 @@ func (s *slowJetStream) PublishMsg(_ *nats.Msg, opts ...nats.PubOpt) (*nats.PubA
 	return &nats.PubAck{}, nil
 }
 
-func receiptTxn(t *testing.T, txnID string) (*http.Request, *fclient.FederationRequest) {
+func receiptTxn(t *testing.T, txnID string, events ...string) (*http.Request, *fclient.FederationRequest) {
 	t.Helper()
+	if len(events) == 0 {
+		events = []string{"$e"}
+	}
+	var edus []gomatrixserverlib.EDU
+	for _, event := range events {
+		edus = append(edus, gomatrixserverlib.EDU{Type: spec.MReceipt, Content: spec.RawJSON(
+			`{"!room:local.test":{"m.read":{"@rita:remote.test":{"data":{"ts":1},"event_ids":["` + event + `"]}}}}`)})
+	}
 	req := fclient.NewFederationRequest(http.MethodPut, "remote.test", "local.test", "/_matrix/federation/v1/send/"+txnID)
-	require.NoError(t, req.SetContent(map[string]any{
-		"pdus": []any{},
-		"edus": []gomatrixserverlib.EDU{{Type: spec.MReceipt, Content: spec.RawJSON(
-			`{"!room:local.test":{"m.read":{"@rita:remote.test":{"data":{"ts":1},"event_ids":["$e"]}}}}`)}},
-	}))
+	require.NoError(t, req.SetContent(map[string]any{"pdus": []any{}, "edus": edus}))
 	return httptest.NewRequest(http.MethodPut, "/_matrix/federation/v1/send/"+txnID, nil), &req
 }
 
@@ -130,4 +136,30 @@ func TestSendRetryJoiningGetsTheOutcome(t *testing.T) {
 	close(js.release)
 	require.Equal(t, http.StatusServiceUnavailable, <-results)
 	require.Equal(t, http.StatusServiceUnavailable, <-results)
+}
+
+// TestSendRetryWithMoreContentIsProcessed covers a sender that reuses a
+// failed transaction's ID for a retry carrying more items while the first
+// attempt is still processing. The retry must be processed itself, not
+// answered with the first attempt's outcome.
+func TestSendRetryWithMoreContentIsProcessed(t *testing.T) {
+	js := &slowJetStream{started: make(chan struct{}), release: make(chan struct{})}
+	started := js.started
+	results := make(chan int, 2)
+	go func() {
+		httpReq, req := receiptTxn(t, "grown", "$first")
+		results <- sendWith(httpReq, req, "grown", js).Code
+	}()
+	<-started
+	go func() {
+		httpReq, req := receiptTxn(t, "grown", "$first", "$added")
+		results <- sendWith(httpReq, req, "grown", js).Code
+	}()
+	time.Sleep(100 * time.Millisecond)
+	close(js.release)
+	require.Equal(t, http.StatusOK, <-results)
+	require.Equal(t, http.StatusOK, <-results)
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	require.Equal(t, 3, js.published, "the retry's receipts were queued, not answered with the first attempt's outcome")
 }

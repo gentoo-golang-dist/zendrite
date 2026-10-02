@@ -8,6 +8,8 @@ package routing
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -61,6 +63,12 @@ type inFlightTxn struct {
 // throughout it is still stored once. Var for tests.
 var transactionTimeout = 2 * time.Minute
 
+// txnEvents is the content of an inbound transaction.
+type txnEvents struct {
+	PDUs []json.RawMessage       `json:"pdus"`
+	EDUs []gomatrixserverlib.EDU `json:"edus"`
+}
+
 // Send implements /_matrix/federation/v1/send/{txnID}.
 func Send(
 	httpReq *http.Request,
@@ -74,11 +82,31 @@ func Send(
 	mu *internal.MutexByRoom,
 	producer *producers.SyncAPIProducer,
 ) util.JSONResponse {
+	var txn txnEvents
+	if err := json.Unmarshal(request.Content(), &txn); err != nil {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.NotJSON("The request body could not be decoded into valid JSON. " + err.Error()),
+		}
+	}
+	// Transactions are limited in size; they can have at most 50 PDUs and 100 EDUs.
+	// https://matrix.org/docs/spec/server_server/latest#transactions
+	if len(txn.PDUs) > 50 || len(txn.EDUs) > 100 {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("max 50 pdus / 100 edus"),
+		}
+	}
+
 	// First we should check if this origin has already submitted this
-	// txn ID to us. If they have and the txnIDs map contains an entry,
-	// the transaction is still being worked on. The new client can wait
-	// for it to complete rather than creating more work.
-	index := string(request.Origin()) + "\000" + string(txnID)
+	// transaction to us and it is still being worked on. If so, the new
+	// request waits for it to complete rather than creating more work.
+	//
+	// A retry joins only an attempt with the same content. Some senders,
+	// older Zendrite and Dendrite among them, reuse a failed transaction's ID
+	// for a retry that carries more events; answering that with the earlier
+	// attempt's outcome would drop everything that was added.
+	index := string(request.Origin()) + "\000" + string(txnID) + "\000" + txn.digest()
 	v, loaded := inFlightTxnsPerOrigin.LoadOrStore(index, &inFlightTxn{done: make(chan struct{})})
 	inFlight, ok := v.(*inFlightTxn)
 	if !ok {
@@ -106,14 +134,26 @@ func Send(
 	inFlight.res = util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
 	defer close(inFlight.done)
 	defer inFlightTxnsPerOrigin.Delete(index)
-	inFlight.res = processTransaction(httpReq, request, txnID, cfg, rsAPI, keyAPI, keys, mu, producer)
+	inFlight.res = processTransaction(httpReq, request, txnID, txn, cfg, rsAPI, keyAPI, keys, mu, producer)
 	return inFlight.res
+}
+
+// digest identifies a transaction's content, ignoring fields such as
+// origin_server_ts that a sender sets afresh for every attempt.
+func (txn txnEvents) digest() string {
+	content, err := json.Marshal(txn)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
 
 func processTransaction(
 	httpReq *http.Request,
 	request *fclient.FederationRequest,
 	txnID gomatrixserverlib.TransactionID,
+	txnEvents txnEvents,
 	cfg *config.FederationAPI,
 	rsAPI api.FederationRoomserverAPI,
 	keyAPI userAPI.FederationUserAPI,
@@ -121,26 +161,6 @@ func processTransaction(
 	mu *internal.MutexByRoom,
 	producer *producers.SyncAPIProducer,
 ) util.JSONResponse {
-	var txnEvents struct {
-		PDUs []json.RawMessage       `json:"pdus"`
-		EDUs []gomatrixserverlib.EDU `json:"edus"`
-	}
-
-	if err := json.Unmarshal(request.Content(), &txnEvents); err != nil {
-		return util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: spec.NotJSON("The request body could not be decoded into valid JSON. " + err.Error()),
-		}
-	}
-	// Transactions are limited in size; they can have at most 50 PDUs and 100 EDUs.
-	// https://matrix.org/docs/spec/server_server/latest#transactions
-	if len(txnEvents.PDUs) > 50 || len(txnEvents.EDUs) > 100 {
-		return util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: spec.BadJSON("max 50 pdus / 100 edus"),
-		}
-	}
-
 	t := internal.NewTxnReq(
 		rsAPI,
 		keyAPI,
