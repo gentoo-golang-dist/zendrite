@@ -332,8 +332,7 @@ var degradationMetrics = map[string]bool{
 	"zendrite_jetstream_consumer_fetch_errors_total": true,
 	"zendrite_jetstream_consumer_redeliveries_total": true,
 	"zendrite_federationapi_recv_transactions_total": true,
-	"zendrite_jetstream_consumer_pending":            false,
-	"zendrite_jetstream_consumer_stalled_seconds":    false,
+	"zendrite_jetstream_consumer_pending_messages":   false,
 }
 
 // metricsSampler scrapes the serving candidates' metrics while a scenario

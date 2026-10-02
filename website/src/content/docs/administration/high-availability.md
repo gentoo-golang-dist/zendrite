@@ -131,12 +131,12 @@ A degraded broker does not fail any probe, so these metrics, which every deploym
 | --- | --- |
 | `zendrite_jetstream_publish_retries_total{stream}` | Publication attempts lost to a broker failure and retried under the same message ID. |
 | `zendrite_jetstream_publish_failures_total{stream,reason}` | Publications given up on: `canceled` or `deadline` when the caller stopped waiting, `unavailable` when no broker answered, `refused` when the broker or the ownership barrier rejected it. |
-| `zendrite_jetstream_consumer_pending{consumer}` | Messages a durable consumer has not acknowledged yet, read from the broker every 30 seconds. |
-| `zendrite_jetstream_consumer_stalled_seconds{consumer}` | How long a durable consumer with pending messages has gone without finishing one; 0 while it has none. |
+| `zendrite_jetstream_consumer_pending_messages{consumer}` | Messages waiting behind the last one delivered, also read from the broker every 30 seconds so that it keeps growing when a consumer stops fetching. |
+| `zendrite_jetstream_consumer_last_ack_timestamp_seconds{consumer}` | When the consumer last acknowledged a message. |
 | `zendrite_jetstream_consumer_fetch_errors_total{consumer}` | Failed pull requests, such as those during a leader election. |
 | `zendrite_federationapi_recv_transactions_total{outcome}` | Inbound federation transactions, `ok` or `retry` when one was refused because an event or EDU could not be queued. |
 
-Alert when `zendrite_jetstream_consumer_stalled_seconds` exceeds a few minutes, and when `zendrite_jetstream_publish_failures_total` or the `retry` outcome keeps increasing for more than a few minutes.
+Alert when a consumer has pending messages and has not acknowledged one for a few minutes, `zendrite_jetstream_consumer_pending_messages > 0 and time() - zendrite_jetstream_consumer_last_ack_timestamp_seconds > 300`, and when `zendrite_jetstream_publish_failures_total` or the `retry` outcome keeps increasing for more than a few minutes.
 A short burst of retries and fetch errors during a broker restart or leader election is expected.
 
 Note that `zendrite_ha_shutdown_duration_seconds` is set as the process drains, so a scrape may not catch it before the process exits.
