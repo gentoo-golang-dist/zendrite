@@ -132,10 +132,11 @@ type KeyBackupAPI interface {
 
 type ProfileAPI interface {
 	QueryProfile(ctx context.Context, userID string) (*authtypes.Profile, error)
+	// SetAvatarURL, SetDisplayName and SetProfileField fail with
+	// ErrProfileTooLarge when the profile would exceed authtypes.MaxProfileSize.
 	SetAvatarURL(ctx context.Context, localpart string, serverName spec.ServerName, avatarURL string) (*authtypes.Profile, bool, error)
 	SetDisplayName(ctx context.Context, localpart string, serverName spec.ServerName, displayName string) (*authtypes.Profile, bool, error)
-	// SetProfileField sets a custom profile field (MSC4133). It fails with
-	// ErrProfileTooLarge when the profile would exceed authtypes.MaxProfileSize.
+	// SetProfileField sets a custom profile field (MSC4133).
 	SetProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string, value json.RawMessage) error
 	// DeleteProfileField removes a custom profile field (MSC4133).
 	DeleteProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string) error

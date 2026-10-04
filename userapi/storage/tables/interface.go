@@ -96,6 +96,7 @@ type OpenIDTable interface {
 type ProfileTable interface {
 	InsertProfile(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName) error
 	SelectProfileByLocalpart(ctx context.Context, localpart string, serverName spec.ServerName) (*authtypes.Profile, error)
+	SelectProfileForUpdate(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName) (*authtypes.Profile, error)
 	SetAvatarURL(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName, avatarURL string) (*authtypes.Profile, bool, error)
 	SetDisplayName(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName, displayName string) (*authtypes.Profile, bool, error)
 	SelectProfilesBySearch(ctx context.Context, searchString string, limit int) ([]authtypes.Profile, error)

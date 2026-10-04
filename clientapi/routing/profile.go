@@ -38,9 +38,10 @@ const maxProfileKeyLength = 255
 // profileFieldTimeZone is the profile field holding the user's IANA time zone.
 const profileFieldTimeZone = "m.tz"
 
-// customProfileKey is the grammar of custom profile field names: a
-// namespaced identifier such as "m.tz" or "org.example.job_title".
-var customProfileKey = regexp.MustCompile(`^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)+$`)
+// customProfileKey is the grammar of custom profile field names in the
+// specification: a namespaced identifier such as "m.tz" or
+// "org.example.job_title".
+var customProfileKey = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 
 // GetProfile implements GET /profile/{userID}.
 func GetProfile(
@@ -316,35 +317,15 @@ func setProfileName(
 		}
 	}
 
-	current, err := profileAPI.QueryProfile(req.Context(), userID)
-	if err != nil {
-		util.GetLogger(req.Context()).WithError(err).Error("profileAPI.QueryProfile failed")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
 	setName := profileAPI.SetDisplayName
 	if key == authtypes.ProfileFieldAvatarURL {
-		current.AvatarURL = value
 		setName = profileAPI.SetAvatarURL
-	} else {
-		current.DisplayName = value
 	}
-	size, err := current.Size()
-	if err != nil {
-		util.GetLogger(req.Context()).WithError(err).Error("profile.Size failed")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
-	if size > authtypes.MaxProfileSize {
-		return profileTooLarge()
-	}
-
 	profile, changed, err := setName(req.Context(), localpart, domain, value)
-	if err != nil {
+	switch {
+	case errors.Is(err, userapi.ErrProfileTooLarge):
+		return profileTooLarge()
+	case err != nil:
 		util.GetLogger(req.Context()).WithError(err).WithField("field", key).Error("failed to set profile field")
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,

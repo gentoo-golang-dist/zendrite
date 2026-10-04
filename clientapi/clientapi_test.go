@@ -705,6 +705,7 @@ func TestProfileFields(t *testing.T) {
 			{"time zone not a string", "m.tz", `{"m.tz":1}`, alice, http.StatusBadRequest, "M_BAD_JSON"},
 			{"display name not a string", "displayname", `{"displayname":{}}`, alice, http.StatusBadRequest, "M_BAD_JSON"},
 			{"key without namespace", "nonamespace", `{"nonamespace":1}`, alice, http.StatusBadRequest, "M_INVALID_PARAM"},
+			{"key outside the grammar", "org.example-x", `{"org.example-x":1}`, alice, http.StatusBadRequest, "M_INVALID_PARAM"},
 			{"key too large", "org." + strings.Repeat("a", 252), `{}`, alice, http.StatusBadRequest, "M_KEY_TOO_LARGE"},
 			{"profile too large", "org.example.big", `{"org.example.big":"` + strings.Repeat("a", 64*1024) + `"}`, alice, http.StatusBadRequest, "M_PROFILE_TOO_LARGE"},
 			{"name makes profile too large", "displayname", `{"displayname":"` + strings.Repeat("a", 64*1024) + `"}`, alice, http.StatusBadRequest, "M_PROFILE_TOO_LARGE"},
