@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -133,7 +134,16 @@ type ProfileAPI interface {
 	QueryProfile(ctx context.Context, userID string) (*authtypes.Profile, error)
 	SetAvatarURL(ctx context.Context, localpart string, serverName spec.ServerName, avatarURL string) (*authtypes.Profile, bool, error)
 	SetDisplayName(ctx context.Context, localpart string, serverName spec.ServerName, displayName string) (*authtypes.Profile, bool, error)
+	// SetProfileField sets a custom profile field (MSC4133). It fails with
+	// ErrProfileTooLarge when the profile would exceed authtypes.MaxProfileSize.
+	SetProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string, value json.RawMessage) error
+	// DeleteProfileField removes a custom profile field (MSC4133).
+	DeleteProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string) error
 }
+
+// ErrProfileTooLarge is returned when a change would make a profile larger
+// than authtypes.MaxProfileSize.
+var ErrProfileTooLarge = errors.New("profile exceeds the maximum size")
 
 // custom api functions required by pinecone / p2p demos.
 type QuerySearchProfilesAPI interface {

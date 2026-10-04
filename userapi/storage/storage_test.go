@@ -427,6 +427,44 @@ func Test_Profile(t *testing.T) {
 	})
 }
 
+func Test_ProfileFields(t *testing.T) {
+	alice := test.NewUser(t)
+	aliceLocalpart, aliceDomain, err := gomatrixserverlib.SplitID('@', alice.ID)
+	assert.NoError(t, err)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateUserDatabase(t, dbType)
+		defer close()
+
+		_, err := db.CreateAccount(ctx, aliceLocalpart, aliceDomain, "testing", "", api.AccountTypeUser)
+		assert.NoError(t, err, "failed to create account")
+
+		assert.NoError(t, db.SetProfileField(ctx, aliceLocalpart, aliceDomain, "m.tz", json.RawMessage(`"Europe/Berlin"`)))
+		assert.NoError(t, db.SetProfileField(ctx, aliceLocalpart, aliceDomain, "org.example.job", json.RawMessage(`{"title":"Engineer"}`)))
+		// Setting a field again replaces its value.
+		assert.NoError(t, db.SetProfileField(ctx, aliceLocalpart, aliceDomain, "m.tz", json.RawMessage(`"Europe/London"`)))
+		profile, err := db.GetProfileByLocalpart(ctx, aliceLocalpart, aliceDomain)
+		assert.NoError(t, err)
+		assert.Equal(t, map[string]json.RawMessage{
+			"m.tz":            json.RawMessage(`"Europe/London"`),
+			"org.example.job": json.RawMessage(`{"title":"Engineer"}`),
+		}, profile.Fields)
+
+		// Deleting a field that is not set is not an error.
+		assert.NoError(t, db.DeleteProfileField(ctx, aliceLocalpart, aliceDomain, "org.example.unset"))
+		assert.NoError(t, db.DeleteProfileField(ctx, aliceLocalpart, aliceDomain, "m.tz"))
+		profile, err = db.GetProfileByLocalpart(ctx, aliceLocalpart, aliceDomain)
+		assert.NoError(t, err)
+		assert.Equal(t, map[string]json.RawMessage{"org.example.job": json.RawMessage(`{"title":"Engineer"}`)}, profile.Fields)
+
+		// Deactivation clears the custom fields.
+		assert.NoError(t, db.DeactivateAccount(ctx, aliceLocalpart, aliceDomain))
+		profile, err = db.GetProfileByLocalpart(ctx, aliceLocalpart, aliceDomain)
+		assert.NoError(t, err)
+		assert.Nil(t, profile.Fields)
+	})
+}
+
 func Test_Pusher(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		alice := test.NewUser(t)

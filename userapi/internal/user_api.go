@@ -985,6 +985,29 @@ func (a *UserInternalAPI) SetDisplayName(ctx context.Context, localpart string, 
 	return a.DB.SetDisplayName(ctx, localpart, serverName, displayName)
 }
 
+func (a *UserInternalAPI) SetProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string, value json.RawMessage) error {
+	profile, err := a.DB.GetProfileByLocalpart(ctx, localpart, serverName)
+	if err != nil {
+		return err
+	}
+	if profile.Fields == nil {
+		profile.Fields = map[string]json.RawMessage{}
+	}
+	profile.Fields[fieldName] = value
+	size, err := profile.Size()
+	if err != nil {
+		return err
+	}
+	if size > authtypes.MaxProfileSize {
+		return api.ErrProfileTooLarge
+	}
+	return a.DB.SetProfileField(ctx, localpart, serverName, fieldName, value)
+}
+
+func (a *UserInternalAPI) DeleteProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string) error {
+	return a.DB.DeleteProfileField(ctx, localpart, serverName, fieldName)
+}
+
 func (a *UserInternalAPI) QueryLocalpartForThreePID(ctx context.Context, req *api.QueryLocalpartForThreePIDRequest, res *api.QueryLocalpartForThreePIDResponse) error {
 	localpart, domain, err := a.DB.GetLocalpartForThreePID(ctx, req.ThreePID, req.Medium)
 	if err != nil {

@@ -41,6 +41,7 @@ type Database struct {
 	RegistrationTokens    tables.RegistrationTokensTable
 	Accounts              tables.AccountsTable
 	Profiles              tables.ProfileTable
+	ProfileFields         tables.ProfileFieldsTable
 	AccountDatas          tables.AccountDataTable
 	ThreePIDs             tables.ThreePIDTable
 	ExternalIDs           tables.ExternalIDsTable
@@ -138,7 +139,38 @@ func (d *Database) GetProfileByLocalpart(
 	ctx context.Context,
 	localpart string, serverName spec.ServerName,
 ) (*authtypes.Profile, error) {
-	return d.Profiles.SelectProfileByLocalpart(ctx, localpart, serverName)
+	profile, err := d.Profiles.SelectProfileByLocalpart(ctx, localpart, serverName)
+	if err != nil {
+		return nil, err
+	}
+	profile.Fields, err = d.ProfileFields.SelectProfileFields(ctx, nil, localpart, serverName)
+	if err != nil {
+		return nil, err
+	}
+	return profile, nil
+}
+
+// SetProfileField sets a custom profile field (MSC4133) of the given localpart.
+func (d *Database) SetProfileField(
+	ctx context.Context,
+	localpart string, serverName spec.ServerName,
+	fieldName string, value json.RawMessage,
+) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		return d.ProfileFields.UpsertProfileField(ctx, txn, localpart, serverName, fieldName, value)
+	})
+}
+
+// DeleteProfileField removes a custom profile field (MSC4133) of the given
+// localpart. Removing a field that is not set is not an error.
+func (d *Database) DeleteProfileField(
+	ctx context.Context,
+	localpart string, serverName spec.ServerName,
+	fieldName string,
+) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		return d.ProfileFields.DeleteProfileField(ctx, txn, localpart, serverName, fieldName)
+	})
 }
 
 // SetAvatarURL updates the avatar URL of the profile associated with the given
@@ -505,8 +537,12 @@ func (d *Database) SearchProfiles(ctx context.Context, searchString string, limi
 }
 
 // DeactivateAccount deactivates the user's account, removing all ability for the user to login again.
+// It also clears the account's custom profile fields.
 func (d *Database) DeactivateAccount(ctx context.Context, localpart string, serverName spec.ServerName) (err error) {
 	return d.Writer.Do(nil, nil, func(txn *sql.Tx) error {
+		if err := d.ProfileFields.DeleteProfileFields(ctx, nil, localpart, serverName); err != nil {
+			return err
+		}
 		return d.Accounts.DeactivateAccount(ctx, localpart, serverName)
 	})
 }
