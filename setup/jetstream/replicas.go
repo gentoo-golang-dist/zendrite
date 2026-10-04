@@ -75,6 +75,8 @@ func newReplicaMonitor() *replicaMonitor {
 
 // monitorReplicas reads every stream's replicas from an external broker
 // until the process ends. Unreplicated streams report no followers.
+//
+//nolint:contextcheck,nolintlint // ProcessContext owns the lifetime, as in configureStreams.
 func monitorReplicas(proc *process.ProcessContext, cfg *config.JetStream, js nats.JetStreamContext, interval time.Duration) {
 	if len(cfg.Addresses) == 0 {
 		// The embedded server is never clustered.
