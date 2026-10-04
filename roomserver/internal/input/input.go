@@ -606,14 +606,17 @@ func (w *worker) _next() {
 	if err = jetstream.AwaitOwnership(ctx, jetstream.OwnershipOf(w.r.JetStream)); err != nil {
 		return
 	}
-	w.lastActivity = time.Now()
 
 	// Try to unmarshal the input room event. If the JSON unmarshalling
 	// fails then we'll terminate the message — this notifies NATS that
 	// we are done with the message and never want to see it again.
 	msg := msgs[0]
 	meta, _ := msg.Metadata()
+	// A synchronous caller reads these under the lock to describe the worker.
+	w.Lock()
+	w.lastActivity = time.Now()
 	w.durableSeq = meta.Sequence.Stream
+	w.Unlock()
 
 	var inputRoomEvent api.InputRoomEvent
 	if err = json.Unmarshal(msg.Data, &inputRoomEvent); err != nil {
@@ -819,7 +822,7 @@ func (r *Inputer) InputRoomEvents(
 		}
 		msg, err := replySub.NextMsgWithContext(waitCtx)
 		cancel()
-		if err != nil && !warned && ctx.Err() == nil {
+		if errors.Is(err, context.DeadlineExceeded) && !warned && ctx.Err() == nil {
 			warned = true
 			r.warnUnansweredInput(ctx, unanswered, len(request.InputRoomEvents)-i, time.Since(started))
 			msg, err = replySub.NextMsgWithContext(ctx)
