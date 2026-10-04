@@ -86,6 +86,25 @@ func TestReplicaMonitorDropsDepartedPeers(t *testing.T) {
 	require.NotContains(t, m.behind, replicaKey{stream, "c"})
 }
 
+// Without a leader nobody can tell how far the followers are, so a stale
+// reading is not left standing, while a follower that was behind before the
+// election keeps its place in line for a report.
+func TestReplicaMonitorWithoutLeader(t *testing.T) {
+	m := newReplicaMonitor()
+	const stream = "ReplicaMonitorLeaderlessTest"
+	now := time.Now()
+	m.observe(now, stream, &nats.ClusterInfo{Leader: "a", Replicas: []*nats.PeerInfo{{Name: "b", Current: true}, {Name: "c"}}})
+	m.observe(now.Add(time.Minute), stream, &nats.ClusterInfo{Replicas: []*nats.PeerInfo{{Name: "b"}, {Name: "c"}}})
+	_, exported := replicaGauge(streamReplicaCurrent, stream, "c")
+	require.False(t, exported)
+	require.Contains(t, m.behind, replicaKey{stream, "c"})
+	m.observe(now.Add(2*time.Minute), stream, &nats.ClusterInfo{Leader: "b", Replicas: []*nats.PeerInfo{{Name: "a", Current: true}, {Name: "c"}}})
+	value, exported := replicaGauge(streamReplicaCurrent, stream, "c")
+	require.True(t, exported)
+	require.InDelta(t, 0, value, 0)
+	require.Equal(t, now, m.behind[replicaKey{stream, "c"}].since)
+}
+
 // replicaGauge reads a replica series without creating it.
 func replicaGauge(vec *prometheus.GaugeVec, stream, replica string) (float64, bool) {
 	ch := make(chan prometheus.Metric, 64)
@@ -118,7 +137,7 @@ func TestReplicaMonitorReadsCluster(t *testing.T) {
 		servers = append(servers, storageTestServer(t, fmt.Sprintf("node-%d", i), []*url.URL{route}))
 	}
 	js := storageTestClient(t, seed)
-	cfg := &config.JetStream{Matrix: &config.Global{HA: config.HA{Enabled: true}}, TopicPrefix: "replicamon_", Replicas: 3}
+	cfg := &config.JetStream{Matrix: &config.Global{HA: config.HA{Enabled: true}}, Addresses: []string{seed.ClientURL()}, TopicPrefix: "replicamon_", Replicas: 3}
 	p := process.NewProcessContextWithParent(t.Context())
 	defer p.ShutdownZendrite()
 	require.Eventually(t, func() bool { return configureStreams(p, cfg, js) == nil }, 30*time.Second, 100*time.Millisecond)

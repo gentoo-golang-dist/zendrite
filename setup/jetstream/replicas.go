@@ -58,6 +58,8 @@ type replicaMonitor struct {
 	// behind holds when each stream/replica pair was first seen behind, and
 	// whether that has been reported.
 	behind map[replicaKey]*replicaBehind
+	// exported holds the replicas each stream has series for.
+	exported map[string]map[string]bool
 }
 
 type replicaKey struct{ stream, replica string }
@@ -68,13 +70,14 @@ type replicaBehind struct {
 }
 
 func newReplicaMonitor() *replicaMonitor {
-	return &replicaMonitor{stuckAfter: replicaStuckAfter, behind: map[replicaKey]*replicaBehind{}}
+	return &replicaMonitor{stuckAfter: replicaStuckAfter, behind: map[replicaKey]*replicaBehind{}, exported: map[string]map[string]bool{}}
 }
 
-// monitorReplicas reads every stream's replicas from the broker until the
-// process ends. It does nothing for unreplicated streams.
+// monitorReplicas reads every stream's replicas from an external broker
+// until the process ends. Unreplicated streams report no followers.
 func monitorReplicas(proc *process.ProcessContext, cfg *config.JetStream, js nats.JetStreamContext, interval time.Duration) {
-	if cfg.Replicas < 2 { //nolint:mnd // A stream needs a follower to have one behind.
+	if len(cfg.Addresses) == 0 {
+		// The embedded server is never clustered.
 		return
 	}
 	m := newReplicaMonitor()
@@ -85,8 +88,9 @@ func monitorReplicas(proc *process.ProcessContext, cfg *config.JetStream, js nat
 			info, err := js.StreamInfo(cfg.Prefixed(stream.Name), nats.Context(reqCtx))
 			cancel()
 			if err != nil {
-				// A stream without a leader cannot answer; the publication and
-				// consumer metrics show that outage.
+				// A failed read, such as during a leader election, leaves the
+				// last reading standing. A stream that stays without a leader
+				// shows in the publication and consumer metrics.
 				continue
 			}
 			m.observe(time.Now(), stream.Name, info.Cluster)
@@ -96,53 +100,69 @@ func monitorReplicas(proc *process.ProcessContext, cfg *config.JetStream, js nat
 
 // observe records one reading of a stream's followers.
 func (m *replicaMonitor) observe(now time.Time, stream string, cluster *nats.ClusterInfo) {
-	if cluster == nil || cluster.Leader == "" {
+	if cluster == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// A replaced broker can rejoin under another name, so drop the series of
-	// peers that are no longer followers.
-	streamReplicaCurrent.DeletePartialMatch(prometheus.Labels{"stream": stream})
-	streamReplicaLag.DeletePartialMatch(prometheus.Labels{"stream": stream})
 	seen := map[string]bool{}
-	for _, peer := range cluster.Replicas {
-		seen[peer.Name] = true
-		current := peer.Current && !peer.Offline
-		value := 0.0
-		if current {
-			value = 1
+	if cluster.Leader != "" {
+		for _, peer := range cluster.Replicas {
+			seen[peer.Name] = true
+			m.observePeer(now, stream, cluster.Leader, peer)
 		}
-		streamReplicaCurrent.WithLabelValues(stream, peer.Name).Set(value)
-		streamReplicaLag.WithLabelValues(stream, peer.Name).Set(float64(peer.Lag))
-
-		key := replicaKey{stream, peer.Name}
-		b := m.behind[key]
-		switch {
-		case current && b != nil:
-			if b.reported {
-				logrus.WithFields(logrus.Fields{
-					"stream": stream, "replica": peer.Name, "leader": cluster.Leader,
-					"behind_for": now.Sub(b.since).Round(time.Second).String(),
-				}).Info("JetStream stream replica caught up with its leader")
-			}
-			delete(m.behind, key)
-		case current:
-		case b == nil:
-			m.behind[key] = &replicaBehind{since: now}
-		case !b.reported && now.Sub(b.since) >= m.stuckAfter:
-			b.reported = true
-			logrus.WithFields(logrus.Fields{
-				"stream": stream, "replica": peer.Name, "leader": cluster.Leader,
-				"lag": peer.Lag, "offline": peer.Offline,
-				"behind_for": now.Sub(b.since).Round(time.Second).String(),
-			}).Warn("JetStream stream replica is not catching up with its leader; one more broker loss would leave the stream without a quorum. " +
-				"If the broker is running, it may have stopped applying the stream: check its log for \"critical write error\" and restart it")
+	}
+	// Without a leader nobody can tell how far the followers are, and a
+	// replaced broker can rejoin under another name, so drop the series of
+	// peers that were not just read.
+	for replica := range m.exported[stream] {
+		if !seen[replica] {
+			streamReplicaCurrent.DeleteLabelValues(stream, replica)
+			streamReplicaLag.DeleteLabelValues(stream, replica)
 		}
+	}
+	m.exported[stream] = seen
+	if cluster.Leader == "" {
+		return
 	}
 	for key := range m.behind {
 		if key.stream == stream && !seen[key.replica] {
 			delete(m.behind, key)
 		}
+	}
+}
+
+// observePeer records one follower's reading.
+func (m *replicaMonitor) observePeer(now time.Time, stream, leader string, peer *nats.PeerInfo) {
+	current := peer.Current && !peer.Offline
+	value := 0.0
+	if current {
+		value = 1
+	}
+	streamReplicaCurrent.WithLabelValues(stream, peer.Name).Set(value)
+	streamReplicaLag.WithLabelValues(stream, peer.Name).Set(float64(peer.Lag))
+
+	key := replicaKey{stream, peer.Name}
+	b := m.behind[key]
+	switch {
+	case current && b != nil:
+		if b.reported {
+			logrus.WithFields(logrus.Fields{
+				"stream": stream, "replica": peer.Name, "leader": leader,
+				"behind_for": now.Sub(b.since).Round(time.Second).String(),
+			}).Info("JetStream stream replica caught up with its leader")
+		}
+		delete(m.behind, key)
+	case current:
+	case b == nil:
+		m.behind[key] = &replicaBehind{since: now}
+	case !b.reported && now.Sub(b.since) >= m.stuckAfter:
+		b.reported = true
+		logrus.WithFields(logrus.Fields{
+			"stream": stream, "replica": peer.Name, "leader": leader,
+			"lag": peer.Lag, "offline": peer.Offline,
+			"behind_for": now.Sub(b.since).Round(time.Second).String(),
+		}).Warn("JetStream stream replica is not catching up with its leader; one more broker loss would leave the stream without a quorum. " +
+			"If the broker is running, it may have stopped applying the stream: check its log for \"critical write error\" and restart it")
 	}
 }

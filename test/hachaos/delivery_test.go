@@ -572,26 +572,28 @@ func verifyBrokers(ctx context.Context, r *result, e *environment, rejoined time
 
 // restartStuckBrokers applies the documented remedy for a broker that stopped
 // applying a stream (#473): restart it on its storage, as deleting its pod
-// does, and wait for its replicas to catch up. The outcome is noted, so every
-// occurrence also tests the operator runbook.
+// does, one broker at a time, and wait for the replicas to catch up. Every
+// occurrence thus tests the operator runbook, and a remedy that does not work
+// fails the scenario.
 func restartStuckBrokers(ctx context.Context, r *result, e *environment, stuck map[*natsNode][]string, timeout time.Duration) {
+	var err error
 	for _, node := range e.nats.nodes {
 		if len(stuck[node]) == 0 {
 			continue
 		}
 		e.timeline.add(eventFault, node.name, "restart the broker that stopped applying a stream (#473 remedy)")
 		node.proc.stop(30 * time.Second)
-		if err := e.nats.restart(ctx, node); err != nil {
-			r.notef("restarting %s, which stopped applying a stream, failed: %v", node.name, err)
+		if err = e.nats.restart(ctx, node); err != nil {
+			r.failf("restarting %s, which stopped applying a stream, failed: %v", node.name, err)
+			return
+		}
+		restarted := time.Now()
+		if err = waitFor(ctx, timeout, e.nats.brokerCaughtUp); err == nil {
+			r.notef("restarting %s, which stopped applying a stream, brought every replica current in %s (#473 remedy)", node.name, time.Since(restarted).Round(time.Millisecond))
 			return
 		}
 	}
-	restarted := time.Now()
-	if err := waitFor(ctx, timeout, e.nats.brokerCaughtUp); err != nil {
-		r.notef("restarting the broker that stopped applying a stream did not bring its replicas current within %s (#473): %v", timeout, err)
-		return
-	}
-	r.notef("restarting the broker that stopped applying a stream brought every replica current in %s (#473 remedy)", time.Since(restarted).Round(time.Millisecond))
+	r.failf("restarting the brokers that stopped applying a stream did not bring their replicas current within %s, so the runbook's remedy does not work (#473): %v", timeout, err)
 }
 
 func TestAccountTxns(t *testing.T) {
