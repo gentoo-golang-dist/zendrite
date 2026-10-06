@@ -16,7 +16,6 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
@@ -807,24 +806,7 @@ func (d *EventDatabase) StoreEvent(
 			}
 		}
 
-		// Workaround for v11+ rooms: gomatrixserverlib leaves room_id empty in the
-		// create event JSON (per spec, the room_id is derived from the event_id),
-		// but Allowed() later checks that the room_id in the create event JSON
-		// matches the room being authored. This causes auth failures on every
-		// subsequent event in v11+ rooms. Patch the room_id into the JSON before
-		// persisting if it's missing.
-		eventJSON := event.JSON()
-		if event.Type() == spec.MRoomCreate && event.StateKey() != nil && *event.StateKey() == "" {
-			if roomIDStr := event.RoomID().String(); roomIDStr != "" {
-				if gjson.GetBytes(eventJSON, "room_id").Exists() {
-					// already set, leave as is
-				} else if eventJSON, err = sjson.SetBytes(eventJSON, "room_id", roomIDStr); err != nil {
-					return fmt.Errorf("sjson.SetBytes(room_id): %w", err)
-				}
-			}
-		}
-
-		if err = d.EventJSONTable.InsertEventJSON(ctx, txn, eventNID, eventJSON); err != nil {
+		if err = d.EventJSONTable.InsertEventJSON(ctx, txn, eventNID, event.JSON()); err != nil {
 			return fmt.Errorf("d.EventJSONTable.InsertEventJSON: %w", err)
 		}
 
@@ -1037,20 +1019,10 @@ func (d *EventDatabase) MaybeRedactEvent(
 				return nil
 			}
 
-			// Workaround for v11+ redaction events: gomatrixserverlib's Redacts()
-			// can return empty for some v11/v12 redaction events even though
-			// content.redacts is set. Fall back to gjson to extract it.
-			redactsID := event.Redacts()
-			if redactsID == "" {
-				if r := gjson.GetBytes(event.JSON(), "content.redacts"); r.Exists() {
-					redactsID = r.String()
-				}
-			}
-
 			err = d.RedactionsTable.InsertRedaction(ctx, txn, tables.RedactionInfo{
 				Validated:        false,
 				RedactionEventID: event.EventID(),
-				RedactsEventID:   redactsID,
+				RedactsEventID:   event.Redacts(),
 			})
 			if err != nil {
 				return fmt.Errorf("d.RedactionsTable.InsertRedaction: %w", err)
@@ -1174,14 +1146,6 @@ func (d *EventDatabase) loadRedactionPair(
 	var eventBeingRedacted string
 	if isRedactionEvent {
 		eventBeingRedacted = event.Redacts()
-		// Workaround for v11+ redaction events: gomatrixserverlib's Redacts()
-		// can return empty for some v11/v12 redaction events even though
-		// content.redacts is set. Fall back to gjson to extract it.
-		if eventBeingRedacted == "" {
-			if r := gjson.GetBytes(event.JSON(), "content.redacts"); r.Exists() {
-				eventBeingRedacted = r.String()
-			}
-		}
 		redactionEvent = &types.Event{
 			EventNID: eventNID,
 			PDU:      event,

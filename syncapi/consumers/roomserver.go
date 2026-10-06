@@ -130,6 +130,15 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 			// in the special case where the event redacts itself, just pass the message through because
 			// we will never see the other part of the pair
 			if event.Redacts() != event.EventID() {
+				// Application services receive redactions as they arrive,
+				// like any other event. NAK on failure, or the redaction is
+				// never delivered.
+				if s.asProducer != nil {
+					if err = s.asProducer.ProduceRoomEvents(msg); err != nil {
+						log.WithError(err).Warn("failed to produce OutputAppserviceEvent")
+						return false
+					}
+				}
 				// syncapi stores the redaction only once it is validated, but
 				// userapi still needs it now: it keeps a notification-less
 				// record so that read receipts pointing at a redaction resolve.
@@ -238,37 +247,9 @@ func (s *OutputRoomEventConsumer) onRedactEvent(
 
 	// fake a room event so we notify clients about the redaction, as if it were
 	// a normal event.
-	if err = s.onNewRoomEvent(ctx, api.OutputNewRoomEvent{
+	return s.onNewRoomEvent(ctx, api.OutputNewRoomEvent{
 		Event: msg.RedactedBecause,
-	}); err != nil {
-		return err
-	}
-
-	// Produce an appservice event so bridges (e.g. mautrix-telegram) get
-	// notified about the redaction. Without this, appservices never receive
-	// redaction events because the OutputTypeNewRoomEvent path for redactions
-	// returns early (before produceAppserviceEvent is called), and
-	// onRedactEvent didn't produce an appservice event either.
-	if s.asProducer != nil {
-		asOutputEvent := api.OutputEvent{
-			Type: api.OutputTypeNewRoomEvent,
-			NewRoomEvent: &api.OutputNewRoomEvent{
-				Event: msg.RedactedBecause,
-			},
-		}
-		data, jsonErr := json.Marshal(asOutputEvent)
-		if jsonErr != nil {
-			log.WithError(jsonErr).Warn("failed to marshal appservice redaction event")
-			return nil // non-fatal
-		}
-		asMsg := &nats.Msg{Data: data, Header: nats.Header{}}
-		asMsg.Header.Set(jetstream.RoomEventType, string(api.OutputTypeNewRoomEvent))
-		if prodErr := s.asProducer.ProduceRoomEvents(asMsg); prodErr != nil {
-			log.WithError(prodErr).Warn("failed to produce OutputAppserviceEvent for redaction")
-		}
-	}
-
-	return nil
+	})
 }
 
 func (s *OutputRoomEventConsumer) onNewRoomEvent(
