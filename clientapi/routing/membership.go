@@ -289,6 +289,19 @@ func SendInvite(
 		return *reqErr
 	}
 
+	// Only members may invite, which is checked before a 3PID invite reaches
+	// the identity server, as storing one there shares the room's details.
+	deviceUserID, err := spec.NewUserID(device.UserID, true)
+	if err != nil {
+		return util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden("You don't have permission to invite, bad userID"),
+		}
+	}
+	if errRes := checkMemberInRoom(req.Context(), rsAPI, *deviceUserID, roomID); errRes != nil {
+		return *errRes
+	}
+
 	inviteStored, jsonErrResp := checkAndProcessThreepid(
 		req, device, body, cfg, rsAPI, profileAPI, identityClient, roomID, evTime,
 	)
@@ -311,19 +324,6 @@ func SendInvite(
 			Code: http.StatusBadRequest,
 			JSON: spec.BadJSON("missing user_id"),
 		}
-	}
-
-	deviceUserID, err := spec.NewUserID(device.UserID, true)
-	if err != nil {
-		return util.JSONResponse{
-			Code: http.StatusForbidden,
-			JSON: spec.Forbidden("You don't have permission to kick this user, bad userID"),
-		}
-	}
-
-	errRes := checkMemberInRoom(req.Context(), rsAPI, *deviceUserID, roomID)
-	if errRes != nil {
-		return *errRes
 	}
 
 	// We already received the return value, so no need to check for an error here.

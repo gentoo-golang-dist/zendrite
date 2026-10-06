@@ -23,6 +23,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/clientapi/threepid"
+	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/test"
 	"codefloe.com/pat-s/zendrite/userapi/api"
@@ -471,4 +472,27 @@ func TestRequestEmailTokenIdentityErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+type nonMemberRoomserverAPI struct {
+	roomserverAPI.ClientRoomserverAPI
+}
+
+func (nonMemberRoomserverAPI) QueryMembershipForUser(_ context.Context, _ *roomserverAPI.QueryMembershipForUserRequest, res *roomserverAPI.QueryMembershipForUserResponse) error {
+	res.IsInRoom = false
+	return nil
+}
+
+// TestThreePIDInviteNeedsMembership checks that a 3PID invite from someone
+// who is not in the room never reaches the identity server, which would
+// otherwise learn the room's details and email them to the invitee.
+func TestThreePIDInviteNeedsMembership(t *testing.T) {
+	client := fclient.NewClient(fclient.WithTransport(threePIDTransport(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("identity server contacted: %s", req.URL)
+		return nil, errors.New("unexpected request")
+	})))
+	body := `{"id_server":"id.example","id_access_token":"token","medium":"email","address":"bob@example.com"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	res := SendInvite(req, &threePIDUserAPI{}, &api.Device{UserID: "@alice:test"}, "!room:test", threePIDConfig(), nonMemberRoomserverAPI{}, nil, client)
+	requireThreePIDResponse(t, res, http.StatusForbidden, "M_FORBIDDEN")
 }
