@@ -117,6 +117,11 @@ func lookupProfile(
 			}
 		}
 
+		var remoteErr spec.HTTPError
+		if errors.As(err, &remoteErr) && remoteErr.Code == http.StatusForbidden {
+			return nil, &util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden("Profile lookup is forbidden by the remote server.")}
+		}
+
 		util.GetLogger(req.Context()).WithError(err).Error("getProfile failed")
 		return nil, &util.JSONResponse{
 			Code: http.StatusInternalServerError,
@@ -309,7 +314,7 @@ func setProfileName(
 	userID, localpart string, domain spec.ServerName, key, value string,
 	rsAPI api.ClientRoomserverAPI,
 ) util.JSONResponse {
-	evTime, err := httputil.ParseTSParam(req)
+	evTime, err := httputil.ParseTSParam(req, device)
 	if err != nil {
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,

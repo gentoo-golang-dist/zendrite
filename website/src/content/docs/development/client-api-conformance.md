@@ -31,7 +31,7 @@ The [v1.3 changes](https://spec.matrix.org/v1.3/changelog/) introduce optional `
 | Requirement | Implementation evidence | Assessment |
 | --- | --- | --- |
 | Messages without `from` | `syncapi/routing/messages.go` constructs earliest/latest topology positions according to direction. | Implemented path; this alone does not certify pagination. |
-| Refresh tokens | `clientapi/routing/routing.go` registers `/v3/refresh` only with MSC3861; `msc3861_sso_compat.go` delegates refresh to the provider. | Configuration-dependent, not native password-login refresh support; non-expiring tokens alone are not a blocker. |
+| Refresh tokens | `clientapi/routing/refresh.go` serves `/v3/refresh` for refresh tokens issued by `/login` and `/register` for clients that request them; with MSC3861, `msc3861_sso_compat.go` delegates refresh to the provider. `clientapi/refresh_token_test.go` covers rotation, retrying a lost response, expiry and logout. | Implemented; access tokens of clients that request a refresh token expire after `client_api.refreshable_access_token_lifetime` (default five minutes), and other clients keep non-expiring tokens. |
 | Relationship retrieval | `syncapi/routing/relations.go` serves all three `/v1/rooms/{roomID}/relations/...` forms in topological order; `syncapi/routing/relations_test.go` covers them. | Implemented; see below. |
 | Aggregation framework and relaxed replies | `syncapi/internal/aggregations.go` calculates bundled relations for the endpoints the spec lists, including limited `/sync` timelines. | v1.3 defines no relation type requiring aggregation; the framework is covered by `syncapi/aggregations_test.go`. |
 | `knock_restricted` | Room-version handling uses gomatrixserverlib; `roomserver/roomserver_test.go` exercises restricted and knock-restricted joins with room version 10. | Implementation and focused tests exist; not evidence for unrelated client APIs. |
@@ -54,7 +54,8 @@ The v1.3 relations behavior is covered above.
 | Thread listing | `syncapi/routing/threads.go` serves `/v1/rooms/{roomID}/threads` with `include` filtering and pagination. | Implemented; covered by `threads_test.go`. |
 | Threaded receipts and notification counts | `clientapi/routing/receipt.go` validates `thread_id`, receipts keep their thread identity, and `syncapi/streams/stream_notificationdata.go` serves per-thread counts when the filter sets `unread_thread_notifications`. | Implemented; covered by `TestThreadNotificationCounts` and `TestThreadReplyCountedInThread`. |
 | Edit and thread bundles | `syncapi/internal/aggregations.go` bundles the latest valid edit under `m.replace` and the thread summary under `m.thread`, filtered for history visibility and ignored users. | Implemented. |
-| Other v1.4 additions | Require a separate behavioral pass for filters, upgrades, push rules, and media headers after the above blockers are fixed. | Not certified by this audit. |
+| Room-type directory filters | `clientapi/routing/directory_public.go` and `federationapi/routing/publicrooms.go` filter with `roomserver/api.FilterPublicRooms` and return `room_type`; remote client results are filtered again. | Implemented; covered by `TestPublicRoomsRoomTypes`, `TestPublicRoomsRemoteRoomTypes` and `TestFederationPublicRoomsRoomTypes`. |
+| Other v1.4 additions | Require a separate behavioral pass for upgrades, push rules, and media headers after the above blockers are fixed. | Not certified by this audit. |
 
 [v1.5](https://spec.matrix.org/v1.5/changelog/) adds reference relations and documents in-room verification requests.
 References are bundled under `m.reference` and can be paginated through `/relations`.

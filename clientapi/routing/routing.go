@@ -364,6 +364,15 @@ func Setup(
 	v3mux := publicAPIMux.PathPrefix("/{apiversion:(?:r0|v3)}/").Subrouter()
 
 	v1mux := publicAPIMux.PathPrefix("/v1/").Subrouter()
+	v1mux.Handle("/register/m.login.registration_token/validity", httputil.MakeExternalAPI("registration_token_validity", func(req *http.Request) util.JSONResponse {
+		if r := rateLimits.Limit(req, nil); r != nil {
+			return *r
+		}
+		if mscCfg.Enabled("msc3861") {
+			return util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden("Registration is delegated to the authentication service.")}
+		}
+		return RegistrationTokenValidity(req, userAPI, cfg)
+	})).Methods(http.MethodGet, http.MethodOptions)
 
 	unstableMux := publicAPIMux.PathPrefix("/unstable").Subrouter()
 
@@ -541,6 +550,7 @@ func Setup(
 			return SendBan(req, userAPI, device, vars["roomID"], cfg, rsAPI, asAPI)
 		}),
 	).Methods(http.MethodPost, http.MethodOptions)
+	threePIDClient := base.CreateIdentityClient(zendriteCfg)
 	v3mux.Handle("/rooms/{roomID}/invite",
 		httputil.MakeAuthAPI("membership", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 			if r := rateLimits.Limit(req, device); r != nil {
@@ -550,7 +560,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return SendInvite(req, userAPI, device, vars["roomID"], cfg, rsAPI, asAPI)
+			return SendInvite(req, userAPI, device, vars["roomID"], cfg, rsAPI, asAPI, threePIDClient)
 		}),
 	).Methods(http.MethodPost, http.MethodOptions)
 	v3mux.Handle("/rooms/{roomID}/kick",
@@ -577,7 +587,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return SendEvent(req, device, vars["roomID"], vars["eventType"], nil, nil, cfg, rsAPI, nil)
+			return SendEvent(req, device, vars["roomID"], vars["eventType"], nil, nil, cfg, rsAPI, nil, federation)
 		}, httputil.WithAllowGuests()),
 	).Methods(http.MethodPost, http.MethodOptions)
 	v3mux.Handle("/rooms/{roomID}/send/{eventType}/{txnID}",
@@ -588,7 +598,7 @@ func Setup(
 			}
 			txnID := vars["txnID"]
 			return SendEvent(req, device, vars["roomID"], vars["eventType"], &txnID,
-				nil, cfg, rsAPI, transactionsCache)
+				nil, cfg, rsAPI, transactionsCache, federation)
 		}, httputil.WithAllowGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 
@@ -636,7 +646,7 @@ func Setup(
 			}
 			emptyString := ""
 			eventType := strings.TrimSuffix(vars["eventType"], "/")
-			return SendEvent(req, device, vars["roomID"], eventType, nil, &emptyString, cfg, rsAPI, nil)
+			return SendEvent(req, device, vars["roomID"], eventType, nil, &emptyString, cfg, rsAPI, nil, federation)
 		}, httputil.WithAllowGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 
@@ -647,7 +657,7 @@ func Setup(
 				return util.ErrorResponse(err)
 			}
 			stateKey := vars["stateKey"]
-			return SendEvent(req, device, vars["roomID"], vars["eventType"], nil, &stateKey, cfg, rsAPI, nil)
+			return SendEvent(req, device, vars["roomID"], vars["eventType"], nil, &stateKey, cfg, rsAPI, nil, federation)
 		}, httputil.WithAllowGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 
@@ -949,6 +959,15 @@ func Setup(
 				return Login(req, userAPI, cfg)
 			}),
 		).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+
+		v3mux.Handle("/refresh",
+			httputil.MakeExternalAPI("refresh", func(req *http.Request) util.JSONResponse {
+				if r := rateLimits.Limit(req, nil); r != nil {
+					return *r
+				}
+				return Refresh(req, userAPI, cfg)
+			}),
+		).Methods(http.MethodPost, http.MethodOptions)
 	}
 
 	if oidcEnabled {
@@ -1150,8 +1169,6 @@ func Setup(
 	unstableMux.Handle("/uk.tcpip.msc4133/profile/{userID}/{keyName}", changeProfileField).Methods(http.MethodPut, http.MethodDelete, http.MethodOptions)
 	// Browsers use the OPTIONS HTTP method to check if the CORS policy allows
 	// PUT requests, so we need to allow this method
-
-	threePIDClient := base.CreateIdentityClient(zendriteCfg)
 
 	v3mux.Handle("/account/3pid",
 		httputil.MakeAuthAPI("account_3pid", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
@@ -1707,6 +1724,34 @@ func Setup(
 	unstableMux.Handle("/room_keys/keys/{roomID}/{sessionID}", getBackupKeysRoomSession).Methods(http.MethodGet, http.MethodOptions)
 
 	// Deleting E2E Backup Keys
+
+	deleteBackupKeys := httputil.MakeAuthAPI("delete_backup_keys", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+		return DeleteBackupKeys(req, userAPI, device, req.URL.Query().Get("version"), "", "")
+	})
+
+	deleteBackupKeysRoom := httputil.MakeAuthAPI("delete_backup_keys_room", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+		vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+		if err != nil {
+			return util.ErrorResponse(err)
+		}
+		return DeleteBackupKeys(req, userAPI, device, req.URL.Query().Get("version"), vars["roomID"], "")
+	})
+
+	deleteBackupKeysRoomSession := httputil.MakeAuthAPI("delete_backup_keys_room_session", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+		vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+		if err != nil {
+			return util.ErrorResponse(err)
+		}
+		return DeleteBackupKeys(req, userAPI, device, req.URL.Query().Get("version"), vars["roomID"], vars["sessionID"])
+	})
+
+	v3mux.Handle("/room_keys/keys", deleteBackupKeys).Methods(http.MethodDelete, http.MethodOptions)
+	v3mux.Handle("/room_keys/keys/{roomID}", deleteBackupKeysRoom).Methods(http.MethodDelete, http.MethodOptions)
+	v3mux.Handle("/room_keys/keys/{roomID}/{sessionID}", deleteBackupKeysRoomSession).Methods(http.MethodDelete, http.MethodOptions)
+
+	unstableMux.Handle("/room_keys/keys", deleteBackupKeys).Methods(http.MethodDelete, http.MethodOptions)
+	unstableMux.Handle("/room_keys/keys/{roomID}", deleteBackupKeysRoom).Methods(http.MethodDelete, http.MethodOptions)
+	unstableMux.Handle("/room_keys/keys/{roomID}/{sessionID}", deleteBackupKeysRoomSession).Methods(http.MethodDelete, http.MethodOptions)
 
 	// Cross-signing device keys
 
