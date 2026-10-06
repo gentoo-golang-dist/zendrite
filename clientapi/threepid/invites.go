@@ -21,6 +21,7 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/tidwall/gjson"
 
+	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
@@ -106,6 +107,7 @@ func CheckAndProcessInvite(
 		err = ErrMissingParameter{}
 		return
 	}
+	body.Address = authtypes.CanonicalThreePIDAddress(body.Medium, body.Address)
 
 	auth := IdentityAuth{Token: body.IDAccessToken, UserAPI: db, Config: cfg, Client: client}
 	mxid, err := lookup3PID(ctx, auth, body)
