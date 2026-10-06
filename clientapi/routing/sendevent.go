@@ -193,7 +193,6 @@ func SendEvent(
 		if resErr = validateCanonicalAliases(req.Context(), aliasReq, roomID, cfg, rsAPI, federation); resErr != nil {
 			return *resErr
 		}
-
 	}
 
 	var txnAndSessionID *api.TransactionID
