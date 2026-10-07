@@ -309,6 +309,8 @@ client_api:
   # this server is already in, take part in calls and chat there, and is deactivated
   # once its lifetime has passed. Requires registration_disabled: true. Registration
   # tokens, the shared secret and application services still create normal accounts.
+  # Call guests get generated localparts starting with "call-guest-", a prefix no other
+  # account may use.
   call_guests:
     enabled: false
     # How long a call guest account lives before it is deactivated.

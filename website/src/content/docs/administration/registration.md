@@ -93,6 +93,12 @@ Accounts created with a registration token, the shared secret or an application 
 A virtual host with `allow_registration: true` keeps creating normal accounts.
 Call guests have nothing to do with the guest accounts of `kind=guest` registration, which `guests_disabled` controls.
 
+Zendrite ignores the username a call guest asks for and generates the localpart itself: `call-guest-` followed by 12 random lowercase letters and digits, such as `@call-guest-4k2m9x0qa7bz:example.com`.
+Call guests are therefore recognisable by the `call-guest-` prefix, and cannot take a username a member might want or one that looks trustworthy.
+No other account may use the prefix: registration with a token, the shared secret or open registration refuses a `call-guest-` username, so a member can never look like a call guest.
+Application service namespaces are unaffected.
+The display name a call guest sets, which Element Call asks for, is shown as usual.
+
 ### What call guests can do
 
 A call guest can do what a call needs and little else:

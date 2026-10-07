@@ -7,13 +7,18 @@ package routing
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // The shared-secret registration MAC is HMAC-SHA1.
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/matrix-org/util"
 	"github.com/stretchr/testify/assert"
@@ -90,17 +95,70 @@ func TestRegisterCallGuest(t *testing.T) {
 
 		t.Run("dummy auth creates a call guest", func(t *testing.T) {
 			derive(t, true)
-			resp := registerWithDummy(t, userAPI, &cfg.ClientAPI, "callguest")
-			registered, ok := resp.JSON.(registerResponse)
-			require.True(t, ok, "%+v", resp)
-			assert.Equal(t, "@callguest:test", registered.UserID)
-			assert.NotEmpty(t, registered.AccessToken)
-			assert.Equal(t, api.AccountTypeCallGuest, accountType(t, "callguest"))
+			// The requested username is ignored, whether free, taken by a
+			// member or invalid, including one with the call guest prefix.
+			require.NoError(t, userAPI.PerformAccountCreation(ctx, &api.PerformAccountCreationRequest{
+				AccountType: api.AccountTypeUser, Localpart: "support", ServerName: "test", Password: "password-support",
+			}, &api.PerformAccountCreationResponse{}))
+			seen := map[string]bool{}
+			for _, username := range []string{"support", "support", "Not Valid!", "123", "_x", "", CallGuestLocalpartPrefix + "abc"} {
+				resp := registerWithDummy(t, userAPI, &cfg.ClientAPI, username)
+				registered, ok := resp.JSON.(registerResponse)
+				require.True(t, ok, "%q: %+v", username, resp)
+				assert.NotEmpty(t, registered.AccessToken)
+				assert.Regexp(t, `^@call-guest-[a-z0-9]{12}:test$`, registered.UserID)
+				assert.False(t, seen[registered.UserID], "%s registered twice", registered.UserID)
+				seen[registered.UserID] = true
 
-			// The display name defaults to the localpart, as for users.
-			profile, err := userAPI.QueryProfile(ctx, "@callguest:test")
+				localpart := strings.TrimSuffix(strings.TrimPrefix(registered.UserID, "@"), ":test")
+				assert.Equal(t, api.AccountTypeCallGuest, accountType(t, localpart))
+				// The display name defaults to the localpart, as for users.
+				profile, err := userAPI.QueryProfile(ctx, registered.UserID)
+				require.NoError(t, err)
+				assert.Equal(t, localpart, profile.DisplayName)
+			}
+			assert.Equal(t, api.AccountTypeUser, accountType(t, "support"))
+		})
+
+		t.Run("a registration token cannot take the call guest prefix", func(t *testing.T) {
+			derive(t, true)
+			_, err := userAPI.PerformAdminCreateRegistrationToken(ctx, &capi.RegistrationToken{
+				Token: ptrTo("prefixtoken"), Pending: ptrTo(int32(0)), Completed: ptrTo(int32(0)),
+			})
 			require.NoError(t, err)
-			assert.Equal(t, "callguest", profile.DisplayName)
+			resp := registerWithToken(t, userAPI, &cfg.ClientAPI, CallGuestLocalpartPrefix+"abc", "password-token", "prefixtoken")
+			require.Equal(t, http.StatusBadRequest, resp.Code, "%+v", resp)
+			assert.Equal(t, spec.InvalidUsername(""), withoutMessage(resp.JSON))
+			// Nor an invalid username, which Register let through unchecked.
+			resp = registerWithToken(t, userAPI, &cfg.ClientAPI, "Not Valid!", "password-token", "prefixtoken")
+			require.Equal(t, http.StatusBadRequest, resp.Code, "%+v", resp)
+		})
+
+		t.Run("open registration cannot take the call guest prefix", func(t *testing.T) {
+			cfg.ClientAPI.RegistrationDisabled = false
+			defer func() { cfg.ClientAPI.RegistrationDisabled = true }()
+			derive(t, false)
+			resp := Register(httptest.NewRequest(http.MethodPost, "/?kind=user",
+				strings.NewReader(`{"username":"`+CallGuestLocalpartPrefix+`abc","password":"0123456789abcdef"}`)), userAPI, &cfg.ClientAPI)
+			require.Equal(t, http.StatusBadRequest, resp.Code, "%+v", resp)
+			assert.Equal(t, spec.InvalidUsername(""), withoutMessage(resp.JSON))
+		})
+
+		t.Run("shared-secret registration cannot take the call guest prefix", func(t *testing.T) {
+			derive(t, true)
+			sr := NewSharedSecretRegistration(cfg.ClientAPI.RegistrationSharedSecret)
+			nonce := sr.GenerateNonce()
+			username, password := CallGuestLocalpartPrefix+"abc", "wonderland"
+			mac := hmac.New(sha1.New, []byte(cfg.ClientAPI.RegistrationSharedSecret))
+			_, err := mac.Write([]byte(strings.Join([]string{nonce, username, password, "notadmin"}, "\x00")))
+			require.NoError(t, err)
+			body, err := json.Marshal(map[string]any{
+				"nonce": nonce, "username": username, "password": password, "admin": false, "mac": hex.EncodeToString(mac.Sum(nil)),
+			})
+			require.NoError(t, err)
+			resp := handleSharedSecretRegistration(&cfg.ClientAPI, userAPI, sr, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+			require.Equal(t, http.StatusBadRequest, resp.Code, "%+v", resp)
+			assert.Equal(t, spec.InvalidUsername(""), withoutMessage(resp.JSON))
 		})
 
 		t.Run("a registration token still creates a user", func(t *testing.T) {
@@ -133,4 +191,14 @@ func TestRegisterCallGuest(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, resp.Code)
 		})
 	})
+}
+
+// withoutMessage returns a Matrix error without its message, to compare error
+// codes.
+func withoutMessage(body any) any {
+	if matrixErr, ok := body.(spec.MatrixError); ok {
+		matrixErr.Err = ""
+		return matrixErr
+	}
+	return body
 }
