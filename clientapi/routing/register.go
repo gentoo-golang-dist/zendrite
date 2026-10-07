@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -727,11 +728,9 @@ func handleRegistrationFlow(
 		)
 	}
 
-	registrationEnabled := !cfg.RegistrationDisabled
-	if v := cfg.Matrix.VirtualHost(r.ServerName); v != nil {
-		registrationEnabled, _ = v.RegistrationAllowed()
-	}
-	if !registrationEnabled && r.Auth.Type != authtypes.LoginTypeSharedSecret && r.Auth.Type != authtypes.LoginTypeRegistrationToken {
+	registrationEnabled := registrationEnabledFor(cfg, r.ServerName)
+	if !registrationEnabled && !callGuestRegistration(cfg, r.ServerName) &&
+		r.Auth.Type != authtypes.LoginTypeSharedSecret && r.Auth.Type != authtypes.LoginTypeRegistrationToken {
 		return util.JSONResponse{
 			Code: http.StatusForbidden,
 			JSON: spec.Forbidden(
@@ -816,6 +815,37 @@ func handleRegistrationFlow(
 		req, r, sessionID, cfg, userAPI)
 }
 
+// registrationEnabledFor reports whether open registration of normal accounts
+// is enabled for the given server name, honoring virtual hosts.
+func registrationEnabledFor(cfg *config.ClientAPI, serverName spec.ServerName) bool {
+	if v := cfg.Matrix.VirtualHost(serverName); v != nil {
+		enabled, _ := v.RegistrationAllowed()
+		return enabled
+	}
+	return !cfg.RegistrationDisabled
+}
+
+// callGuestRegistration reports whether open sign-ups on the given server
+// name create call guests: call guests are enabled and open registration of
+// normal accounts is not, globally or for the virtual host.
+func callGuestRegistration(cfg *config.ClientAPI, serverName spec.ServerName) bool {
+	return cfg.CallGuests.Enabled() && !registrationEnabledFor(cfg, serverName)
+}
+
+// registrationAccountType picks the kind of account a completed
+// user-interactive registration creates. A registration token always yields
+// a normal account; otherwise, while open registration is closed, the
+// registration can only have been let through for a call guest.
+func registrationAccountType(cfg *config.ClientAPI, serverName spec.ServerName, completed []authtypes.LoginType) userapi.AccountType {
+	if slices.Contains(completed, authtypes.LoginTypeRegistrationToken) {
+		return userapi.AccountTypeUser
+	}
+	if callGuestRegistration(cfg, serverName) {
+		return userapi.AccountTypeCallGuest
+	}
+	return userapi.AccountTypeUser
+}
+
 // handleApplicationServiceRegistration handles the registration of an
 // application service's user by validating the AS from its access token and
 // registering the user. Its two first parameters must be the two return values
@@ -876,7 +906,7 @@ func checkAndCompleteFlow(
 		resp := completeRegistration(
 			req.Context(), userAPI, r.Username, r.ServerName, "", r.Password, "", req.RemoteAddr,
 			req.UserAgent(), sessionID, r.InhibitLogin, r.InitialDisplayName, r.DeviceID,
-			userapi.AccountTypeUser, refreshableLifetime(cfg, r.RefreshToken),
+			registrationAccountType(cfg, r.ServerName, flow), refreshableLifetime(cfg, r.RefreshToken),
 		)
 		finaliseRegistrationToken(req, userAPI, sessionID, resp.Code == http.StatusOK)
 		return resp
