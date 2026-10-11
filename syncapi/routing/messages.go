@@ -354,11 +354,11 @@ func (r *messagesReq) retrieveEvents(ctx context.Context, rsAPI api.SyncRoomserv
 	if len(streamEvents) == 0 && !topologyHadEvents {
 		// The topology query itself found no events: we are at a backward extremity or the
 		// beginning of the room. Check for backfill opportunities.
-		if events, err = r.handleEmptyEventsSlice(); err != nil { //nolint:contextcheck
+		if events, err = r.handleEmptyEventsSlice(); err != nil {
 			return []synctypes.ClientEvent{}, *r.from, emptyToken, err
 		}
 	} else if len(streamEvents) > 0 {
-		if events, err = r.handleNonEmptyEventsSlice(streamEvents); err != nil { //nolint:contextcheck
+		if events, err = r.handleNonEmptyEventsSlice(streamEvents); err != nil {
 			return []synctypes.ClientEvent{}, *r.from, emptyToken, err
 		}
 	}
