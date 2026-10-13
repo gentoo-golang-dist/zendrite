@@ -1,0 +1,19 @@
+  name: Sync with upstream
+  on:
+    push:
+    schedule:
+      - cron: "5 */6 * * *"
+    workflow_dispatch:
+
+  jobs:
+    sync-mirror:
+      runs-on: ubuntu-latest
+      permissions:
+        contents: write
+      steps:
+        - name: Update mirror
+          uses: projg2/golang-dist-mirror-action@v1
+          with:
+            token: ${{ secrets.PUSH_TOKEN }}
+            
+            
