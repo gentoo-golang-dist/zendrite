@@ -1,0 +1,20 @@
+
+name: Create golang vendor dist
+on:
+  push:
+    tags:
+      - '**'
+
+jobs:
+  golang-dist:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create golang dist
+        uses: projg2/golang-dist-action@v1
+        with:
+          dist-filename: zendrite-3.5.0
+          exclude-directories: 
+          vendor-dir: zendrite-3.5.0
+
