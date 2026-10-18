@@ -15,5 +15,4 @@
           uses: projg2/golang-dist-mirror-action@v1
           with:
             token: ${{ secrets.PUSH_TOKEN }}
-            
-            
+            upstream-repo: "https://codefloe.com/pat-s/zendrite.git"
