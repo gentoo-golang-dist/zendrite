@@ -72,8 +72,10 @@ const selectRoomNIDForUpdateSQL = "" +
 const selectResyncStateNIDSQL = "" +
 	"SELECT resync_state_nid FROM roomserver_rooms WHERE room_nid = $1"
 
+// SQLite numbers $N placeholders by first appearance, so they must appear in
+// ascending order for the arguments to bind to the right columns.
 const updateResyncStateNIDSQL = "" +
-	"UPDATE roomserver_rooms SET resync_state_nid = $2 WHERE room_nid = $1"
+	"UPDATE roomserver_rooms SET resync_state_nid = $1 WHERE room_nid = $2"
 
 type roomStatements struct {
 	db                                 *sql.DB
@@ -330,6 +332,6 @@ func (s *roomStatements) UpdateResyncStateNID(
 	ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, resyncStateNID types.StateSnapshotNID,
 ) error {
 	stmt := sqlutil.TxStmt(txn, s.updateResyncStateNIDStmt)
-	_, err := stmt.ExecContext(ctx, int64(roomNID), int64(resyncStateNID))
+	_, err := stmt.ExecContext(ctx, int64(resyncStateNID), int64(roomNID))
 	return err
 }

@@ -241,6 +241,65 @@ func reconcileStateEpoch(ownKey types.StateKeyTuple, eventIsStateEvent bool, rem
 	return keepRemoved, keepAdded
 }
 
+// applyOwnKeyChange stores a state snapshot that is the current snapshot with
+// the triggering event's own state-key change applied, as decided by
+// reconcileStateEpoch. When there is nothing to apply the current snapshot is
+// returned unchanged.
+func (u *latestEventsUpdater) applyOwnKeyChange(
+	ctx context.Context, roomState *state.StateResolution, removed, added []types.StateEntry,
+) (types.StateSnapshotNID, error) {
+	if len(removed) == 0 && len(added) == 0 {
+		return u.oldStateNID, nil
+	}
+
+	// A later state block overrides earlier ones for the same key, so when
+	// every removed key is replaced by an added entry the change is a single
+	// block appended to the current snapshot's blocks.
+	replaced := make(map[types.StateKeyTuple]struct{}, len(added))
+	for _, e := range added {
+		replaced[e.StateKeyTuple] = struct{}{}
+	}
+	appendOnly := true
+	for _, e := range removed {
+		if _, ok := replaced[e.StateKeyTuple]; !ok {
+			appendOnly = false
+			break
+		}
+	}
+	// AddState may filter its state argument in place, so hand it a copy.
+	delta := append([]types.StateEntry(nil), added...)
+
+	if appendOnly {
+		blockLists, err := u.updater.StateBlockNIDs(ctx, []types.StateSnapshotNID{u.oldStateNID})
+		if err != nil {
+			return 0, fmt.Errorf("u.updater.StateBlockNIDs: %w", err)
+		}
+		if len(blockLists) != 1 {
+			return 0, fmt.Errorf("expected one state block list for snapshot %d, got %d", u.oldStateNID, len(blockLists))
+		}
+		return u.updater.AddState(ctx, u.roomInfo.RoomNID, blockLists[0].StateBlockNIDs, delta)
+	}
+
+	// Otherwise a key is dropped outright, which blocks cannot express, so
+	// store the full resulting state.
+	current, err := roomState.LoadStateAtSnapshot(ctx, u.oldStateNID)
+	if err != nil {
+		return 0, fmt.Errorf("roomState.LoadStateAtSnapshot: %w", err)
+	}
+	drop := make(map[types.StateKeyTuple]struct{}, len(removed))
+	for _, e := range removed {
+		drop[e.StateKeyTuple] = struct{}{}
+	}
+	full := make([]types.StateEntry, 0, len(current)+len(delta))
+	for _, e := range current {
+		if _, ok := drop[e.StateKeyTuple]; !ok {
+			full = append(full, e)
+		}
+	}
+	full = append(full, delta...)
+	return u.updater.AddState(ctx, u.roomInfo.RoomNID, nil, types.DeduplicateStateEntries(full))
+}
+
 // removesCollateralMembers reports whether the removed state delta drops a
 // membership event for a state key other than ownKey (the triggering event's
 // own state-key tuple). After a partial-state resync a single event never
@@ -397,8 +456,14 @@ func (u *latestEventsUpdater) latestState() error {
 
 				// Keep the current (resync-authoritative) state snapshot, but
 				// still apply the triggering event's own state-key change so
-				// its membership row is not left frozen.
-				u.newStateNID = u.oldStateNID
+				// its membership row is not left frozen. The change must land
+				// in the stored snapshot as well as the output delta: soft-fail
+				// auth checks read the snapshot, so a join reported downstream
+				// but missing here leaves the sender "not in room" (#535).
+				u.newStateNID, err = u.applyOwnKeyChange(ctx, &roomState, keepRemoved, keepAdded)
+				if err != nil {
+					return fmt.Errorf("u.applyOwnKeyChange: %w", err)
+				}
 				u.removed = keepRemoved
 				u.added = keepAdded
 				return nil
