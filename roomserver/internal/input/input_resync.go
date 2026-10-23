@@ -305,6 +305,19 @@ func (r *Inputer) UpdateStateAfterResync(ctx context.Context, roomID string, sta
 		return false, nil, fmt.Errorf("updater.SetLatestEvents: %w", err)
 	}
 
+	// The resync only replaces the room's current state. The latest events still
+	// carry the partial state they were stored with, and every later event's
+	// state is calculated from them, so fill in what they are missing.
+	// Otherwise each recalculation drops resync-only members again.
+	var repaired int
+	repaired, err = repairExtremityState(ctx, updater, &roomState, roomInfo.RoomNID, latestEvents, stateEntries)
+	if err != nil {
+		return false, nil, fmt.Errorf("repairExtremityState: %w", err)
+	}
+	if repaired > 0 {
+		logger.WithField("repaired_extremities", repaired).Info("Filled in partial state at forward extremities")
+	}
+
 	// MSC3706 State Epoch Fix: Record the state snapshot NID after resync completes.
 	// This marks the current state as the "authoritative" state from the partial state resync.
 	// When processing events later, we use this to detect and suppress state regressions
@@ -373,6 +386,62 @@ func overlappingOldMembers(remoteState, oldState []types.StateEntry) []types.Sta
 		}
 	}
 	return out
+}
+
+// repairExtremityState fills in the state stored before each forward extremity
+// with the resync state entries for keys it lacks, and returns how many
+// extremities it changed. Keys the extremity already has are kept, since they
+// can be newer than the resync state.
+func repairExtremityState(
+	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
+	roomNID types.RoomNID, latestEvents []types.StateAtEventAndReference, resyncState []types.StateEntry,
+) (int, error) {
+	repaired := 0
+	for _, latest := range latestEvents {
+		if latest.BeforeStateSnapshotNID == 0 {
+			continue
+		}
+		have, err := roomState.LoadStateAtSnapshot(ctx, latest.BeforeStateSnapshotNID)
+		if err != nil {
+			return repaired, fmt.Errorf("roomState.LoadStateAtSnapshot: %w", err)
+		}
+		missing := missingStateEntries(have, resyncState)
+		if len(missing) == 0 {
+			continue
+		}
+		blockLists, err := updater.StateBlockNIDs(ctx, []types.StateSnapshotNID{latest.BeforeStateSnapshotNID})
+		if err != nil {
+			return repaired, fmt.Errorf("updater.StateBlockNIDs: %w", err)
+		}
+		if len(blockLists) != 1 {
+			return repaired, fmt.Errorf("expected one state block list for snapshot %d, got %d", latest.BeforeStateSnapshotNID, len(blockLists))
+		}
+		stateNID, err := updater.AddState(ctx, roomNID, blockLists[0].StateBlockNIDs, missing)
+		if err != nil {
+			return repaired, fmt.Errorf("updater.AddState: %w", err)
+		}
+		if err = updater.SetState(ctx, latest.EventNID, stateNID); err != nil {
+			return repaired, fmt.Errorf("updater.SetState: %w", err)
+		}
+		repaired++
+	}
+	return repaired, nil
+}
+
+// missingStateEntries returns the entries of resyncState whose state keys do
+// not appear in have.
+func missingStateEntries(have, resyncState []types.StateEntry) []types.StateEntry {
+	keys := make(map[types.StateKeyTuple]struct{}, len(have))
+	for _, e := range have {
+		keys[e.StateKeyTuple] = struct{}{}
+	}
+	var missing []types.StateEntry
+	for _, e := range resyncState {
+		if _, ok := keys[e.StateKeyTuple]; !ok {
+			missing = append(missing, e)
+		}
+	}
+	return missing
 }
 
 // reconcileResyncMembers merges membership state for a partial-state resync.

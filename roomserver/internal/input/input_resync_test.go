@@ -184,3 +184,24 @@ func makeIDs(n int) []string {
 	}
 	return ids
 }
+
+// Only keys the extremity lacks are filled in. A key it already has keeps its
+// own event, since that can be newer than the resync state.
+func TestMissingStateEntries(t *testing.T) {
+	have := []types.StateEntry{
+		nonMemberEntry(types.MRoomCreateNID, 1),
+		memberEntry(localKey, 10), // newer than the resync's entry for this key
+	}
+	resync := []types.StateEntry{
+		nonMemberEntry(types.MRoomCreateNID, 1),
+		memberEntry(localKey, 5),
+		memberEntry(remoteKey, 20),
+	}
+	missing := missingStateEntries(have, resync)
+	if len(missing) != 1 || missing[0] != memberEntry(remoteKey, 20) {
+		t.Fatalf("expected only the remote member to be filled in, got %v", missing)
+	}
+	if got := missingStateEntries(resync, resync); len(got) != 0 {
+		t.Fatalf("expected nothing missing from complete state, got %v", got)
+	}
+}

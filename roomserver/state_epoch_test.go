@@ -107,3 +107,64 @@ func TestStateEpochGuardKeepsJoinInCurrentState(t *testing.T) {
 		}
 	})
 }
+
+// A partial-state resync must also repair the state stored at the forward
+// extremities. Otherwise the next event's state, calculated from them, drops
+// the resync-only members again; with a single such member the delta is
+// balanced, so the state-epoch guard does not catch it.
+func TestResyncRepairsExtremityState(t *testing.T) {
+	alice := test.NewUser(t)
+	bob := test.NewUser(t)
+	dave := test.NewUser(t)
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeRig := testrig.CreateConfig(t, dbType)
+		defer closeRig()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		db, err := storage.Open(processCtx.Context(), cm, &cfg.RoomServer.Database, caches) //nolint:contextcheck
+		require.NoError(t, err)
+
+		natsInstance := jetstream.NATSInstance{}
+		jsCtx, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
+		defer jetstream.DeleteAllStreams(jsCtx, &cfg.Global.JetStream)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		room := test.NewRoom(t, alice, test.RoomPreset(test.PresetPublicChat))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
+
+		// Bob's join is only known from the resync's /state_ids, not from the
+		// DAG state of any forward extremity.
+		bobJoin := room.CreateEvent(t, bob, spec.MRoomMember, map[string]any{"membership": "join"}, test.WithStateKey(bob.ID))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindOutlier, []*types.HeaderedEvent{bobJoin}, "test", "test", "test", nil, false))
+
+		stateIDs := []string{bobJoin.EventID()}
+		for _, ev := range room.CurrentState() {
+			stateIDs = append(stateIDs, ev.EventID())
+		}
+		require.NoError(t, rsAPI.UpdateCurrentStateAfterResync(ctx, room.ID, stateIDs))
+
+		daveJoin := room.CreateAndInsert(t, dave, spec.MRoomMember, map[string]any{"membership": "join"}, test.WithStateKey(dave.ID))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{daveJoin}, "test", "test", "test", nil, false))
+
+		msg := room.CreateAndInsert(t, dave, "m.room.message", map[string]any{"body": "hello", "msgtype": "m.text"})
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{msg}, "test", "test", "test", nil, false))
+
+		roomInfo, err := db.RoomInfo(ctx, room.ID)
+		require.NoError(t, err)
+		latestIDs, _, _, err := db.LatestEventIDs(ctx, roomInfo.RoomNID)
+		require.NoError(t, err)
+		require.True(t, slices.Contains(latestIDs, msg.EventID()), "dave's message must not be soft-failed, latest events: %v", latestIDs)
+
+		for _, user := range []*test.User{bob, dave} {
+			ev, err := db.GetStateEvent(ctx, room.ID, spec.MRoomMember, user.ID)
+			require.NoError(t, err)
+			require.NotNil(t, ev, "%s must be in the current state", user.ID)
+			membership, err := ev.Membership()
+			require.NoError(t, err)
+			require.Equal(t, spec.Join, membership)
+		}
+	})
+}
