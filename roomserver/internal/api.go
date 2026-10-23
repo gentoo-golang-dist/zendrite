@@ -231,6 +231,12 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 		logrus.WithError(err).Panic("failed to start roomserver input API")
 	}
 
+	// Repair rooms whose partial state resync finished before resyncs
+	// repaired the forward extremities themselves.
+	r.ProcessContext.Go(func() {
+		r.RepairResyncedRooms(r.ProcessContext.Context())
+	})
+
 	// When auto-purge is enabled, sweep any rooms that are already eligible
 	// at startup (e.g. left over from a previous run, or from a crash
 	// mid-purge during the previous shutdown).

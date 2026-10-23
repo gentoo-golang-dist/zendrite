@@ -81,6 +81,12 @@ const selectResyncStateNIDSQL = "" +
 const updateResyncStateNIDSQL = "" +
 	"UPDATE roomserver_rooms SET resync_state_nid = $2 WHERE room_nid = $1"
 
+const selectResyncRepairPendingSQL = "" +
+	"SELECT room_nid FROM roomserver_rooms WHERE resync_repair_pending = TRUE"
+
+const clearResyncRepairPendingSQL = "" +
+	"UPDATE roomserver_rooms SET resync_repair_pending = FALSE WHERE room_nid = $1"
+
 type roomStatements struct {
 	insertRoomNIDStmt                  *sql.Stmt
 	selectRoomNIDStmt                  *sql.Stmt
@@ -94,6 +100,8 @@ type roomStatements struct {
 	bulkSelectRoomNIDsStmt             *sql.Stmt
 	selectResyncStateNIDStmt           *sql.Stmt
 	updateResyncStateNIDStmt           *sql.Stmt
+	selectResyncRepairPendingStmt      *sql.Stmt
+	clearResyncRepairPendingStmt       *sql.Stmt
 }
 
 func CreateRoomsTable(db *sql.DB) error {
@@ -105,6 +113,9 @@ func CreateRoomsTable(db *sql.DB) error {
 	m.AddMigrations(sqlutil.Migration{
 		Version: "roomserver: add resync_state_nid to rooms",
 		Up:      deltas.UpResyncStateNID,
+	}, sqlutil.Migration{
+		Version: "roomserver: flag resynced rooms for extremity repair",
+		Up:      deltas.UpResyncRepairPending,
 	})
 	return m.Up(context.Background())
 }
@@ -125,6 +136,8 @@ func PrepareRoomsTable(db *sql.DB) (tables.Rooms, error) {
 		{&s.bulkSelectRoomNIDsStmt, bulkSelectRoomNIDsSQL},
 		{&s.selectResyncStateNIDStmt, selectResyncStateNIDSQL},
 		{&s.updateResyncStateNIDStmt, updateResyncStateNIDSQL},
+		{&s.selectResyncRepairPendingStmt, selectResyncRepairPendingSQL},
+		{&s.clearResyncRepairPendingStmt, clearResyncRepairPendingSQL},
 	}.Prepare(db)
 }
 
@@ -312,5 +325,29 @@ func (s *roomStatements) UpdateResyncStateNID(
 ) error {
 	stmt := sqlutil.TxStmt(txn, s.updateResyncStateNIDStmt)
 	_, err := stmt.ExecContext(ctx, int64(roomNID), int64(resyncStateNID))
+	return err
+}
+
+func (s *roomStatements) SelectResyncRepairPending(ctx context.Context, txn *sql.Tx) ([]types.RoomNID, error) {
+	stmt := sqlutil.TxStmt(txn, s.selectResyncRepairPendingStmt)
+	rows, err := stmt.QueryContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectResyncRepairPending: rows.close() failed")
+	var roomNIDs []types.RoomNID
+	for rows.Next() {
+		var roomNID int64
+		if err = rows.Scan(&roomNID); err != nil {
+			return nil, err
+		}
+		roomNIDs = append(roomNIDs, types.RoomNID(roomNID))
+	}
+	return roomNIDs, rows.Err()
+}
+
+func (s *roomStatements) ClearResyncRepairPending(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) error {
+	stmt := sqlutil.TxStmt(txn, s.clearResyncRepairPendingStmt)
+	_, err := stmt.ExecContext(ctx, int64(roomNID))
 	return err
 }

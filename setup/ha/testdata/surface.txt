@@ -188,6 +188,7 @@ column roomserver_room_aliases | creator_id | text | NO |
 column roomserver_room_aliases | room_id | text | NO |
 column roomserver_rooms | last_event_sent_nid | bigint | NO | 0
 column roomserver_rooms | latest_event_nids | ARRAY | NO | '{}'::bigint[]
+column roomserver_rooms | resync_repair_pending | boolean | NO | false
 column roomserver_rooms | resync_state_nid | bigint | NO | 0
 column roomserver_rooms | room_id | text | NO |
 column roomserver_rooms | room_nid | bigint | NO | nextval('roomserver_room_nid_seq'::regclass)
@@ -934,6 +935,7 @@ constraint roomserver_rooms | roomserver_room_id_unique | UNIQUE (room_id)
 constraint roomserver_rooms | roomserver_rooms_last_event_sent_nid_not_null | NOT NULL last_event_sent_nid
 constraint roomserver_rooms | roomserver_rooms_latest_event_nids_not_null | NOT NULL latest_event_nids
 constraint roomserver_rooms | roomserver_rooms_pkey | PRIMARY KEY (room_nid)
+constraint roomserver_rooms | roomserver_rooms_resync_repair_pending_not_null | NOT NULL resync_repair_pending
 constraint roomserver_rooms | roomserver_rooms_resync_state_nid_not_null | NOT NULL resync_state_nid
 constraint roomserver_rooms | roomserver_rooms_room_id_not_null | NOT NULL room_id
 constraint roomserver_rooms | roomserver_rooms_room_nid_not_null | NOT NULL room_nid
@@ -1306,6 +1308,7 @@ migration roomserver: add resync_state_nid to rooms
 migration roomserver: backfill annotations
 migration roomserver: drop column reference_sha from roomserver_events
 migration roomserver: drop column reference_sha from roomserver_prev_events
+migration roomserver: flag resynced rooms for extremity repair
 migration roomserver: published appservice
 migration roomserver: published appservice pkey
 migration roomserver: state blocks refactor

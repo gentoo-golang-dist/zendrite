@@ -388,6 +388,85 @@ func overlappingOldMembers(remoteState, oldState []types.StateEntry) []types.Sta
 	return out
 }
 
+// RepairResyncedRooms repairs the forward extremity state of rooms that
+// completed a partial state resync before UpdateStateAfterResync repaired it
+// itself. The guard against state regressions kept their current state
+// correct, so it is what the extremities are filled in from. Each room is
+// repaired once; a failure leaves it flagged for the next start.
+func (r *Inputer) RepairResyncedRooms(ctx context.Context) {
+	roomNIDs, err := r.DB.ResyncRepairPendingRooms(ctx)
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to list rooms awaiting resync repair")
+		return
+	}
+	if len(roomNIDs) == 0 {
+		return
+	}
+	repairedRooms := 0
+	for _, roomNID := range roomNIDs {
+		if ctx.Err() != nil {
+			return
+		}
+		repaired, rerr := r.repairResyncedRoom(ctx, roomNID)
+		if rerr != nil {
+			logrus.WithError(rerr).WithField("room_nid", roomNID).Warn("Failed to repair forward extremities of resynced room")
+			continue
+		}
+		if repaired > 0 {
+			repairedRooms++
+		}
+	}
+	logrus.WithFields(logrus.Fields{
+		"rooms":          len(roomNIDs),
+		"repaired_rooms": repairedRooms,
+	}).Info("Repaired forward extremities of previously resynced rooms")
+}
+
+// repairResyncedRoom fills in the state before the room's forward extremities
+// from its current state and clears its repair flag, returning how many
+// extremities it changed.
+func (r *Inputer) repairResyncedRoom(ctx context.Context, roomNID types.RoomNID) (repaired int, err error) {
+	roomInfo, err := r.DB.RoomInfoByNID(ctx, roomNID)
+	if err != nil {
+		return 0, fmt.Errorf("r.DB.RoomInfoByNID: %w", err)
+	}
+	if roomInfo == nil || roomInfo.IsStub() {
+		return 0, nil
+	}
+	// A room back in partial state has a resync of its own coming, which
+	// repairs the extremities from complete state; its current state is
+	// partial now, so it must not be used.
+	partial, err := r.DB.IsRoomPartialState(ctx, roomNID)
+	if err != nil {
+		return 0, fmt.Errorf("r.DB.IsRoomPartialState: %w", err)
+	}
+
+	var succeeded bool
+	updater, err := r.DB.GetRoomUpdater(ctx, roomInfo)
+	if err != nil {
+		return 0, fmt.Errorf("r.DB.GetRoomUpdater: %w", err)
+	}
+	defer sqlutil.EndTransactionWithCheck(updater, &succeeded, &err)
+
+	if !partial {
+		roomState := state.NewStateResolution(updater, roomInfo, r.Queryer)
+		var current []types.StateEntry
+		current, err = roomState.LoadStateAtSnapshot(ctx, updater.CurrentStateSnapshotNID())
+		if err != nil {
+			return 0, fmt.Errorf("roomState.LoadStateAtSnapshot: %w", err)
+		}
+		repaired, err = repairExtremityState(ctx, updater, &roomState, roomNID, updater.LatestEvents(), current)
+		if err != nil {
+			return 0, fmt.Errorf("repairExtremityState: %w", err)
+		}
+	}
+	if err = updater.ClearResyncRepairPending(roomNID); err != nil {
+		return 0, fmt.Errorf("updater.ClearResyncRepairPending: %w", err)
+	}
+	succeeded = true
+	return repaired, nil
+}
+
 // repairExtremityState fills in the state stored before each forward extremity
 // with the resync state entries for keys it lacks, and returns how many
 // extremities it changed. Keys the extremity already has are kept, since they

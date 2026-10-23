@@ -91,6 +91,11 @@ type Rooms interface {
 	// UpdateResyncStateNID records the state snapshot NID after a partial state resync completes.
 	// This is used to detect and prevent state regressions from out-of-order events.
 	UpdateResyncStateNID(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, resyncStateNID types.StateSnapshotNID) error
+	// SelectResyncRepairPending returns the rooms whose forward extremities still
+	// need repairing after a partial state resync completed before the repair existed.
+	SelectResyncRepairPending(ctx context.Context, txn *sql.Tx) ([]types.RoomNID, error)
+	// ClearResyncRepairPending marks a room's forward extremities as repaired.
+	ClearResyncRepairPending(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) error
 }
 
 type StateSnapshot interface {

@@ -2401,6 +2401,12 @@ func (d *Database) GetPartialStateDeviceListStreamID(ctx context.Context, roomNI
 	return d.PartialStateTable.SelectDeviceListStreamID(ctx, nil, roomNID)
 }
 
+// ResyncRepairPendingRooms returns the rooms whose forward extremities still
+// need repairing after a partial state resync.
+func (d *Database) ResyncRepairPendingRooms(ctx context.Context) ([]types.RoomNID, error) {
+	return d.RoomsTable.SelectResyncRepairPending(ctx, nil)
+}
+
 // GetAllPartialStateRooms returns all rooms that currently have partial state.
 func (d *Database) GetAllPartialStateRooms(ctx context.Context) ([]types.RoomNID, error) {
 	return d.PartialStateTable.SelectAllPartialStateRooms(ctx, nil)

@@ -268,3 +268,10 @@ func (u *RoomUpdater) UpdateResyncStateNID(roomNID types.RoomNID, resyncStateNID
 func (u *RoomUpdater) SelectResyncStateNID(roomNID types.RoomNID) (types.StateSnapshotNID, error) {
 	return u.d.RoomsTable.SelectResyncStateNID(u.ctx, u.txn, roomNID)
 }
+
+// ClearResyncRepairPending marks the room's forward extremities as repaired after a partial state resync.
+func (u *RoomUpdater) ClearResyncRepairPending(roomNID types.RoomNID) error {
+	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		return u.d.RoomsTable.ClearResyncRepairPending(u.ctx, txn, roomNID)
+	})
+}

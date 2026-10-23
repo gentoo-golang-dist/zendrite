@@ -239,6 +239,9 @@ type Database interface {
 	GetPartialStateDeviceListStreamID(ctx context.Context, roomNID types.RoomNID) (int64, error)
 	// GetAllPartialStateRooms returns all rooms that currently have partial state
 	GetAllPartialStateRooms(ctx context.Context) ([]types.RoomNID, error)
+	// ResyncRepairPendingRooms returns the rooms whose forward extremities still
+	// need repairing after a partial state resync.
+	ResyncRepairPendingRooms(ctx context.Context) ([]types.RoomNID, error)
 	// RoomIDFromNID returns the room ID for a given room NID
 	RoomIDFromNID(ctx context.Context, roomNID types.RoomNID) (string, error)
 }
@@ -288,6 +291,9 @@ type RoomDatabase interface {
 	IsRoomPartialState(ctx context.Context, roomNID types.RoomNID) (bool, error)
 	// GetPartialStateJoinServer returns the server we joined through for a partial state room
 	GetPartialStateJoinServer(ctx context.Context, roomNID types.RoomNID) (string, error)
+	// ResyncRepairPendingRooms returns the rooms whose forward extremities still
+	// need repairing after a partial state resync.
+	ResyncRepairPendingRooms(ctx context.Context) ([]types.RoomNID, error)
 	// ClientTransactionEventID returns the event a client transaction produced,
 	// or "" if the transaction is unknown.
 	ClientTransactionEventID(ctx context.Context, roomID, senderID string, sessionID int64, transactionID string) (string, error)
