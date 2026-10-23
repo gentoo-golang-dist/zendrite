@@ -605,7 +605,7 @@ func TestAdminUpdateRegistrationToken(t *testing.T) {
 			{
 				name:           "Alice can UPDATE a token's uses_allowed and expiry_time property",
 				requestingUser: aliceAdmin,
-				wantOK:         false,
+				wantOK:         true,
 				withHeader:     true,
 				token:          "alice_token1",
 				requestOpt: test.WithJSONBody(t, map[string]any{
@@ -640,7 +640,7 @@ func TestAdminUpdateRegistrationToken(t *testing.T) {
 			{
 				name:           "Alice can UPDATE token specifying uses_allowed as null - Valid for infinite uses",
 				requestingUser: aliceAdmin,
-				wantOK:         false,
+				wantOK:         true,
 				withHeader:     true,
 				token:          "alice_token1",
 				requestOpt: test.WithJSONBody(t, map[string]any{
@@ -651,7 +651,7 @@ func TestAdminUpdateRegistrationToken(t *testing.T) {
 			{
 				name:           "Alice can UPDATE token specifying expiry_time AS null - Valid for infinite time",
 				requestingUser: aliceAdmin,
-				wantOK:         false,
+				wantOK:         true,
 				withHeader:     true,
 				token:          "alice_token1",
 				requestOpt: test.WithJSONBody(t, map[string]any{

@@ -45,14 +45,16 @@ const getTokenSQL = "" +
 const deleteTokenSQL = "" +
 	"DELETE FROM userapi_registration_tokens WHERE token = $1"
 
+// SQLite numbers $N placeholders by first appearance, so the update statements
+// below introduce them in ascending order for the arguments to bind correctly.
 const updateTokenUsesAllowedAndExpiryTimeSQL = "" +
-	"UPDATE userapi_registration_tokens SET uses_allowed = $2, expiry_time = $3 WHERE token = $1"
+	"UPDATE userapi_registration_tokens SET uses_allowed = $1, expiry_time = $2 WHERE token = $3"
 
 const updateTokenUsesAllowedSQL = "" +
-	"UPDATE userapi_registration_tokens SET uses_allowed = $2 WHERE token = $1"
+	"UPDATE userapi_registration_tokens SET uses_allowed = $1 WHERE token = $2"
 
 const updateTokenExpiryTimeSQL = "" +
-	"UPDATE userapi_registration_tokens SET expiry_time = $2 WHERE token = $1"
+	"UPDATE userapi_registration_tokens SET expiry_time = $1 WHERE token = $2"
 
 const updateTokenIncrementPendingSQL = "" +
 	"UPDATE userapi_registration_tokens SET pending = pending + 1 WHERE token = $1"
@@ -213,19 +215,19 @@ func (s *registrationTokenStatements) UpdateRegistrationToken(ctx context.Contex
 	switch {
 	case usesAllowedPresent && expiryTimePresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenUsesAllowedAndExpiryTimeStatement)
-		_, err := stmt.ExecContext(ctx, tokenString, usesAllowed, expiryTime)
+		_, err := stmt.ExecContext(ctx, usesAllowed, expiryTime, tokenString)
 		if err != nil {
 			return nil, err
 		}
 	case usesAllowedPresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenUsesAllowedStatement)
-		_, err := stmt.ExecContext(ctx, tokenString, usesAllowed)
+		_, err := stmt.ExecContext(ctx, usesAllowed, tokenString)
 		if err != nil {
 			return nil, err
 		}
 	case expiryTimePresent:
 		stmt = sqlutil.TxStmt(tx, s.updateTokenExpiryTimeStatement)
-		_, err := stmt.ExecContext(ctx, tokenString, expiryTime)
+		_, err := stmt.ExecContext(ctx, expiryTime, tokenString)
 		if err != nil {
 			return nil, err
 		}
