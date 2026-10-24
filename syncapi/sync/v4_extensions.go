@@ -251,7 +251,7 @@ func (rp *RequestPool) ProcessExtensions(
 
 	// Process receipts extension (PostProcess)
 	if req.Extensions.Receipts != nil && req.Extensions.Receipts.Enabled {
-		receiptsResp, receiptsLastPos, receiptsDelivered, err := rp.processReceiptsExtension(ctx, snapshot, connectionKey, userID, req.Extensions.Receipts.Lists, req.Extensions.Receipts.Rooms, fromPos, toPos, responseLists, roomSubscriptions)
+		receiptsResp, receiptsLastPos, receiptsDelivered, err := rp.processReceiptsExtension(ctx, snapshot, connectionKey, userID, req.Extensions.Receipts.Lists, req.Extensions.Receipts.Rooms, fromPos, toPos, responseLists, roomSubscriptions, responseRooms)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, toPos, nil, ctx.Err()
@@ -815,6 +815,7 @@ func (rp *RequestPool) processReceiptsExtension(
 	_ types.StreamingToken, // unused - using per-connection event-ID tracking
 	actualLists map[string]types.SlidingList, // Actual lists in response
 	actualRoomSubscriptions map[string]bool, // Actual room subscriptions from request
+	responseRooms map[string]types.SlidingRoomData, // Rooms in the response, whose resets limit the receipts sent
 ) (*types.ReceiptsResponse, types.StreamPosition, []types.OutputReceiptEvent, error) {
 	// Determine which rooms to process using unified helper (MSC3959/MSC3960)
 	relevantRoomIDs := findRelevantRoomIDsForExtension(
@@ -879,12 +880,28 @@ func (rp *RequestPool) processReceiptsExtension(
 		}).Debug("[RECEIPTS] Delivering receipt")
 	}
 
+	resetWindows := receiptResetWindows(responseRooms)
+
 	// Group receipts by room (same logic as before)
 	receiptsByRoom := make(map[string][]types.OutputReceiptEvent)
+	withheld := 0
 	for _, receipt := range receipts {
 		// Don't send private read receipts to other users
 		if receipt.Type == "m.read.private" && userID != receipt.UserID {
 			continue
+		}
+		// A room sent from scratch (initial or expanded timeline) has had its
+		// delivered receipts cleared, so every member's latest receipt is new
+		// here. Send only the user's own receipts, which drive unread badges,
+		// and receipts on events in the returned timeline. The rest are
+		// recorded as delivered without being sent, otherwise the next
+		// response would carry all of them instead.
+		if window, reset := resetWindows[receipt.RoomID]; reset && receipt.UserID != userID {
+			if _, inWindow := window[receipt.EventID]; !inWindow {
+				deliveredReceipts = append(deliveredReceipts, receipt)
+				withheld++
+				continue
+			}
 		}
 		receiptsByRoom[receipt.RoomID] = append(receiptsByRoom[receipt.RoomID], receipt)
 	}
@@ -936,7 +953,8 @@ func (rp *RequestPool) processReceiptsExtension(
 	logrus.WithFields(logrus.Fields{
 		"connection_key":  connectionKey,
 		"num_rooms":       len(resp.Rooms),
-		"delivered_count": len(deliveredReceipts),
+		"delivered_count": len(deliveredReceipts) - withheld,
+		"withheld_count":  withheld,
 		"user_id":         userID,
 	}).Info("[RECEIPTS] Returning receipts response")
 
@@ -944,6 +962,24 @@ func (rp *RequestPool) processReceiptsExtension(
 	// Receipts are tracked per-connection via event IDs in separate table
 	// Return deliveredReceipts so caller can update connection state in write transaction
 	return resp, 0, deliveredReceipts, nil
+}
+
+// receiptResetWindows returns, for each response room sent from scratch on
+// this connection (initial, or with an expanded timeline), the IDs of the
+// events in its returned timeline.
+func receiptResetWindows(responseRooms map[string]types.SlidingRoomData) map[string]map[string]struct{} {
+	windows := make(map[string]map[string]struct{})
+	for roomID, room := range responseRooms {
+		if !room.Initial && !room.ExpandedTimeline {
+			continue
+		}
+		window := make(map[string]struct{}, len(room.Timeline))
+		for _, ev := range room.Timeline {
+			window[ev.EventID] = struct{}{}
+		}
+		windows[roomID] = window
+	}
+	return windows
 }
 
 // ReceiptMRead represents the m.read structure for receipts.
