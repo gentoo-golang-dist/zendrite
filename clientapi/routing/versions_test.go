@@ -34,6 +34,7 @@ func TestVersions(t *testing.T) {
 		"org.matrix.msc3916.stable":     true,
 		"org.matrix.simplified_msc3575": true,
 		"org.matrix.msc4140":            false,
+		"org.matrix.msc4140.stable":     false,
 		"org.matrix.msc4143":            false,
 		"org.matrix.msc4354":            true,
 		"org.matrix.msc4222":            true,
@@ -79,7 +80,7 @@ func TestVersions(t *testing.T) {
 		{
 			name:     "delayed events enabled",
 			maxDelay: 24 * time.Hour,
-			features: map[string]bool{"org.matrix.msc4140": true},
+			features: map[string]bool{"org.matrix.msc4140": true, "org.matrix.msc4140.stable": true},
 		},
 		{
 			name: "unknown and inactive entries cannot advertise support",

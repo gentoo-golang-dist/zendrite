@@ -32,13 +32,15 @@ import (
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
-// MSC4140 delayed events, in the unstable form that matrix-js-sdk and Synapse
-// use: a delay query parameter on the send and state endpoints schedules an
-// event, and the management endpoints restart, cancel or send it early.
+// MSC4140 delayed events, in the stable form of the accepted MSC and the
+// unstable form that matrix-js-sdk and Synapse use: a delay query parameter
+// on the send and state endpoints, or the dedicated delayed_event endpoint,
+// schedules an event, and the management endpoints restart, cancel or send
+// it early.
 const (
-	delayQueryParam = "org.matrix.msc4140.delay"
-	// The unstable form of M_DELAY_TOO_LARGE.
-	errorDelayTooLarge spec.MatrixErrorCode = "ORG.MATRIX.MSC4140_DELAY_TOO_LARGE"
+	delayQueryParam                                 = "org.matrix.msc4140.delay"
+	errorDelayTooLarge         spec.MatrixErrorCode = "M_DELAY_TOO_LARGE"
+	errorDelayTooLargeUnstable spec.MatrixErrorCode = "ORG.MATRIX.MSC4140_DELAY_TOO_LARGE"
 	// MSC4140's spelling of the finalized status.
 	statusFinalised = "finalised" //nolint:misspell // MSC4140's spelling
 	// How long the scheduler waits after a storage error.
@@ -114,7 +116,7 @@ func (d *DelayedEvents) Schedule(
 	if resErr := clientutil.UnmarshalJSONRequest(req, &content); resErr != nil {
 		return *resErr
 	}
-	return d.schedule(req, device, roomID, eventType, txnID, stateKey, delayMS, content)
+	return d.schedule(req, device, roomID, eventType, txnID, stateKey, delayMS, content, false)
 }
 
 type delayedEventRequest struct {
@@ -123,13 +125,15 @@ type delayedEventRequest struct {
 	Content  map[string]any `json:"content"`
 }
 
-// ScheduleUnstable implements
+// ScheduleWithBody implements
 //
+//	PUT /_matrix/client/v3/rooms/{roomID}/delayed_event/{eventType}/{txnID}
 //	PUT /_matrix/client/unstable/org.matrix.msc4140/rooms/{roomID}/delayed_event/{eventType}/{txnID}
 //
-// the dedicated scheduling endpoint of the current MSC4140 text.
-func (d *DelayedEvents) ScheduleUnstable(
-	req *http.Request, device *userapi.Device, roomID, eventType, txnID string,
+// the dedicated scheduling endpoint of MSC4140. The stable form answers a
+// delay above the maximum with M_DELAY_TOO_LARGE instead of its unstable code.
+func (d *DelayedEvents) ScheduleWithBody(
+	req *http.Request, device *userapi.Device, roomID, eventType, txnID string, stable bool,
 ) util.JSONResponse {
 	var body delayedEventRequest
 	if resErr := clientutil.UnmarshalJSONRequest(req, &body); resErr != nil {
@@ -147,13 +151,13 @@ func (d *DelayedEvents) ScheduleUnstable(
 			JSON: spec.InvalidParam("delay_ms must be a positive integer"),
 		}
 	}
-	return d.schedule(req, device, roomID, eventType, &txnID, body.StateKey, *body.DelayMS, body.Content)
+	return d.schedule(req, device, roomID, eventType, &txnID, body.StateKey, *body.DelayMS, body.Content, stable)
 }
 
 func (d *DelayedEvents) schedule(
 	req *http.Request, device *userapi.Device,
 	roomID, eventType string, txnID, stateKey *string,
-	delayMS int64, content map[string]any,
+	delayMS int64, content map[string]any, stable bool,
 ) util.JSONResponse {
 	ctx := req.Context()
 	if r := d.rateLimits.Limit(req, device); r != nil {
@@ -169,10 +173,14 @@ func (d *DelayedEvents) schedule(
 		}
 	}
 	if maxDelay := d.cfg.DelayedEvents.MaxDelay.Milliseconds(); delayMS > maxDelay {
+		errCode := errorDelayTooLargeUnstable
+		if stable {
+			errCode = errorDelayTooLarge
+		}
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: spec.MatrixError{
-				ErrCode: errorDelayTooLarge,
+				ErrCode: errCode,
 				Err:     fmt.Sprintf("The requested delay (%dms) exceeds the allowed maximum (%dms)", delayMS, maxDelay),
 			},
 		}
@@ -331,7 +339,7 @@ func (d *DelayedEvents) UpdateWithActionInBody(req *http.Request, device *userap
 	action, _ := value.(string)
 	switch delayedEventAction(action) {
 	case delayedEventCancel, delayedEventRestart, delayedEventSend:
-		return d.Update(req, device, delayID, delayedEventAction(action))
+		return d.Update(req, device, delayID, delayedEventAction(action), false)
 	default:
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
@@ -342,12 +350,29 @@ func (d *DelayedEvents) UpdateWithActionInBody(req *http.Request, device *userap
 
 // Update implements
 //
+//	POST /_matrix/client/v1/delayed_events/{delayID}/{action}
 //	POST /_matrix/client/unstable/org.matrix.msc4140/delayed_events/{delayID}/{action}
-func (d *DelayedEvents) Update(req *http.Request, device *userapi.Device, delayID string, action delayedEventAction) util.JSONResponse {
+//
+// The stable form requires an access token and manages only the user's own
+// events, and answers an action that conflicts with how the event was
+// finalized with 409, as the accepted MSC asks.
+func (d *DelayedEvents) Update(
+	req *http.Request, device *userapi.Device, delayID string, action delayedEventAction, stable bool,
+) util.JSONResponse {
 	if r := d.mgmtLimits.Limit(req, device); r != nil {
 		return *r
 	}
 	ctx := req.Context()
+	if stable {
+		event, err := d.userAPI.QueryDelayedEvent(ctx, delayID)
+		if err != nil {
+			util.GetLogger(ctx).WithError(err).Error("userAPI.QueryDelayedEvent failed")
+			return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+		}
+		if !ownedBy(event, device) {
+			return util.JSONResponse{Code: http.StatusNotFound, JSON: spec.NotFound("Delayed event not found")}
+		}
+	}
 	var done bool
 	var err error
 	switch action {
@@ -365,23 +390,45 @@ func (d *DelayedEvents) Update(req *http.Request, device *userapi.Device, delayI
 		util.GetLogger(ctx).WithError(err).Errorf("failed to %s delayed event", action)
 		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
 	}
-	if done || d.alreadyFinalizedAs(ctx, delayID, action) {
+	if done {
 		return util.JSONResponse{Code: http.StatusOK, JSON: struct{}{}}
 	}
+	event, err := d.userAPI.QueryDelayedEvent(ctx, delayID)
+	if err != nil {
+		util.GetLogger(ctx).WithError(err).Error("userAPI.QueryDelayedEvent failed")
+		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+	}
+	switch {
+	case finalizedAs(event, action):
+		return util.JSONResponse{Code: http.StatusOK, JSON: struct{}{}}
+	case stable && event != nil:
+		return util.JSONResponse{
+			Code: http.StatusConflict,
+			JSON: spec.Unknown(fmt.Sprintf("The delayed event cannot be %s: it is no longer scheduled", action.pastTense())),
+		}
+	}
+	// The unstable form reports a conflict as 404, as Synapse, which forgets
+	// finalized events, does; older matrix-js-sdk MatrixRTC membership
+	// managers schedule a new delayed event only when a restart finds none.
 	return util.JSONResponse{Code: http.StatusNotFound, JSON: spec.NotFound("Delayed event not found")}
 }
 
-// alreadyFinalizedAs reports whether an action may be safely retried because
-// the event is already finalized with the outcome the action asks for: sent
-// for send, and canceled, whether by a client or an error, for cancel.
-//
-// MSC4140 answers a conflicting outcome with 409. Synapse, which forgets
-// finalized events, answers 404, and matrix-js-sdk's MatrixRTC membership
-// manager schedules a new delayed event when a restart finds none, so a
-// conflict is reported as 404 here as well.
-func (d *DelayedEvents) alreadyFinalizedAs(ctx context.Context, delayID string, action delayedEventAction) bool {
-	event, err := d.userAPI.QueryDelayedEvent(ctx, delayID)
-	if err != nil || event == nil || event.Status != userapi.DelayedEventFinalized {
+func (a delayedEventAction) pastTense() string {
+	switch a {
+	case delayedEventCancel:
+		return "canceled"
+	case delayedEventRestart:
+		return "restarted"
+	default:
+		return "sent"
+	}
+}
+
+// finalizedAs reports whether an action may be safely retried because the
+// event is already finalized with the outcome the action asks for: sent for
+// send, and canceled, whether by a client or an error, for cancel.
+func finalizedAs(event *userapi.DelayedEvent, action delayedEventAction) bool {
+	if event == nil || event.Status != userapi.DelayedEventFinalized {
 		return false
 	}
 	switch action {
@@ -392,6 +439,12 @@ func (d *DelayedEvents) alreadyFinalizedAs(ctx context.Context, delayID string, 
 	default:
 		return false
 	}
+}
+
+// ownedBy reports whether device's user scheduled the event. Another user's
+// delayed event is indistinguishable from a missing one.
+func ownedBy(event *userapi.DelayedEvent, device *userapi.Device) bool {
+	return event != nil && device != nil && fmt.Sprintf("@%s:%s", event.Localpart, event.ServerName) == device.UserID
 }
 
 // sendNow sends a claimed event for the send action. Unlike a send at the
@@ -458,6 +511,7 @@ func newDelayedEventResponse(event *userapi.DelayedEvent) delayedEventResponse {
 
 // Get implements
 //
+//	GET /_matrix/client/v1/delayed_events/{delayID}
 //	GET /_matrix/client/unstable/org.matrix.msc4140/delayed_events/{delayID}
 func (d *DelayedEvents) Get(req *http.Request, device *userapi.Device, delayID string) util.JSONResponse {
 	if r := d.mgmtLimits.Limit(req, device); r != nil {
@@ -468,8 +522,7 @@ func (d *DelayedEvents) Get(req *http.Request, device *userapi.Device, delayID s
 		util.GetLogger(req.Context()).WithError(err).Error("userAPI.QueryDelayedEvent failed")
 		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
 	}
-	// Another user's delayed event is indistinguishable from a missing one.
-	if event == nil || fmt.Sprintf("@%s:%s", event.Localpart, event.ServerName) != device.UserID {
+	if !ownedBy(event, device) {
 		return util.JSONResponse{Code: http.StatusNotFound, JSON: spec.NotFound("Delayed event not found")}
 	}
 	return util.JSONResponse{Code: http.StatusOK, JSON: newDelayedEventResponse(event)}

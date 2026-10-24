@@ -104,6 +104,7 @@ func Setup(
 		"org.matrix.msc3916.stable":     true,
 		"org.matrix.simplified_msc3575": true, // MSC4186: Simplified Sliding Sync
 		"org.matrix.msc4140":            cfg.DelayedEvents.Enabled(),
+		"org.matrix.msc4140.stable":     cfg.DelayedEvents.Enabled(), // MSC4140: stable delayed event endpoints
 		"org.matrix.msc4143":            len(cfg.Matrix.RTCFoci) > 0,
 		"org.matrix.msc4354":            true, // MSC4354: sticky events
 		"org.matrix.msc4222":            true, // MSC4222: state_after in /sync
@@ -474,7 +475,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return delayedEvents.ScheduleUnstable(req, device, vars["roomID"], vars["eventType"], vars["txnID"])
+			return delayedEvents.ScheduleWithBody(req, device, vars["roomID"], vars["eventType"], vars["txnID"], false)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 	unstableMux.Handle("/org.matrix.msc4140/delayed_events",
@@ -504,8 +505,38 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return delayedEvents.Update(req, device, vars["delayID"], delayedEventAction(vars["action"]))
+			return delayedEvents.Update(req, device, vars["delayID"], delayedEventAction(vars["action"]), false)
 		}),
+	).Methods(http.MethodPost, http.MethodOptions)
+
+	// MSC4140 in its stable form. Unlike the unstable management endpoints,
+	// these need an access token, and there is no list endpoint (MSC4486).
+	v3mux.Handle("/rooms/{roomID}/delayed_event/{eventType}/{txnID}",
+		httputil.MakeAuthAPI("delayed_event_schedule", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+			if err != nil {
+				return util.ErrorResponse(err)
+			}
+			return delayedEvents.ScheduleWithBody(req, device, vars["roomID"], vars["eventType"], vars["txnID"], true)
+		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
+	).Methods(http.MethodPut, http.MethodOptions)
+	v1mux.Handle("/delayed_events/{delayID}",
+		httputil.MakeAuthAPI("delayed_event", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+			if err != nil {
+				return util.ErrorResponse(err)
+			}
+			return delayedEvents.Get(req, device, vars["delayID"])
+		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
+	).Methods(http.MethodGet, http.MethodOptions)
+	v1mux.Handle("/delayed_events/{delayID}/{action:cancel|restart|send}",
+		httputil.MakeAuthAPI("delayed_event_update", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+			if err != nil {
+				return util.ErrorResponse(err)
+			}
+			return delayedEvents.Update(req, device, vars["delayID"], delayedEventAction(vars["action"]), true)
+		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPost, http.MethodOptions)
 
 	// MSC4143: MatrixRTC transports

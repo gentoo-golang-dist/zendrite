@@ -39,7 +39,10 @@ import (
 	uapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
-const delayedEventsPath = "/_matrix/client/unstable/org.matrix.msc4140/delayed_events"
+const (
+	delayedEventsPath       = "/_matrix/client/unstable/org.matrix.msc4140/delayed_events"
+	stableDelayedEventsPath = "/_matrix/client/v1/delayed_events"
+)
 
 // wireFinalised is MSC4140's spelling of the finalized status and field.
 const wireFinalised = "finalised" //nolint:misspell // MSC4140's spelling
@@ -200,10 +203,13 @@ func TestDelayedEvents(t *testing.T) {
 			rec := h.do(nil, http.MethodGet, "/_matrix/client/versions", "")
 			require.Equal(t, http.StatusOK, rec.Code)
 			assert.True(t, gjson.GetBytes(rec.Body.Bytes(), `unstable_features.org\.matrix\.msc4140`).Bool(), rec.Body.String())
+			assert.True(t, gjson.GetBytes(rec.Body.Bytes(), `unstable_features.org\.matrix\.msc4140\.stable`).Bool(), rec.Body.String())
 			rec = h.do(alice, http.MethodGet, "/_matrix/client/v3/capabilities", "")
 			require.Equal(t, http.StatusOK, rec.Code)
-			capability := gjson.GetBytes(rec.Body.Bytes(), `capabilities.org\.matrix\.msc4140\.delayed_events`)
-			assert.JSONEq(t, `{"max_delay_ms":3600000,"max_scheduled":5}`, capability.Raw)
+			for _, name := range []string{`m\.delayed_events`, `org\.matrix\.msc4140\.delayed_events`} {
+				capability := gjson.GetBytes(rec.Body.Bytes(), "capabilities."+name)
+				assert.JSONEq(t, `{"max_delay_ms":3600000,"max_scheduled":5}`, capability.Raw, name)
+			}
 		})
 
 		t.Run("scheduling errors", func(t *testing.T) {
@@ -408,8 +414,10 @@ func TestDelayedEvents(t *testing.T) {
 				return found
 			}
 			unsigned := find(alice).Get("unsigned")
+			assert.Equal(t, delayID, unsigned.Get("delay_id").Str, unsigned.Raw)
 			assert.Equal(t, delayID, unsigned.Get(`org\.matrix\.msc4140\.delay_id`).Str, unsigned.Raw)
 			assert.False(t, unsigned.Get("transaction_id").Exists(), unsigned.Raw)
+			assert.False(t, find(bob).Get("unsigned.delay_id").Exists())
 			assert.False(t, find(bob).Get(`unsigned.org\.matrix\.msc4140\.delay_id`).Exists())
 		})
 
@@ -439,6 +447,60 @@ func TestDelayedEvents(t *testing.T) {
 			assert.Equal(t, delayID, gjson.GetBytes(rec.Body.Bytes(), "delay_id").Str)
 			assert.False(t, h.get(alice, delayID).Get("state_key").Exists())
 			require.Equal(t, http.StatusOK, h.do(alice, http.MethodPost, delayedEventsPath+"/"+delayID+"/cancel", "").Code)
+		})
+
+		t.Run("stable endpoints", func(t *testing.T) {
+			path := fmt.Sprintf("/_matrix/client/v3/rooms/%s/delayed_event/%s/", url.PathEscape(h.room.ID), delayedStateType)
+			schedule := func(t *testing.T, txnID, stateKey string) string {
+				t.Helper()
+				rec := h.do(alice, http.MethodPut, path+txnID, `{"delay_ms":3600000,"state_key":"`+stateKey+`","content":{"n":1}}`)
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				delayID := gjson.GetBytes(rec.Body.Bytes(), "delay_id").Str
+				require.NotEmpty(t, delayID, rec.Body.String())
+				return delayID
+			}
+			do := func(user *test.User, delayID, action string) *httptest.ResponseRecorder {
+				return h.do(user, http.MethodPost, stableDelayedEventsPath+"/"+delayID+"/"+action, `{}`)
+			}
+
+			sent := schedule(t, "stable1", "stable-sent")
+			assert.Equal(t, sent, schedule(t, "stable1", "stable-sent"), "the transaction ID makes retries idempotent")
+			assertErrCode(t, h.do(alice, http.MethodPut, path+"stable2", `{"delay_ms":3600001,"content":{}}`), http.StatusBadRequest, "M_DELAY_TOO_LARGE")
+			assertErrCode(t, h.do(alice, http.MethodPut, path+"stable3", `{"delay_ms":-5,"content":{}}`), http.StatusBadRequest, "M_INVALID_PARAM")
+			assertErrCode(t, h.do(alice, http.MethodPut, path+"stable4", `{"delay_ms":1.5,"content":{}}`), http.StatusBadRequest, "M_BAD_JSON")
+
+			rec := h.do(alice, http.MethodGet, stableDelayedEventsPath+"/"+sent, "")
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.Equal(t, "stable-sent", gjson.GetBytes(rec.Body.Bytes(), "state_key").Str)
+			assert.JSONEq(t, `{"n":1}`, gjson.GetBytes(rec.Body.Bytes(), "content").Raw)
+
+			// The stable management endpoints need an access token and only
+			// find the user's own events. There is no list endpoint.
+			assertErrCode(t, do(nil, sent, "restart"), http.StatusUnauthorized, "M_MISSING_TOKEN")
+			assertErrCode(t, h.do(bob, http.MethodGet, stableDelayedEventsPath+"/"+sent, ""), http.StatusNotFound, "M_NOT_FOUND")
+			for _, action := range []string{"cancel", "restart", "send"} {
+				assertErrCode(t, do(bob, sent, action), http.StatusNotFound, "M_NOT_FOUND")
+				assertErrCode(t, do(alice, "unknown", action), http.StatusNotFound, "M_NOT_FOUND")
+			}
+			assert.False(t, h.get(alice, sent).Get(wireFinalised).Exists(), "bob's requests leave the event alone")
+			assert.Equal(t, http.StatusNotFound, h.do(alice, http.MethodGet, stableDelayedEventsPath, "").Code)
+
+			require.Equal(t, http.StatusOK, do(alice, sent, "restart").Code)
+			rec = do(alice, sent, "send")
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.JSONEq(t, `{}`, rec.Body.String())
+			require.NotNil(t, h.state("stable-sent"))
+			// Retrying succeeds; a conflicting action is answered with 409.
+			assert.Equal(t, http.StatusOK, do(alice, sent, "send").Code)
+			assert.Equal(t, http.StatusConflict, do(alice, sent, "cancel").Code)
+			assert.Equal(t, http.StatusConflict, do(alice, sent, "restart").Code)
+
+			canceled := schedule(t, "stable5", "stable-canceled")
+			require.Equal(t, http.StatusOK, do(alice, canceled, "cancel").Code)
+			assert.Equal(t, http.StatusOK, do(alice, canceled, "cancel").Code)
+			assert.Equal(t, http.StatusConflict, do(alice, canceled, "send").Code)
+			assert.Equal(t, http.StatusConflict, do(alice, canceled, "restart").Code)
+			assert.Nil(t, h.state("stable-canceled"))
 		})
 
 		t.Run("a delayed message event can be sticky", func(t *testing.T) {
@@ -531,7 +593,10 @@ func TestDelayedEventsLimits(t *testing.T) {
 			assert.False(t, gjson.GetBytes(rec.Body.Bytes(), `unstable_features.org\.matrix\.msc4140`).Bool(), rec.Body.String())
 			rec = h.do(alice, http.MethodGet, "/_matrix/client/v3/capabilities", "")
 			assert.Equal(t, int64(0), gjson.GetBytes(rec.Body.Bytes(), `capabilities.org\.matrix\.msc4140\.delayed_events.max_delay_ms`).Int(), rec.Body.String())
+			assert.Equal(t, int64(0), gjson.GetBytes(rec.Body.Bytes(), `capabilities.m\.delayed_events.max_delay_ms`).Int(), rec.Body.String())
 			assertErrCode(t, h.scheduleState(alice, "disabled", "1000", `{}`), http.StatusForbidden, "M_FORBIDDEN")
+			path := fmt.Sprintf("/_matrix/client/v3/rooms/%s/delayed_event/%s/txn", url.PathEscape(h.room.ID), delayedStateType)
+			assertErrCode(t, h.do(alice, http.MethodPut, path, `{"delay_ms":1000,"state_key":"disabled","content":{}}`), http.StatusForbidden, "M_FORBIDDEN")
 		})
 
 		t.Run("management rate limit", func(t *testing.T) {

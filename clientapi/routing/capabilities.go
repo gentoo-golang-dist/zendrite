@@ -32,6 +32,10 @@ func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, 
 		}
 	}
 
+	delayedEventLimits := map[string]int64{
+		"max_delay_ms":  delayedEvents.MaxDelay.Milliseconds(),
+		"max_scheduled": int64(delayedEvents.MaxPerUser),
+	}
 	capabilities := map[string]any{
 		"m.change_password": map[string]bool{
 			"enabled": !oidcEnabled,
@@ -63,12 +67,10 @@ func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, 
 		"m.set_avatar_url": map[string]bool{
 			"enabled": true,
 		},
-		// MSC4140 limits, as Synapse reports them: a zero maximum delay
-		// tells clients that delayed events are disabled.
-		"org.matrix.msc4140.delayed_events": map[string]int64{
-			"max_delay_ms":  delayedEvents.MaxDelay.Milliseconds(),
-			"max_scheduled": int64(delayedEvents.MaxPerUser),
-		},
+		// MSC4140 limits, under the stable and unstable names: a zero
+		// maximum delay tells clients that delayed events are disabled.
+		"m.delayed_events":                  delayedEventLimits,
+		"org.matrix.msc4140.delayed_events": delayedEventLimits,
 	}
 
 	// Administrators can suspend accounts, and lock them unless the OIDC
