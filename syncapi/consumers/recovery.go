@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/internal/fulltext"
 	"codefloe.com/pat-s/zendrite/setup/process"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
@@ -99,6 +100,10 @@ func RecoverSearch(ctx context.Context, db storage.Database, index fulltext.Inde
 				continue
 			}
 			element.Content = gjson.GetBytes(event.Content(), key).String()
+			if event.Type() == spec.MRoomTopic {
+				// Prefer the text/plain representation in m.topic (MSC3765).
+				element.Content = eventutil.PlainTextTopic(event.Content())
+			}
 			if strings.TrimSpace(element.Content) != "" {
 				elements = append(elements, element)
 			}

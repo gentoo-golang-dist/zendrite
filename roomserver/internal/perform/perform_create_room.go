@@ -273,10 +273,8 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 
 	if createRequest.Topic != "" {
 		topicEvent = &gomatrixserverlib.FledglingEvent{
-			Type: spec.MRoomTopic,
-			Content: eventutil.TopicContent{
-				Topic: createRequest.Topic,
-			},
+			Type:    spec.MRoomTopic,
+			Content: eventutil.NewTopicContent(createRequest.Topic),
 		}
 	}
 

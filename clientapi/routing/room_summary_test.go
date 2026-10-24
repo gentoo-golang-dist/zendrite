@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
+	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 
 	"codefloe.com/pat-s/zendrite/internal/caching"
@@ -761,5 +762,20 @@ func TestParseRoomIDOrAlias(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A remote room's summary keeps the encryption algorithm and room version
+// from the federation hierarchy response (MSC3266).
+func TestConvertHierarchyToSummary(t *testing.T) {
+	summary := convertHierarchyToSummary(fclient.RoomHierarchyRoom{PublicRoom: fclient.PublicRoom{
+		RoomID:      "!remote:example.org",
+		Topic:       "topic",
+		Encryption:  "m.megolm.v1.aes-sha2",
+		RoomVersion: "12",
+	}})
+	if summary.RoomID != "!remote:example.org" || summary.Topic != "topic" ||
+		summary.Encryption != "m.megolm.v1.aes-sha2" || summary.RoomVersion != "12" {
+		t.Fatalf("unexpected summary %+v", summary)
 	}
 }

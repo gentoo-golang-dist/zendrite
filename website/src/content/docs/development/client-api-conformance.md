@@ -5,10 +5,10 @@ description: Version discovery policy, audited implementation gaps, and experime
 
 ## Advertisement decision
 
-`GET /_matrix/client/versions` advertises `r0.0.1`, `r0.1.0`, `r0.2.0`, `r0.3.0`, `r0.4.0`, `r0.5.0`, `r0.6.1`, and `v1.0` to `v1.14`.
+`GET /_matrix/client/versions` advertises `r0.0.1`, `r0.1.0`, `r0.2.0`, `r0.3.0`, `r0.4.0`, `r0.5.0`, `r0.6.1`, and `v1.0` to `v1.15`.
 The versions up to `v1.2` are a compatibility baseline, not a new certification of every historical requirement.
-`v1.3` to `v1.14` are advertised because the audit of every MSC merged into the specification since v1.1 ([issue #478](https://codefloe.com/pat-s/zendrite/issues/478)) leaves no unresolved requirement in those releases; the sections below record the evidence.
-`v1.15` and later are not advertised while #478 lists open gaps in them.
+`v1.3` to `v1.15` are advertised because the audit of every MSC merged into the specification since v1.1 ([issue #478](https://codefloe.com/pat-s/zendrite/issues/478)) leaves no unresolved requirement in those releases; the sections below record the evidence.
+`v1.16` and later are not advertised while #478 lists open gaps in them.
 
 The [version discovery contract](https://spec.matrix.org/v1.19/client-server-api/#api-versions) distinguishes specification versions from individual experimental features.
 Authenticated media, room summaries, and selected other newer features are implemented, but their presence does not establish support for the other requirements introduced in the same release.
@@ -16,7 +16,7 @@ Room versions returned by `/capabilities` are a separate namespace and must not 
 
 ## Scope and evidence
 
-This is a source-level audit of the next candidate versions, v1.3 through v1.14, with targeted checks of later features that could otherwise motivate raising the ceiling.
+This is a source-level audit of the next candidate versions, v1.3 through v1.15, with targeted checks of later features that could otherwise motivate raising the ceiling.
 It compares the release requirements with routing, handler behavior, storage, and existing tests in this repository.
 It does not claim an exhaustive behavioral certification through v1.19 or a fresh Sytest/Complement pass.
 A registered route establishes reachability only; authorization, pagination, response shape, and configuration dependence require separate evidence.
@@ -170,11 +170,22 @@ The [v1.14 changes](https://spec.matrix.org/v1.14/changelog/) add user reports, 
 | `server_name` removed from `/join` and `/knock` (MSC4213) | `clientapi/routing/joinroom.go` and `knock.go` read `via` and only fall back to `server_name` when `via` is absent. | Compliant; the fallback keeps older clients working. |
 | Default room version 11 (MSC4239) | `room_server.default_room_version` defaults to room version 12, which `/capabilities` reports as `default`. | Compliant; the default is the server's choice, and the spec recommends a stable version, which 12 is. |
 
-### v1.15 and later candidates
+### v1.15
+
+The [v1.15 changes](https://spec.matrix.org/v1.15/changelog/) add room summaries, rich text topics, the OAuth 2.0 authentication API, device keys in Olm-encrypted events, and clarify what "public" rooms are.
+
+| Requirement | Implementation evidence | Assessment |
+| --- | --- | --- |
+| Room summaries (MSC3266) | `clientapi/routing/room_summary.go` serves `/v1/room_summary/{roomIdOrAlias}`; `room_summary_test.go` tests access, response shape, and caching. `roomserver/internal/query/query_room_hierarchy.go` adds `room_version` and `encryption` to client and federation `/hierarchy` rooms; `clientapi/spec_v115_test.go` covers them. | Implemented; the fields come from gomatrixserverlib's `fclient.PublicRoom`, which uses the stable keys. |
+| Rich text topics (MSC3765) | `internal/eventutil/eventcontent.go` builds `createRoom` topics with a `text/plain` `m.topic` block and extracts the plain text topic, which the room directory, `/hierarchy`, room summaries and the search index use. `eventcontent_test.go` and `clientapi/spec_v115_test.go` cover them. | Implemented. |
+| OAuth 2.0 API (MSC3861, MSC2965) | With [MSC3861](/mscs/#msc3861-oidc-delegated-authentication), `clientapi/routing/routing.go` serves `/v1/auth_metadata` and delegates authentication; otherwise the route is absent and returns 404 `M_UNRECOGNIZED`, which the spec prescribes for servers without the API. | Compliant; the OAuth API is optional. |
+| Device keys in Olm events (MSC4147) | Olm payloads are opaque to the server. | Client-only. |
+| "Public" rooms clarified for profiles and the user directory | Profile lookups are not restricted; the user directory searches all local users and the users who share a room with the requester, which the spec allows. | Compliant; the matching clarifications for presence, calls and policy lists add no server requirement. |
+
+### v1.16 and later candidates
 
 | Candidate | Evidence and remaining blockers | Decision |
 | --- | --- | --- |
-| [v1.15 room summaries](https://spec.matrix.org/v1.15/client-server-api/#room-summaries) | `/v1/room_summary/{roomIDOrAlias}` calls `GetRoomSummary`; `room_summary_test.go` tests access, response shape, and caching. | Selected feature implemented, not full v1.15 certification. |
 | [v1.19](https://spec.matrix.org/v1.19/client-server-api/) | Earlier mandatory behavior remains unresolved; no full audit of intervening releases has established conformance. | Do not advertise the latest version based on route counts. |
 
 ### Related route-audit findings

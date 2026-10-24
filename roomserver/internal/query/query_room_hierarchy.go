@@ -126,12 +126,20 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 				continue
 			}
 
-			discoveredRooms = append(discoveredRooms, fclient.RoomHierarchyRoom{
+			hierarchyRoom := fclient.RoomHierarchyRoom{
 				PublicRoom:     *pubRoom,
 				RoomType:       roomType,
 				ChildrenState:  events,
 				AllowedRoomIDs: allowedRoomIDs,
-			})
+			}
+			// MSC3266 adds the room version and encryption algorithm.
+			if create != nil {
+				hierarchyRoom.RoomVersion = string(create.Version())
+			}
+			if encryption := stateEvent(ctx, querier, queuedRoom.RoomID, spec.MRoomEncryption, ""); encryption != nil {
+				hierarchyRoom.Encryption = gjson.GetBytes(encryption.Content(), "algorithm").Str
+			}
+			discoveredRooms = append(discoveredRooms, hierarchyRoom)
 			// don't walk children if the user is not joined/invited to the space
 			if !isJoinedOrInvited {
 				continue

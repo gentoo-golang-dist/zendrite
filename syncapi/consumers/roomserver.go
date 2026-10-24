@@ -23,6 +23,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	zendriteInternal "codefloe.com/pat-s/zendrite/internal"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/internal/fulltext"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
@@ -996,7 +997,7 @@ func (s *OutputRoomEventConsumer) writeFTS(ev *rstypes.HeaderedEvent, pduPositio
 	case spec.MRoomName:
 		e.Content = gjson.GetBytes(ev.Content(), "name").String()
 	case spec.MRoomTopic:
-		e.Content = gjson.GetBytes(ev.Content(), "topic").String()
+		e.Content = eventutil.PlainTextTopic(ev.Content())
 	case spec.MRoomRedaction:
 		// A redaction without a target redacts nothing. Deleting an empty ID
 		// fails every time, so the message would be redelivered forever.

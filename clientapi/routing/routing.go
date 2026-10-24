@@ -216,6 +216,7 @@ func Setup(
 					"v1.12",
 					"v1.13",
 					"v1.14",
+					"v1.15",
 				}, UnstableFeatures: unstableFeatures},
 			}
 		}),

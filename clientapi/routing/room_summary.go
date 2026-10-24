@@ -293,6 +293,8 @@ func convertHierarchyToSummary(room fclient.RoomHierarchyRoom) RoomSummaryRespon
 		GuestCanJoin:     room.GuestCanJoin,
 		WorldReadable:    room.WorldReadable,
 		JoinRule:         room.JoinRule,
+		Encryption:       room.Encryption,
+		RoomVersion:      room.RoomVersion,
 	}
 
 	if room.RoomType != nil {
@@ -304,8 +306,9 @@ func convertHierarchyToSummary(room fclient.RoomHierarchyRoom) RoomSummaryRespon
 		summary.AllowedRoomIDs = room.AllowedRoomIDs
 	}
 
-	// Note: the federation hierarchy response does not carry membership,
-	// encryption, or room_version, so those stay empty for remote rooms.
+	// The federation hierarchy response does not carry membership, and
+	// carries encryption and room_version only from servers that implement
+	// MSC3266 in spec v1.15.
 
 	return summary
 }

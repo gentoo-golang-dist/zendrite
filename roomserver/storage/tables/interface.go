@@ -10,6 +10,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/tidwall/gjson"
 
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
 )
@@ -350,7 +351,7 @@ func ExtractContentValue(ev *types.HeaderedEvent) string {
 	case "m.room.avatar":
 		key = "url"
 	case "m.room.topic":
-		key = "topic"
+		return eventutil.PlainTextTopic(content)
 	case "m.room.guest_access":
 		key = "guest_access"
 	case "m.room.server_acl":

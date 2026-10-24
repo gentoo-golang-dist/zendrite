@@ -6,16 +6,61 @@
 
 package eventutil
 
-import "codefloe.com/pat-s/gomatrixserverlib"
+import (
+	"codefloe.com/pat-s/gomatrixserverlib"
+	"github.com/tidwall/gjson"
+)
 
 // NameContent is the event content for https://matrix.org/docs/spec/client_server/r0.2.0.html#m-room-name
 type NameContent struct {
 	Name string `json:"name"`
 }
 
-// TopicContent is the event content for https://matrix.org/docs/spec/client_server/r0.2.0.html#m-room-topic
+// TopicContent is the event content for https://spec.matrix.org/v1.15/client-server-api/#mroomtopic
 type TopicContent struct {
 	Topic string `json:"topic"`
+	// MTopic holds the topic in different mimetypes (MSC3765).
+	MTopic *TopicContentBlock `json:"m.topic,omitempty"`
+}
+
+// TopicContentBlock is the m.topic content block of an m.room.topic event.
+type TopicContentBlock struct {
+	Text []TextRepresentation `json:"m.text"`
+}
+
+// TextRepresentation is one entry of an m.text content block. An empty
+// mimetype means text/plain.
+type TextRepresentation struct {
+	Body     string `json:"body"`
+	Mimetype string `json:"mimetype,omitempty"`
+}
+
+// NewTopicContent returns the content of an m.room.topic event for a plain
+// text topic, with the text/plain representation in m.topic (MSC3765).
+func NewTopicContent(topic string) TopicContent {
+	return TopicContent{
+		Topic:  topic,
+		MTopic: &TopicContentBlock{Text: []TextRepresentation{{Body: topic, Mimetype: "text/plain"}}},
+	}
+}
+
+// PlainTextTopic returns the plain text topic of m.room.topic content: the
+// first text/plain representation in m.topic (MSC3765), or else the topic
+// key, as Synapse does. It returns "" when neither is a string.
+func PlainTextTopic(content []byte) string {
+	for _, text := range gjson.GetBytes(content, `m\.topic.m\.text`).Array() {
+		mimetype := text.Get("mimetype")
+		if mimetype.Exists() && mimetype.Str != "text/plain" {
+			continue
+		}
+		if body := text.Get("body"); body.Type == gjson.String {
+			return body.Str
+		}
+	}
+	if topic := gjson.GetBytes(content, "topic"); topic.Type == gjson.String {
+		return topic.Str
+	}
+	return ""
 }
 
 // GuestAccessContent is the event content for https://matrix.org/docs/spec/client_server/r0.2.0.html#m-room-guest-access

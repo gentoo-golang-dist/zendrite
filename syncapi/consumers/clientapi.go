@@ -117,7 +117,7 @@ func (s *OutputClientDataConsumer) Start() error {
 					case spec.MRoomName:
 						e.Content = gjson.GetBytes(ev.Content(), "name").String()
 					case spec.MRoomTopic:
-						e.Content = gjson.GetBytes(ev.Content(), "topic").String()
+						e.Content = eventutil.PlainTextTopic(ev.Content())
 					default:
 						continue
 					}
