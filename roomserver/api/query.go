@@ -376,6 +376,16 @@ type QueryAdminRoomReportsResponse struct {
 	ReceivedTS     spec.Timestamp `json:"received_ts"`
 }
 
+// QueryAdminUserReportsResponse is a user report (MSC4260) in the shape of
+// the room reports admin API.
+type QueryAdminUserReportsResponse struct {
+	ID           int64          `json:"id"`
+	TargetUserID string         `json:"target_user_id"` // the user being reported
+	UserID       string         `json:"user_id"`        // the user reporting them
+	Reason       string         `json:"reason"`
+	ReceivedTS   spec.Timestamp `json:"received_ts"`
+}
+
 type QueryAdminEventReportResponse struct {
 	QueryAdminEventReportsResponse
 	EventJSON json.RawMessage `json:"event_json"`

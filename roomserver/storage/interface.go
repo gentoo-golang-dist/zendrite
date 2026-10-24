@@ -212,6 +212,8 @@ type Database interface {
 	AdminDeleteEventReport(ctx context.Context, reportID uint64) error
 	InsertReportedRoom(ctx context.Context, roomID, userID, reason string) (int64, error)
 	QueryAdminRoomReports(ctx context.Context, from, limit uint64, backwards bool, userID, roomID string) ([]api.QueryAdminRoomReportsResponse, int64, error)
+	InsertReportedUser(ctx context.Context, targetUserID, userID, reason string) (int64, error)
+	QueryAdminUserReports(ctx context.Context, from, limit uint64, backwards bool, userID, targetUserID string) ([]api.QueryAdminUserReportsResponse, int64, error)
 	ClientTransactionEventID(ctx context.Context, roomID, senderID string, sessionID int64, transactionID string) (string, error)
 	StoreClientTransaction(ctx context.Context, roomID, senderID string, sessionID int64, transactionID, eventID string) error
 	EventSentToOutput(ctx context.Context, eventNID types.EventNID) (bool, error)

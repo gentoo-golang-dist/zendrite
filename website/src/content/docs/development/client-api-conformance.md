@@ -5,10 +5,10 @@ description: Version discovery policy, audited implementation gaps, and experime
 
 ## Advertisement decision
 
-`GET /_matrix/client/versions` advertises `r0.0.1`, `r0.1.0`, `r0.2.0`, `r0.3.0`, `r0.4.0`, `r0.5.0`, `r0.6.1`, and `v1.0` to `v1.13`.
+`GET /_matrix/client/versions` advertises `r0.0.1`, `r0.1.0`, `r0.2.0`, `r0.3.0`, `r0.4.0`, `r0.5.0`, `r0.6.1`, and `v1.0` to `v1.14`.
 The versions up to `v1.2` are a compatibility baseline, not a new certification of every historical requirement.
-`v1.3` to `v1.13` are advertised because the audit of every MSC merged into the specification since v1.1 ([issue #478](https://codefloe.com/pat-s/zendrite/issues/478)) leaves no unresolved requirement in those releases; the sections below record the evidence.
-`v1.14` and later are not advertised while #478 lists open gaps in them.
+`v1.3` to `v1.14` are advertised because the audit of every MSC merged into the specification since v1.1 ([issue #478](https://codefloe.com/pat-s/zendrite/issues/478)) leaves no unresolved requirement in those releases; the sections below record the evidence.
+`v1.15` and later are not advertised while #478 lists open gaps in them.
 
 The [version discovery contract](https://spec.matrix.org/v1.19/client-server-api/#api-versions) distinguishes specification versions from individual experimental features.
 Authenticated media, room summaries, and selected other newer features are implemented, but their presence does not establish support for the other requirements introduced in the same release.
@@ -16,7 +16,7 @@ Room versions returned by `/capabilities` are a separate namespace and must not 
 
 ## Scope and evidence
 
-This is a source-level audit of the next candidate versions, v1.3 through v1.13, with targeted checks of later features that could otherwise motivate raising the ceiling.
+This is a source-level audit of the next candidate versions, v1.3 through v1.14, with targeted checks of later features that could otherwise motivate raising the ceiling.
 It compares the release requirements with routing, handler behavior, storage, and existing tests in this repository.
 It does not claim an exhaustive behavioral certification through v1.19 or a fresh Sytest/Complement pass.
 A registered route establishes reachability only; authorization, pagination, response shape, and configuration dependence require separate evidence.
@@ -160,7 +160,17 @@ The [v1.13 changes](https://spec.matrix.org/v1.13/changelog/) add room reports, 
 | One-time key order (MSC4225) | `keyserver_one_time_keys` claims select the oldest `ts_added_secs` first. | Implemented; keys uploaded within the same second have no defined order. |
 | Optional report `reason` (MSC2414), CORS methods (MSC4138), reply fallbacks (MSC2781) | `ReportEvent` accepts a missing `reason`; CORS responses list `GET, POST, PUT, DELETE, OPTIONS`; reply fallbacks are a client concern. | Compliant. |
 
-### v1.14 and later candidates
+### v1.14
+
+The [v1.14 changes](https://spec.matrix.org/v1.14/changelog/) add user reports, remove the `server_name` parameter from `/join` and `/knock`, and make room version 11 the default.
+
+| Requirement | Implementation evidence | Assessment |
+| --- | --- | --- |
+| Reporting users (MSC4260) | `clientapi/routing/report_event.go` serves `POST /v3/users/{userId}/report` and stores reports in `roomserver_reported_users`; `clientapi/user_report_test.go` covers local and remote users, errors and the admin listing. | Implemented; reports of remote users are accepted without a check. |
+| `server_name` removed from `/join` and `/knock` (MSC4213) | `clientapi/routing/joinroom.go` and `knock.go` read `via` and only fall back to `server_name` when `via` is absent. | Compliant; the fallback keeps older clients working. |
+| Default room version 11 (MSC4239) | `room_server.default_room_version` defaults to room version 12, which `/capabilities` reports as `default`. | Compliant; the default is the server's choice, and the spec recommends a stable version, which 12 is. |
+
+### v1.15 and later candidates
 
 | Candidate | Evidence and remaining blockers | Decision |
 | --- | --- | --- |

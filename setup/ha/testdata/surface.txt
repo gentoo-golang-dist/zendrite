@@ -183,6 +183,11 @@ column roomserver_reported_rooms | reason | text | NO |
 column roomserver_reported_rooms | received_ts | bigint | NO |
 column roomserver_reported_rooms | room_id | text | NO |
 column roomserver_reported_rooms | user_id | text | NO |
+column roomserver_reported_users | id | bigint | NO | nextval('roomserver_reported_users_id_seq'::regclass)
+column roomserver_reported_users | reason | text | NO |
+column roomserver_reported_users | received_ts | bigint | NO |
+column roomserver_reported_users | target_user_id | text | NO |
+column roomserver_reported_users | user_id | text | NO |
 column roomserver_room_aliases | alias | text | NO |
 column roomserver_room_aliases | creator_id | text | NO |
 column roomserver_room_aliases | room_id | text | NO |
@@ -578,6 +583,7 @@ index roomserver_redactions | roomserver_redactions_pkey | CREATE UNIQUE INDEX r
 index roomserver_redactions | roomserver_redactions_redacts_event_id | CREATE INDEX roomserver_redactions_redacts_event_id ON public.roomserver_redactions USING btree (redacts_event_id)
 index roomserver_reported_events | roomserver_reported_events_pkey | CREATE UNIQUE INDEX roomserver_reported_events_pkey ON public.roomserver_reported_events USING btree (id)
 index roomserver_reported_rooms | roomserver_reported_rooms_pkey | CREATE UNIQUE INDEX roomserver_reported_rooms_pkey ON public.roomserver_reported_rooms USING btree (id)
+index roomserver_reported_users | roomserver_reported_users_pkey | CREATE UNIQUE INDEX roomserver_reported_users_pkey ON public.roomserver_reported_users USING btree (id)
 index roomserver_room_aliases | roomserver_room_aliases_pkey | CREATE UNIQUE INDEX roomserver_room_aliases_pkey ON public.roomserver_room_aliases USING btree (alias)
 index roomserver_room_aliases | roomserver_room_id_idx | CREATE INDEX roomserver_room_id_idx ON public.roomserver_room_aliases USING btree (room_id)
 index roomserver_rooms | roomserver_room_id_unique | CREATE UNIQUE INDEX roomserver_room_id_unique ON public.roomserver_rooms USING btree (room_id)
@@ -927,6 +933,12 @@ constraint roomserver_reported_rooms | roomserver_reported_rooms_reason_not_null
 constraint roomserver_reported_rooms | roomserver_reported_rooms_received_ts_not_null | NOT NULL received_ts
 constraint roomserver_reported_rooms | roomserver_reported_rooms_room_id_not_null | NOT NULL room_id
 constraint roomserver_reported_rooms | roomserver_reported_rooms_user_id_not_null | NOT NULL user_id
+constraint roomserver_reported_users | roomserver_reported_users_id_not_null | NOT NULL id
+constraint roomserver_reported_users | roomserver_reported_users_pkey | PRIMARY KEY (id)
+constraint roomserver_reported_users | roomserver_reported_users_reason_not_null | NOT NULL reason
+constraint roomserver_reported_users | roomserver_reported_users_received_ts_not_null | NOT NULL received_ts
+constraint roomserver_reported_users | roomserver_reported_users_target_user_id_not_null | NOT NULL target_user_id
+constraint roomserver_reported_users | roomserver_reported_users_user_id_not_null | NOT NULL user_id
 constraint roomserver_room_aliases | roomserver_room_aliases_alias_not_null | NOT NULL alias
 constraint roomserver_room_aliases | roomserver_room_aliases_creator_id_not_null | NOT NULL creator_id
 constraint roomserver_room_aliases | roomserver_room_aliases_pkey | PRIMARY KEY (alias)
@@ -1278,6 +1290,7 @@ sequence roomserver_event_state_key_nid_seq | bigint | 1
 sequence roomserver_event_type_nid_seq | bigint | 1
 sequence roomserver_reported_events_id_seq | bigint | 1
 sequence roomserver_reported_rooms_id_seq | bigint | 1
+sequence roomserver_reported_users_id_seq | bigint | 1
 sequence roomserver_room_nid_seq | bigint | 1
 sequence roomserver_state_block_nid_seq | bigint | 1
 sequence roomserver_state_snapshot_nid_seq | bigint | 1

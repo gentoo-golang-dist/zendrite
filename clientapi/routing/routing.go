@@ -215,6 +215,7 @@ func Setup(
 					"v1.11",
 					"v1.12",
 					"v1.13",
+					"v1.14",
 				}, UnstableFeatures: unstableFeatures},
 			}
 		}),
@@ -2047,6 +2048,30 @@ func Setup(
 			// Newest first unless dir=f, as for event reports.
 			backwards := dir == "" || dir == "b"
 			return GetRoomReports(req, rsAPI, from, limit, backwards, req.URL.Query().Get("user_id"), req.URL.Query().Get("room_id"))
+		}),
+	).Methods(http.MethodGet, http.MethodOptions)
+
+	v3mux.Handle("/users/{userID}/report",
+		httputil.MakeAuthAPI("report_user", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			if r := rateLimits.Limit(req, device); r != nil {
+				return *r
+			}
+			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+			if err != nil {
+				return util.ErrorResponse(err)
+			}
+			return ReportUser(req, cfg, device, vars["userID"], rsAPI, userAPI)
+		}),
+	).Methods(http.MethodPost, http.MethodOptions)
+
+	synapseAdminRouter.Handle("/admin/v1/user_reports",
+		httputil.MakeAdminAPI("admin_user_reports", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			from := parseUint64OrDefault(req.URL.Query().Get("from"), 0)
+			limit := parseUint64OrDefault(req.URL.Query().Get("limit"), 100) //nolint:mnd
+			dir := req.URL.Query().Get("dir")
+			// Newest first unless dir=f, as for event reports.
+			backwards := dir == "" || dir == "b"
+			return GetUserReports(req, rsAPI, from, limit, backwards, req.URL.Query().Get("user_id"), req.URL.Query().Get("target_user_id"))
 		}),
 	).Methods(http.MethodGet, http.MethodOptions)
 

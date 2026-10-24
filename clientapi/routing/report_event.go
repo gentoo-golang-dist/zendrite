@@ -7,6 +7,8 @@
 package routing
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -14,6 +16,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
+	"codefloe.com/pat-s/zendrite/setup/config"
 	userAPI "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
@@ -109,6 +112,50 @@ func ReportRoom(
 	}
 	if _, err := rsAPI.InsertReportedRoom(req.Context(), roomID, device.UserID, *report.Reason); err != nil {
 		util.GetLogger(req.Context()).WithError(err).Error("rsAPI.InsertReportedRoom failed")
+		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+	}
+	return util.JSONResponse{Code: http.StatusOK, JSON: struct{}{}}
+}
+
+// ReportUser implements POST /users/{userId}/report (MSC4260). The reporter
+// need not share a room with the user. Local users must have an account;
+// remote users cannot be checked, so any valid remote user ID is accepted.
+func ReportUser(
+	req *http.Request,
+	cfg *config.ClientAPI,
+	device *userAPI.Device,
+	targetUserID string,
+	rsAPI api.ClientRoomserverAPI,
+	accountAPI userAPI.ClientUserAPI,
+) util.JSONResponse {
+	var report reportRoomRequest
+	if resErr := httputil.UnmarshalJSONRequest(req, &report); resErr != nil {
+		return *resErr
+	}
+	if report.Reason == nil {
+		return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.MissingParam("Missing reason")}
+	}
+	notFound := util.JSONResponse{Code: http.StatusNotFound, JSON: spec.NotFound("The user was not found.")}
+	target, err := spec.NewUserID(targetUserID, true)
+	if err != nil {
+		return notFound
+	}
+	if cfg.Matrix.IsLocalServerName(target.Domain()) {
+		var res userAPI.QueryAccountByLocalpartResponse
+		err = accountAPI.QueryAccountByLocalpart(req.Context(), &userAPI.QueryAccountByLocalpartRequest{
+			Localpart:  target.Local(),
+			ServerName: target.Domain(),
+		}, &res)
+		if errors.Is(err, sql.ErrNoRows) {
+			return notFound
+		}
+		if err != nil {
+			util.GetLogger(req.Context()).WithError(err).Error("userAPI.QueryAccountByLocalpart failed")
+			return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+		}
+	}
+	if _, err = rsAPI.InsertReportedUser(req.Context(), target.String(), device.UserID, *report.Reason); err != nil {
+		util.GetLogger(req.Context()).WithError(err).Error("rsAPI.InsertReportedUser failed")
 		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
 	}
 	return util.JSONResponse{Code: http.StatusOK, JSON: struct{}{}}

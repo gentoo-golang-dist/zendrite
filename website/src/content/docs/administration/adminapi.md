@@ -139,6 +139,12 @@ Lists room reports (MSC4151), newest first, as Synapse does.
 The optional `from` (offset, default 0), `limit` (default 100), `dir` (`b`, the default, or `f` for oldest first), `user_id` (the reporter) and `room_id` filter the list.
 The response holds `room_reports` (each with `id`, `received_ts`, `room_id`, `name`, `canonical_alias`, `user_id` and `reason`), `total`, and `next_token` when more reports follow.
 
+## GET `/_synapse/admin/v1/user_reports`
+
+Lists user reports (MSC4260), newest first, in the shape of the room reports.
+The optional `from` (offset, default 0), `limit` (default 100), `dir` (`b`, the default, or `f` for oldest first), `user_id` (the reporter) and `target_user_id` (the reported user) filter the list.
+The response holds `user_reports` (each with `id`, `received_ts`, `target_user_id`, `user_id` and `reason`), `total`, and `next_token` when more reports follow.
+
 ## GET `/_matrix/client/v3/admin/whois/{userId}`
 
 From the [Matrix Spec](https://spec.matrix.org/v1.3/client-server-api/#get_matrixclientv3adminwhoisuserid).

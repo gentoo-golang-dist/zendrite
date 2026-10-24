@@ -320,6 +320,9 @@ type ClientRoomserverAPI interface {
 	// InsertReportedRoom stores a room report (MSC4151).
 	InsertReportedRoom(ctx context.Context, roomID, reportingUserID, reason string) (int64, error)
 	QueryAdminRoomReports(ctx context.Context, from, limit uint64, backwards bool, userID, roomID string) ([]QueryAdminRoomReportsResponse, int64, error)
+	// InsertReportedUser stores a user report (MSC4260).
+	InsertReportedUser(ctx context.Context, targetUserID, reportingUserID, reason string) (int64, error)
+	QueryAdminUserReports(ctx context.Context, from, limit uint64, backwards bool, userID, targetUserID string) ([]QueryAdminUserReportsResponse, int64, error)
 	// QueryAnnotationExists reports whether the sender already has an
 	// unredacted annotation of the given event type and key on the target
 	// event, which the sender may then not send again (MSC2677). An

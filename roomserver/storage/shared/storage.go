@@ -56,6 +56,8 @@ type Database struct {
 	ErasedUsersTable tables.ErasedUsers
 	// ReportedRoomsTable stores room reports (MSC4151).
 	ReportedRoomsTable tables.ReportedRooms
+	// ReportedUsersTable stores user reports (MSC4260).
+	ReportedUsersTable tables.ReportedUsers
 	// ClientTransactionsTable maps client transaction IDs to their events.
 	ClientTransactionsTable tables.ClientTransactions
 	GetRoomUpdaterFn        func(ctx context.Context, roomInfo *types.RoomInfo) (*RoomUpdater, error)
@@ -2354,6 +2356,22 @@ func (d *Database) QueryAdminRoomReports(
 		reports[i].RoomName, reports[i].CanonicalAlias = findRoomNameAndCanonicalAlias(stateContent, reports[i].RoomID)
 	}
 	return reports, count, nil
+}
+
+// InsertReportedUser stores a user report (MSC4260).
+func (d *Database) InsertReportedUser(ctx context.Context, targetUserID, userID, reason string) (reportID int64, err error) {
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		reportID, err = d.ReportedUsersTable.InsertReportedUser(ctx, txn, targetUserID, userID, reason)
+		return err
+	})
+	return
+}
+
+// QueryAdminUserReports lists user reports, newest first when backwards.
+func (d *Database) QueryAdminUserReports(
+	ctx context.Context, from, limit uint64, backwards bool, userID, targetUserID string,
+) ([]api.QueryAdminUserReportsResponse, int64, error) {
+	return d.ReportedUsersTable.SelectReportedUsers(ctx, nil, from, limit, backwards, userID, targetUserID)
 }
 
 func (d *Database) AdminDeleteEventReport(ctx context.Context, reportID uint64) error {

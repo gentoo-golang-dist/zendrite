@@ -174,6 +174,14 @@ type ReportedRooms interface {
 	SelectReportedRooms(ctx context.Context, txn *sql.Tx, from, limit uint64, backwards bool, userID, roomID string) ([]api.QueryAdminRoomReportsResponse, int64, error)
 }
 
+// ReportedUsers stores user reports (MSC4260).
+type ReportedUsers interface {
+	InsertReportedUser(ctx context.Context, txn *sql.Tx, targetUserID, userID, reason string) (int64, error)
+	// SelectReportedUsers returns a page of reports, filtered by reporting
+	// and reported user when they are not empty, and the number of matches.
+	SelectReportedUsers(ctx context.Context, txn *sql.Tx, from, limit uint64, backwards bool, userID, targetUserID string) ([]api.QueryAdminUserReportsResponse, int64, error)
+}
+
 type MembershipState int64
 
 const (
