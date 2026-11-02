@@ -251,8 +251,10 @@ func (u *RoomUpdater) MembershipUpdater(targetUserNID types.EventStateKeyNID, ta
 	return u.d.membershipUpdaterTxn(u.ctx, u.txn, u.roomInfo.RoomNID, targetUserNID, targetLocal)
 }
 
+// IsEventRejected reports whether an event is rejected, as stored in this
+// transaction.
 func (u *RoomUpdater) IsEventRejected(ctx context.Context, roomNID types.RoomNID, eventID string) (bool, error) {
-	return u.d.IsEventRejected(ctx, roomNID, eventID)
+	return u.d.EventsTable.SelectEventRejected(ctx, u.txn, roomNID, eventID)
 }
 
 // UpdateResyncStateNID records the state snapshot NID after a partial state resync completes.
@@ -281,4 +283,55 @@ func (u *RoomUpdater) SetEventStateKeyNID(eventNID types.EventNID, eventStateKey
 	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
 		return u.d.EventsTable.UpdateEventStateKeyNID(u.ctx, txn, eventNID, eventStateKeyNID)
 	})
+}
+
+// SetCurrentStateSnapshotNID replaces the room's current state snapshot,
+// keeping its latest events.
+func (u *RoomUpdater) SetCurrentStateSnapshotNID(stateNID types.StateSnapshotNID) error {
+	if u.roomInfo == nil {
+		return types.ErrorInvalidRoomInfo
+	}
+	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		eventNIDs, lastEventNIDSent, _, err := u.d.RoomsTable.SelectLatestEventsNIDsForUpdate(u.ctx, txn, u.roomInfo.RoomNID)
+		if err != nil {
+			return fmt.Errorf("u.d.RoomsTable.SelectLatestEventsNIDsForUpdate: %w", err)
+		}
+		if err = u.d.RoomsTable.UpdateLatestEventNIDs(u.ctx, txn, u.roomInfo.RoomNID, eventNIDs, lastEventNIDSent, stateNID); err != nil {
+			return fmt.Errorf("u.d.RoomsTable.UpdateLatestEventNIDs: %w", err)
+		}
+		u.currentStateSnapshotNID = stateNID
+		u.roomInfo.SetStateSnapshotNID(stateNID)
+		return nil
+	})
+}
+
+// RejectedMembershipNIDs returns the rejected membership events of the room,
+// in event NID order.
+func (u *RoomUpdater) RejectedMembershipNIDs() ([]types.EventNID, error) {
+	if u.roomInfo == nil {
+		return nil, types.ErrorInvalidRoomInfo
+	}
+	return u.d.EventsTable.SelectRejectedEventNIDsOfType(u.ctx, u.txn, u.roomInfo.RoomNID, types.MRoomMemberNID)
+}
+
+// SetEventUnrejected marks a rejected event as accepted.
+func (u *RoomUpdater) SetEventUnrejected(eventNID types.EventNID) error {
+	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		return u.d.EventsTable.UpdateEventUnrejected(u.ctx, txn, eventNID)
+	})
+}
+
+// StateEntriesForEventNIDs returns the state entries of the given state
+// events, as stored in this transaction.
+func (u *RoomUpdater) StateEntriesForEventNIDs(ctx context.Context, eventNIDs []types.EventNID) ([]types.StateEntry, error) {
+	return u.d.EventsTable.BulkSelectStateEventByNID(ctx, u.txn, eventNIDs, nil)
+}
+
+// RejectedEventNIDs returns the rejected events of the room, in event NID
+// order.
+func (u *RoomUpdater) RejectedEventNIDs() ([]types.EventNID, error) {
+	if u.roomInfo == nil {
+		return nil, types.ErrorInvalidRoomInfo
+	}
+	return u.d.EventsTable.SelectRejectedEventNIDs(u.ctx, u.txn, u.roomInfo.RoomNID)
 }

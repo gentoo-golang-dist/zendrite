@@ -11,6 +11,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -1251,9 +1252,13 @@ func (v *StateResolution) loadStateEvents(
 	result := make([]gomatrixserverlib.PDU, 0, len(entries))
 	eventEntries := make([]types.StateEntry, 0, len(entries))
 	eventNIDs := make(types.EventNIDs, 0, len(entries))
+	// Events loaded by an earlier call are mapped too, so that a caller can
+	// map every returned event back to its state entry.
+	eventIDMap := map[string]types.StateEntry{}
 	for _, entry := range entries {
 		if e, ok := v.events[entry.EventNID]; ok {
 			result = append(result, e)
+			eventIDMap[e.EventID()] = entry
 		} else {
 			eventEntries = append(eventEntries, entry)
 			eventNIDs = append(eventNIDs, entry.EventNID)
@@ -1267,7 +1272,6 @@ func (v *StateResolution) loadStateEvents(
 	if err != nil {
 		return nil, nil, err
 	}
-	eventIDMap := map[string]types.StateEntry{}
 	for _, entry := range eventEntries {
 		event, ok := eventMap(events).lookup(entry.EventNID)
 		if !ok {
@@ -1530,4 +1534,95 @@ func (m eventMap) lookup(eventNID types.EventNID) (event *types.Event, ok bool) 
 		event = &list[i]
 	}
 	return
+}
+
+// ResolveSnapshotConflicts returns the state of a snapshot in which a state
+// block holds more than one event for the same type and state key, with those
+// conflicts settled by the room's state resolution algorithm. An entry in a
+// later block replaces the entries for its key in earlier blocks, as when the
+// snapshot is loaded. It returns nil if no block repeats a key.
+//
+// Normal input never stores two events for one key in a block. Events once
+// stored under the wrong state key can: under their own key, they may share
+// it with the event that was the current state for that key.
+func (v *StateResolution) ResolveSnapshotConflicts(
+	ctx context.Context, stateNID types.StateSnapshotNID,
+) ([]types.StateEntry, error) {
+	stateBlockNIDLists, err := v.db.StateBlockNIDs(ctx, []types.StateSnapshotNID{stateNID})
+	if err != nil {
+		return nil, fmt.Errorf("v.db.StateBlockNIDs: %w", err)
+	}
+	if len(stateBlockNIDLists) != 1 {
+		return nil, fmt.Errorf("expected the state blocks of 1 snapshot, got %d", len(stateBlockNIDLists))
+	}
+	stateBlockNIDs := stateBlockNIDLists[0].StateBlockNIDs
+	stateEntryLists, err := v.db.StateEntries(ctx, stateBlockNIDs)
+	if err != nil {
+		return nil, fmt.Errorf("v.db.StateEntries: %w", err)
+	}
+	stateEntriesMap := stateEntryListMap(stateEntryLists)
+
+	byKey := map[types.StateKeyTuple][]types.StateEntry{}
+	conflicted := false
+	for _, stateBlockNID := range stateBlockNIDs {
+		entries, ok := stateEntriesMap.lookup(stateBlockNID)
+		if !ok {
+			return nil, fmt.Errorf("missing state block %d", stateBlockNID)
+		}
+		inBlock := map[types.StateKeyTuple][]types.StateEntry{}
+		for _, entry := range entries {
+			inBlock[entry.StateKeyTuple] = append(inBlock[entry.StateKeyTuple], entry)
+		}
+		for tuple, blockEntries := range inBlock {
+			byKey[tuple] = blockEntries
+			if len(blockEntries) > 1 {
+				conflicted = true
+			}
+		}
+	}
+	if !conflicted {
+		return nil, nil
+	}
+
+	return v.resolveByKey(ctx, byKey)
+}
+
+// ResolveDuplicateKeys returns the given state entries with the keys that
+// more than one of them holds settled by the room's state resolution
+// algorithm. Entries without a duplicate key are returned as they are.
+func (v *StateResolution) ResolveDuplicateKeys(
+	ctx context.Context, entries []types.StateEntry,
+) ([]types.StateEntry, error) {
+	byKey := map[types.StateKeyTuple][]types.StateEntry{}
+	conflicted := false
+	for _, entry := range entries {
+		if slices.ContainsFunc(byKey[entry.StateKeyTuple], func(e types.StateEntry) bool { return e.EventNID == entry.EventNID }) {
+			continue
+		}
+		byKey[entry.StateKeyTuple] = append(byKey[entry.StateKeyTuple], entry)
+		if len(byKey[entry.StateKeyTuple]) > 1 {
+			conflicted = true
+		}
+	}
+	if !conflicted {
+		return entries, nil
+	}
+	return v.resolveByKey(ctx, byKey)
+}
+
+// resolveByKey resolves the keys that hold more than one entry.
+func (v *StateResolution) resolveByKey(
+	ctx context.Context, byKey map[types.StateKeyTuple][]types.StateEntry,
+) ([]types.StateEntry, error) {
+	var notConflicted, conflicts []types.StateEntry
+	for _, entries := range byKey {
+		if len(entries) == 1 {
+			notConflicted = append(notConflicted, entries[0])
+		} else {
+			conflicts = append(conflicts, entries...)
+		}
+	}
+	sort.Sort(stateEntrySorter(notConflicted))
+	sort.Sort(stateEntrySorter(conflicts))
+	return v.resolveConflicts(ctx, v.roomInfo.RoomVersion, notConflicted, conflicts)
 }

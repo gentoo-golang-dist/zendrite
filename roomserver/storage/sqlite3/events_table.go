@@ -123,6 +123,17 @@ const selectEventRejectedSQL = "" +
 
 const selectRoomsWithEventTypeNIDSQL = `SELECT DISTINCT room_nid FROM roomserver_events WHERE event_type_nid = $1`
 
+const selectRejectedEventNIDsOfTypeSQL = "" +
+	"SELECT event_nid FROM roomserver_events" +
+	" WHERE room_nid = $1 AND event_type_nid = $2 AND is_rejected = 1 ORDER BY event_nid ASC"
+
+const selectRejectedEventNIDsSQL = "" +
+	"SELECT event_nid FROM roomserver_events" +
+	" WHERE room_nid = $1 AND is_rejected = 1 ORDER BY event_nid ASC"
+
+const updateEventUnrejectedSQL = "" +
+	"UPDATE roomserver_events SET is_rejected = 0 WHERE event_nid = $1"
+
 const updateEventStateKeyNIDSQL = "" +
 	"UPDATE roomserver_events SET event_state_key_nid = $1 WHERE event_nid = $2"
 
@@ -143,6 +154,9 @@ type eventStatements struct {
 	selectEventRejectedStmt                       *sql.Stmt
 	selectRoomsWithEventTypeNIDStmt               *sql.Stmt
 	updateEventStateKeyNIDStmt                    *sql.Stmt
+	selectRejectedEventNIDsOfTypeStmt             *sql.Stmt
+	updateEventUnrejectedStmt                     *sql.Stmt
+	selectRejectedEventNIDsStmt                   *sql.Stmt
 	// bulkSelectEventNIDStmt               *sql.Stmt
 	// bulkSelectUnsentEventNIDStmt         *sql.Stmt
 	// selectRoomNIDsForEventNIDsStmt       *sql.Stmt
@@ -202,6 +216,9 @@ func PrepareEventsTable(db *sql.DB) (tables.Events, error) {
 		{&s.selectEventRejectedStmt, selectEventRejectedSQL},
 		{&s.selectRoomsWithEventTypeNIDStmt, selectRoomsWithEventTypeNIDSQL},
 		{&s.updateEventStateKeyNIDStmt, updateEventStateKeyNIDSQL},
+		{&s.selectRejectedEventNIDsOfTypeStmt, selectRejectedEventNIDsOfTypeSQL},
+		{&s.updateEventUnrejectedStmt, updateEventUnrejectedSQL},
+		{&s.selectRejectedEventNIDsStmt, selectRejectedEventNIDsSQL},
 	}.Prepare(db)
 }
 
@@ -362,10 +379,7 @@ func (s *eventStatements) BulkSelectStateEventByNID(
 			params = append(params, v)
 		}
 	}
-	// Order events with the same state key by depth and then NID, so that the
-	// one latest in the room DAG is last and wins when a snapshot holds more
-	// than one of them.
-	selectOrig += " ORDER BY event_type_nid, event_state_key_nid, depth, event_nid ASC"
+	selectOrig += " ORDER BY event_type_nid, event_state_key_nid ASC"
 	selectPrep, err := s.db.Prepare(selectOrig)
 	if err != nil {
 		return nil, fmt.Errorf("s.db.Prepare: %w", err)
@@ -730,4 +744,47 @@ func (s *eventStatements) UpdateEventStateKeyNID(
 ) error {
 	_, err := sqlutil.TxStmt(txn, s.updateEventStateKeyNIDStmt).ExecContext(ctx, eventStateKeyNID, eventNID)
 	return err
+}
+
+func (s *eventStatements) SelectRejectedEventNIDsOfType(
+	ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, eventTypeNID types.EventTypeNID,
+) ([]types.EventNID, error) {
+	rows, err := sqlutil.TxStmt(txn, s.selectRejectedEventNIDsOfTypeStmt).QueryContext(ctx, roomNID, eventTypeNID)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectRejectedEventNIDsOfType: rows.close() failed")
+	var result []types.EventNID
+	for rows.Next() {
+		var eventNID types.EventNID
+		if err = rows.Scan(&eventNID); err != nil {
+			return nil, err
+		}
+		result = append(result, eventNID)
+	}
+	return result, rows.Err()
+}
+
+func (s *eventStatements) UpdateEventUnrejected(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error {
+	_, err := sqlutil.TxStmt(txn, s.updateEventUnrejectedStmt).ExecContext(ctx, eventNID)
+	return err
+}
+
+func (s *eventStatements) SelectRejectedEventNIDs(
+	ctx context.Context, txn *sql.Tx, roomNID types.RoomNID,
+) ([]types.EventNID, error) {
+	rows, err := sqlutil.TxStmt(txn, s.selectRejectedEventNIDsStmt).QueryContext(ctx, roomNID)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectRejectedEventNIDs: rows.close() failed")
+	var result []types.EventNID
+	for rows.Next() {
+		var eventNID types.EventNID
+		if err = rows.Scan(&eventNID); err != nil {
+			return nil, err
+		}
+		result = append(result, eventNID)
+	}
+	return result, rows.Err()
 }

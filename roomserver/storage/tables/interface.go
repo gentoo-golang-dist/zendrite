@@ -75,6 +75,14 @@ type Events interface {
 	SelectRoomsWithEventTypeNID(ctx context.Context, txn *sql.Tx, eventTypeNID types.EventTypeNID) ([]types.RoomNID, error)
 	// UpdateEventStateKeyNID changes the state key NID an event is stored under.
 	UpdateEventStateKeyNID(ctx context.Context, txn *sql.Tx, eventNID types.EventNID, eventStateKeyNID types.EventStateKeyNID) error
+	// SelectRejectedEventNIDsOfType returns the rejected events of a type in a
+	// room, in event NID order.
+	SelectRejectedEventNIDsOfType(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, eventTypeNID types.EventTypeNID) ([]types.EventNID, error)
+	// SelectRejectedEventNIDs returns the rejected events of a room, in event
+	// NID order.
+	SelectRejectedEventNIDs(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) ([]types.EventNID, error)
+	// UpdateEventUnrejected marks a rejected event as accepted.
+	UpdateEventUnrejected(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error
 }
 
 // AuthTypeEvent is a stored event of a type that can be an auth event.
