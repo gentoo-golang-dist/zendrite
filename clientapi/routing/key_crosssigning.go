@@ -68,7 +68,9 @@ func UploadCrossSigningDeviceKeys(
 
 	existingMasterKey, hasMasterKey := keyResp.MasterKeys[device.UserID]
 	requireUIA := false
-	if hasMasterKey {
+	// Appservices may replace cross-signing keys without user-interactive
+	// authentication (MSC4190).
+	if hasMasterKey && device.AppserviceID == "" {
 		// If we have a master key, check if any of the existing keys differ. If they do,
 		// we need to re-authenticate the user.
 		requireUIA = keysDiffer(existingMasterKey, keyResp, uploadReq, device.UserID)

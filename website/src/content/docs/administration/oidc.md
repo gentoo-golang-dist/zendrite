@@ -235,13 +235,13 @@ Configure `admin_token`.
 
 | Area | Behaviour |
 | --- | --- |
-| `POST /login` | Only `m.login.token` is accepted. Everything else returns `403 M_FORBIDDEN`. |
+| `POST /login` | Only `m.login.token` is accepted. `m.login.application_service` returns `400 M_APPSERVICE_LOGIN_UNSUPPORTED` (MSC4190), everything else `403 M_FORBIDDEN`. |
 | `GET /login` | Advertises `m.login.sso` (marked `oauth_aware_preferred`) and `m.login.token`. |
-| `POST /register` | `403 M_FORBIDDEN`, except application-service registrations, which still work. |
+| `POST /register` | `403 M_FORBIDDEN`, except application-service registrations, which must set `inhibit_login: true` or get `400 M_APPSERVICE_LOGIN_UNSUPPORTED` (MSC4190). |
 | `/register/available` | `403 M_FORBIDDEN`. |
 | `/account/password`, `/account/deactivate` | `403 M_FORBIDDEN`. Handled at the provider. |
 | `/account/3pid/delete`, 3PID `requestToken` | `403 M_FORBIDDEN`. |
-| `/logout`, `/logout/all`, `/delete_devices`, device modification | `403 M_FORBIDDEN`. Sessions are managed at the provider. |
+| `/logout`, `/logout/all`, `/delete_devices`, device modification | `403 M_FORBIDDEN`. Sessions are managed at the provider. Application services still create, rename and delete their users' devices with `PUT` and `DELETE /devices/{deviceId}` and `/delete_devices` (MSC4190). |
 | `/auth/{authType}/fallback/web` | `403 M_FORBIDDEN`. |
 | `GET /capabilities` | Reports `m.change_password` and `m.3pid_changes` as disabled. |
 | `POST /refresh` | Bridges to the provider's refresh token grant. |

@@ -31,11 +31,27 @@ import (
 // M_FORBIDDEN when MSC3861 OIDC delegated authentication is enabled.
 func msc3861ForbiddenHandler(metricsName string) http.Handler {
 	return httputil.MakeExternalAPI(metricsName, func(req *http.Request) util.JSONResponse {
-		return util.JSONResponse{
-			Code: http.StatusForbidden,
-			JSON: spec.Forbidden("This endpoint is not available when authentication is delegated to an OIDC provider via MSC3861."),
-		}
+		return msc3861ForbiddenResponse()
 	})
+}
+
+// appServiceLoginUnsupported refuses to log an appservice user in when
+// authentication is delegated to an OIDC provider (MSC4190).
+func appServiceLoginUnsupported() util.JSONResponse {
+	return util.JSONResponse{
+		Code: http.StatusBadRequest,
+		JSON: spec.MatrixError{
+			ErrCode: "M_APPSERVICE_LOGIN_UNSUPPORTED",
+			Err:     "Appservices cannot log in when authentication is delegated to an OIDC provider; register with inhibit_login and create devices with PUT /devices/{deviceId}.",
+		},
+	}
+}
+
+func msc3861ForbiddenResponse() util.JSONResponse {
+	return util.JSONResponse{
+		Code: http.StatusForbidden,
+		JSON: spec.Forbidden("This endpoint is not available when authentication is delegated to an OIDC provider via MSC3861."),
+	}
 }
 
 // Bounds the body read on the unauthenticated POST /register endpoint handled
@@ -75,9 +91,13 @@ func msc3861RegisterHandler(
 		// Restore the body so the real registration handler can read it.
 		req.Body = io.NopCloser(bytes.NewReader(body))
 
-		// Allow application-service registrations through.
+		// Allow application-service registrations through. They cannot get
+		// an access token, so they must not log in (MSC4190).
 		_, accessTokenErr := auth.ExtractAccessToken(req)
 		if gjson.GetBytes(body, "type").String() == authtypes.LoginTypeApplicationService && accessTokenErr == nil {
+			if inhibit := gjson.GetBytes(body, "inhibit_login"); inhibit.Type != gjson.True {
+				return appServiceLoginUnsupported()
+			}
 			return Register(req, userAPI, cfg)
 		}
 

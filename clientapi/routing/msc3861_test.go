@@ -124,9 +124,6 @@ func TestMSC3861_DisabledEndpoints(t *testing.T) {
 		{"3pid email requestToken", http.MethodPost, "/_matrix/client/v3/account/3pid/email/requestToken"},
 		{"register email requestToken", http.MethodPost, "/_matrix/client/v3/register/email/requestToken"},
 		{"auth fallback web", http.MethodGet, "/_matrix/client/v3/auth/m.login.sso/fallback/web"},
-		{"device PUT", http.MethodPut, "/_matrix/client/v3/devices/ABCDEF"},
-		{"device DELETE", http.MethodDelete, "/_matrix/client/v3/devices/ABCDEF"},
-		{"delete_devices", http.MethodPost, "/_matrix/client/v3/delete_devices"},
 		{"logout", http.MethodPost, "/_matrix/client/v3/logout"},
 		{"logout all", http.MethodPost, "/_matrix/client/v3/logout/all"},
 		{"login POST", http.MethodPost, "/_matrix/client/v3/login"},
@@ -373,8 +370,9 @@ func TestMSC3861_ApplicationServiceRegisterStillWorks(t *testing.T) {
 	defer closeDB()
 
 	body, err := json.Marshal(map[string]any{
-		"type":     "m.login.application_service",
-		"username": "_appservice_alice",
+		"type":          "m.login.application_service",
+		"username":      "_appservice_alice",
+		"inhibit_login": true,
 	})
 	if err != nil {
 		t.Fatalf("failed to marshal request body: %v", err)
@@ -392,6 +390,114 @@ func TestMSC3861_ApplicationServiceRegisterStillWorks(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK && rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 200 or 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMSC3861_ApplicationServiceLoginUnsupported checks that appservices can
+// neither log in nor register with a login under MSC3861 (MSC4190).
+func TestMSC3861_ApplicationServiceLoginUnsupported(t *testing.T) {
+	t.Parallel()
+	routers, _, closeDB := setupMSC3861Routers(t)
+	defer closeDB()
+
+	for _, tc := range []struct {
+		name, path string
+		body       map[string]any
+	}{
+		{"login", "/_matrix/client/v3/login", map[string]any{
+			"type":       "m.login.application_service",
+			"identifier": map[string]any{"type": "m.id.user", "user": "_appservice_alice"},
+		}},
+		{"register without inhibit_login", "/_matrix/client/v3/register", map[string]any{
+			"type":     "m.login.application_service",
+			"username": "_appservice_alice",
+		}},
+		{"register with inhibit_login false", "/_matrix/client/v3/register", map[string]any{
+			"type":          "m.login.application_service",
+			"username":      "_appservice_alice",
+			"inhibit_login": false,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := test.NewRequest(t, http.MethodPost, tc.path, test.WithJSONBody(t, tc.body))
+			req.Header.Set("Authorization", "Bearer fake-as-token")
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["errcode"] != "M_APPSERVICE_LOGIN_UNSUPPORTED" {
+				t.Fatalf("got errcode %v", body["errcode"])
+			}
+		})
+	}
+}
+
+// TestMSC3861_ApplicationServiceDeviceManagement checks that appservices
+// manage their users' devices under MSC3861 (MSC4190), while other users are
+// still sent to the OIDC provider.
+func TestMSC3861_ApplicationServiceDeviceManagement(t *testing.T) {
+	t.Parallel()
+	routers, cfg, userAPI, closeDB := setupMSC3861Stack(t, test.DBTypeSQLite, nil)
+	defer closeDB()
+	ctx := context.Background()
+	if err := userAPI.PerformAccountCreation(ctx, &userapiAPI.PerformAccountCreationRequest{
+		AccountType:  userapiAPI.AccountTypeAppService,
+		Localpart:    "_appservice_alice",
+		ServerName:   cfg.Global.ServerName,
+		AppServiceID: "fake-as",
+	}, &userapiAPI.PerformAccountCreationResponse{}); err != nil {
+		t.Fatal(err)
+	}
+	alice := "@_appservice_alice:" + string(cfg.Global.ServerName)
+
+	do := func(method, path, token string, body any) (int, map[string]any) {
+		t.Helper()
+		var opts []test.HTTPRequestOpt
+		if body != nil {
+			opts = append(opts, test.WithJSONBody(t, body))
+		}
+		req := test.NewRequest(t, method, path, opts...)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		routers.Client.ServeHTTP(rec, req)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	asUser := "?user_id=" + alice
+
+	if code, out := do(http.MethodPut, "/_matrix/client/v3/devices/BRIDGE"+asUser, "fake-as-token", map[string]any{"display_name": "Bridge"}); code != http.StatusCreated {
+		t.Fatalf("create device: got %d %v", code, out)
+	}
+	if code, out := do(http.MethodGet, "/_matrix/client/v3/account/whoami"+asUser+"&device_id=BRIDGE", "fake-as-token", nil); code != http.StatusOK || out["device_id"] != "BRIDGE" || out["user_id"] != alice {
+		t.Fatalf("whoami as device: got %d %v", code, out)
+	}
+	if code, out := do(http.MethodDelete, "/_matrix/client/v3/devices/BRIDGE"+asUser, "fake-as-token", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("delete device: got %d %v", code, out)
+	}
+	if code, out := do(http.MethodPost, "/_matrix/client/v3/delete_devices"+asUser, "fake-as-token", map[string]any{"devices": []string{"OTHER"}}); code != http.StatusOK {
+		t.Fatalf("delete devices: got %d %v", code, out)
+	}
+	// A bare as_token acts as the appservice's sender.
+	if code, out := do(http.MethodGet, "/_matrix/client/v3/account/whoami", "fake-as-token", nil); code != http.StatusOK || out["user_id"] != "@_appservice_bot:"+string(cfg.Global.ServerName) {
+		t.Fatalf("whoami as sender: got %d %v", code, out)
+	}
+
+	// The static admin token is not an appservice: its devices belong to
+	// the OIDC provider.
+	for _, ep := range []struct{ method, path string }{
+		{http.MethodPut, "/_matrix/client/v3/devices/ABCDEF"},
+		{http.MethodDelete, "/_matrix/client/v3/devices/ABCDEF"},
+		{http.MethodPost, "/_matrix/client/v3/delete_devices"},
+	} {
+		if code, out := do(ep.method, ep.path, "test-admin-token", map[string]any{}); code != http.StatusForbidden || out["errcode"] != string(spec.ErrorForbidden) {
+			t.Fatalf("%s %s: got %d %v", ep.method, ep.path, code, out)
+		}
 	}
 }
 

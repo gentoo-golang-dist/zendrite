@@ -89,19 +89,6 @@ func ruleMatches(rule *Rule, kind Kind, event gomatrixserverlib.PDU, ec Evaluati
 		return false, nil
 	}
 
-	// Preserve text mentions only for events from legacy clients.
-	if rule.RuleID == MRuleContainsDisplayName || rule.RuleID == MRuleContainsUserName || rule.RuleID == MRuleRoomNotif {
-		var content map[string]json.RawMessage
-		if len(event.Content()) > 0 {
-			if err := json.Unmarshal(event.Content(), &content); err != nil {
-				return false, err
-			}
-		}
-		if _, present := content["m.mentions"]; present {
-			return false, nil
-		}
-	}
-
 	switch kind {
 	case OverrideKind, UnderrideKind:
 		for _, cond := range rule.Conditions {

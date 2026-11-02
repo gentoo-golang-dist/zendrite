@@ -93,9 +93,17 @@ func Test_evaluatePushRules(t *testing.T) {
 					{Kind: pushrules.NotifyAction},
 				},
 			},
+			// MSC4210 removed the legacy rule that matched the localpart in the body.
+			{
+				name:         "m.room.message without mention",
+				eventContent: `{"type":"m.room.message", "content": {"body": "test"},"room_id":"!room:example.com"}`,
+				wantNotify:   true,
+				wantAction:   pushrules.NotifyAction,
+				wantActions:  []*pushrules.Action{{Kind: pushrules.NotifyAction}},
+			},
 			{
 				name:         "m.room.message highlights",
-				eventContent: `{"type":"m.room.message", "content": {"body": "test"},"room_id":"!room:example.com"}`,
+				eventContent: `{"type":"m.room.message", "content": {"body": "test", "m.mentions": {"user_ids": ["@test:localhost"]}},"room_id":"!room:example.com"}`,
 				wantNotify:   true,
 				wantAction:   pushrules.NotifyAction,
 				wantActions: []*pushrules.Action{

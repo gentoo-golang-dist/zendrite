@@ -700,16 +700,10 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		return nil
 	}
 
-	// 2. Check appservice tokens (pass through unchanged).
-	if req.AppServiceUserID != "" {
-		appServiceDevice, err := a.queryAppServiceToken(ctx, req.AccessToken, req.AppServiceUserID)
-		if err != nil || appServiceDevice != nil {
-			if err != nil {
-				res.Err = err.Error()
-			}
-			res.Device = appServiceDevice
-			return nil
-		}
+	// 2. Check appservice tokens. The OIDC provider does not know them, so
+	// they are resolved here even without an asserted identity.
+	if a.queryAppServiceAccessToken(ctx, req, res, true) {
+		return nil
 	}
 
 	// 3. Introspect the token with the OIDC provider.

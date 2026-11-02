@@ -40,11 +40,6 @@ func TestDefaultRules(t *testing.T) {
 			want:       mRuleMemberEventDefinition,
 		},
 		{
-			name:       ".m.rule.contains_display_name",
-			inputBytes: []byte(`{"rule_id":".m.rule.contains_display_name","default":true,"enabled":true,"conditions":[{"kind":"contains_display_name"}],"actions":["notify",{"set_tweak":"sound","value":"default"},{"set_tweak":"highlight"}]}`),
-			want:       mRuleContainsDisplayNameDefinition,
-		},
-		{
 			name:       ".m.rule.tombstone",
 			inputBytes: []byte(`{"rule_id":".m.rule.tombstone","default":true,"enabled":true,"conditions":[{"kind":"event_match","key":"type","pattern":"m.room.tombstone"},{"kind":"event_match","key":"state_key","pattern":""}],"actions":["notify",{"set_tweak":"highlight"}]}`),
 			want:       mRuleTombstoneDefinition,
@@ -55,20 +50,9 @@ func TestDefaultRules(t *testing.T) {
 			want:       mRuleACLsDefinition,
 		},
 		{
-			name:       ".m.rule.roomnotif",
-			inputBytes: []byte(`{"rule_id":".m.rule.roomnotif","default":true,"enabled":true,"conditions":[{"kind":"event_match","key":"content.body","pattern":"@room"},{"kind":"sender_notification_permission","key":"room"}],"actions":["notify",{"set_tweak":"highlight"}]}`),
-			want:       mRuleRoomNotifDefinition,
-		},
-		{
 			name:       ".m.rule.suppress_edits",
 			inputBytes: []byte(`{"rule_id":".m.rule.suppress_edits","default":true,"enabled":true,"conditions":[{"kind":"event_property_is","key":"content.m\\.relates_to.rel_type","value":"m.replace"}],"actions":[]}`),
 			want:       *mRuleSuppressEditsDefinition(),
-		},
-		// Default content rules
-		{
-			name:       ".m.rule.contains_user_name",
-			inputBytes: []byte(`{"rule_id":".m.rule.contains_user_name","default":true,"enabled":true,"actions":["notify",{"set_tweak":"sound","value":"default"},{"set_tweak":"highlight"}],"pattern":"myLocalUser"}`),
-			want:       *mRuleContainsUserNameDefinition("myLocalUser"),
 		},
 		// default underride rules
 		{

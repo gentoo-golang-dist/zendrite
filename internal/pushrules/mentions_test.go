@@ -2,6 +2,7 @@ package pushrules
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -31,10 +32,10 @@ func TestMentions(t *testing.T) {
 		{"room string", `{"m.mentions":{"room":"true"}}`, MRuleMessage, true},
 		{"empty mentions", `{"body":"alice Dear User @room","m.mentions":{}}`, MRuleMessage, true},
 		{"null mentions", `{"body":"alice Dear User @room","m.mentions":null}`, MRuleMessage, true},
-		{"legacy display name", `{"body":"Dear User"}`, MRuleContainsDisplayName, false},
-		{"legacy localpart", `{"body":"alice"}`, MRuleContainsUserName, false},
-		{"legacy room", `{"body":"@room"}`, MRuleRoomNotif, true},
-		{"legacy room denied", `{"body":"@room"}`, MRuleMessage, false},
+		// MSC4210 removed the legacy text mention rules.
+		{"legacy display name", `{"body":"Dear User"}`, MRuleMessage, false},
+		{"legacy localpart", `{"body":"alice"}`, MRuleMessage, false},
+		{"legacy room", `{"body":"@room"}`, MRuleMessage, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			event := mustEventFromJSON(t, `{"room_id":"!room:example.com","type":"m.room.message","content":`+tc.content+`}`)
@@ -83,42 +84,87 @@ func TestPropertyConditions(t *testing.T) {
 	}
 }
 
-func TestAddMentionRules(t *testing.T) {
+// legacyMentionRules are the stored rules of an account created before
+// MSC4210 (spec v1.17) removed them from the defaults.
+const legacyMentionRules = `{
+	"override": [
+		{"rule_id":".m.rule.contains_display_name","default":true,"enabled":false,"conditions":[{"kind":"contains_display_name"}],"actions":["dont_notify"]},
+		{"rule_id":".m.rule.roomnotif","default":true,"enabled":true,"conditions":[{"kind":"event_match","key":"content.body","pattern":"@room"},{"kind":"sender_notification_permission","key":"room"}],"actions":["notify",{"set_tweak":"highlight"}]}
+	],
+	"content": [
+		{"rule_id":"keyword","default":false,"enabled":true,"pattern":"cake","actions":["notify"]},
+		{"rule_id":".m.rule.contains_user_name","default":true,"enabled":true,"pattern":"alice","actions":["notify",{"set_tweak":"sound","value":"default"},{"set_tweak":"highlight"}]}
+	]
+}`
+
+func TestUpgradeDefaultRulesLegacyMentions(t *testing.T) {
+	var legacy RuleSet
+	if err := json.Unmarshal([]byte(legacyMentionRules), &legacy); err != nil {
+		t.Fatal(err)
+	}
 	rules := DefaultGlobalRuleSet("alice", "example.com")
 	var old []*Rule
 	for _, rule := range rules.Override {
-		if rule.RuleID == MRuleIsUserMention || rule.RuleID == MRuleIsRoomMention {
+		if rule.RuleID == MRuleIsUserMention {
+			// A stored v1.6 rule set has the legacy rules where the
+			// mention rules are now.
+			old = append(old, legacy.Override...)
+		}
+		if rule.RuleID == MRuleIsUserMention || rule.RuleID == MRuleIsRoomMention || rule.RuleID == MRuleSuppressEdits {
 			continue
 		}
 		clone := *rule
-		if rule.RuleID == MRuleContainsDisplayName {
-			clone.Enabled = false
-			clone.Actions = []*Action{{Kind: DontNotifyAction}}
-		}
 		old = append(old, &clone)
 	}
 	custom := &Rule{RuleID: "custom", Enabled: true, Actions: []*Action{{Kind: NotifyAction}}}
 	rules.Override = append([]*Rule{custom}, old...)
-	AddMentionRules(rules, "alice", "example.com")
+	rules.Content = legacy.Content
+
+	UpgradeDefaultRules(rules, "alice", "example.com")
 	if rules.Override[0] != custom {
 		t.Fatal("custom rule moved")
 	}
-	for _, rule := range rules.Override {
+	want := DefaultGlobalRuleSet("alice", "example.com")
+	var gotIDs, wantIDs []string
+	for _, rule := range rules.Override[1:] {
+		gotIDs = append(gotIDs, rule.RuleID)
 		if rule.RuleID == MRuleIsUserMention && (rule.Enabled || rule.Actions[0].Kind != DontNotifyAction) {
 			t.Fatal("lost legacy preferences")
 		}
 	}
+	for _, rule := range want.Override {
+		wantIDs = append(wantIDs, rule.RuleID)
+	}
+	if diff := cmp.Diff(wantIDs, gotIDs); diff != "" {
+		t.Fatalf("override rules differ from the defaults (-want +got):\n%s", diff)
+	}
+	if len(rules.Content) != 1 || rules.Content[0].RuleID != "keyword" {
+		t.Fatalf("content rules: got %+v, want only the custom keyword", rules.Content)
+	}
+
 	before, err := json.Marshal(rules)
 	if err != nil {
 		t.Fatal(err)
 	}
-	AddMentionRules(rules, "alice", "example.com")
+	UpgradeDefaultRules(rules, "alice", "example.com")
 	after, err := json.Marshal(rules)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if diff := cmp.Diff(string(before), string(after)); diff != "" {
 		t.Fatalf("not idempotent: %s", diff)
+	}
+}
+
+func TestDefaultRulesHaveNoLegacyMentions(t *testing.T) {
+	data, err := json.Marshal(DefaultGlobalRuleSet("alice", "example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{MRuleContainsDisplayName, MRuleContainsUserName, MRuleRoomNotif} {
+		if strings.Contains(string(data), `"`+id+`"`) {
+			t.Fatalf("default rules still contain %s", id)
+		}
 	}
 }
 

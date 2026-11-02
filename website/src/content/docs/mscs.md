@@ -63,6 +63,7 @@ Zendrite advertises `org.matrix.msc4222` in `unstable_features` for clients that
 | [MSC3981](https://github.com/matrix-org/matrix-spec-proposals/pull/3981) | Recursive relations | 1.10 | Implemented: `recurse` follows relations three levels deep |
 | [MSC2676](https://github.com/matrix-org/matrix-spec-proposals/pull/2676) | Message editing | 1.4 | Implemented: the latest valid edit is bundled under `m.replace`, in the v1.7 format; invalid edits are ignored, and a redacted original carries no edits |
 | [MSC3316](https://github.com/matrix-org/matrix-spec-proposals/pull/3316) | Timestamp massaging | 1.3 | Implemented: the `ts` parameter on `/send`, `/state`, membership endpoints, `/createRoom` and profile updates only applies to requests made with an application service token, and is ignored otherwise |
+| [MSC4210](https://github.com/matrix-org/matrix-spec-proposals/pull/4210) | Remove legacy mentions | 1.17 | Implemented: the `.m.rule.contains_display_name`, `.m.rule.contains_user_name` and `.m.rule.roomnotif` push rules are no longer installed, and are dropped from existing accounts' rules once `.m.rule.is_user_mention` and `.m.rule.is_room_mention` have taken over their settings. Only `m.mentions` notifies of a mention. The deprecated `contains_display_name` condition still works in user-defined rules |
 | [MSC3958](https://github.com/matrix-org/matrix-spec-proposals/pull/3958) | Suppress notifications from message edits | 1.9 | Implemented: the `.m.rule.suppress_edits` default push rule, also added to existing accounts' rules |
 | [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Implemented: relations are stored and served through `/relations`. Sending an annotation that the sender has already made, with the same event type and key on the same event and not redacted, fails with 400 `M_DUPLICATE_ANNOTATION`; retrying the original transaction still returns its event. The spec defines no server-side aggregation for annotations |
 | [MSC3970](https://github.com/matrix-org/matrix-spec-proposals/pull/3970) | Scope transaction IDs to devices | 1.7 | Implemented: `/send`, `/redact`, `/sendToDevice`, delayed events and server notices recognise a retransmission by device, endpoint and transaction ID, so it survives a refreshed access token. Application services share one scope per application service, whichever user they act as |
@@ -242,6 +243,8 @@ Otherwise, or when no server answers, the local result stands.
 | [MSC3905](https://github.com/matrix-org/matrix-spec-proposals/pull/3905) | Application services should only be interested in local users | 1.5 | Implemented: `users` namespaces only match users on this server or its virtual hosts, so a remote sender, member or joined user no longer makes an event interesting to an application service |
 | [MSC2409](https://github.com/matrix-org/matrix-spec-proposals/pull/2409) | Typing, receipts and presence for application services | 1.13 | Implemented: see [ephemeral data](#ephemeral-data-for-application-services) |
 | [MSC2659](https://github.com/matrix-org/matrix-spec-proposals/pull/2659) | Application service ping endpoint | 1.7 | Implemented: `POST /_matrix/client/v1/appservice/{appserviceId}/ping`, authenticated with the application service's `as_token`, calls `POST /_matrix/app/v1/ping` with the `hs_token` and the `transaction_id`, and returns `duration_ms`. Failures return `M_URL_NOT_SET`, `M_CONNECTION_FAILED`, `M_CONNECTION_TIMEOUT` (after 30 seconds) or `M_BAD_STATUS` with the status and up to 4 KiB of the body |
+| [MSC4326](https://github.com/matrix-org/matrix-spec-proposals/pull/4326) | Device masquerading for appservices | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
+| [MSC4190](https://github.com/matrix-org/matrix-spec-proposals/pull/4190) | Device management for application services | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
 
 ### Ephemeral data for application services
 
@@ -252,6 +255,20 @@ Typing notifications and receipts are sent for rooms the application service is 
 Private read receipts are only sent for users in the user namespaces.
 Presence is sent for users in the user namespaces and for users who share a room with one of them.
 Ephemeral data from before the application service enabled the option, or from while Zendrite was not running, is not sent.
+
+### Devices of application services
+
+An application service may add `device_id` to the `user_id` it asserts with its `as_token`, and then acts as that device of the user, for example when uploading one-time keys (MSC4326).
+Without `user_id`, the device belongs to the application service's sender.
+A device the user does not have fails with 400 `M_UNKNOWN_DEVICE`.
+The unstable parameter `org.matrix.msc3202.device_id` is accepted too, and answered with `ORG.MATRIX.MSC4326.M_UNKNOWN_DEVICE`.
+For any other access token, `device_id` is ignored.
+
+Application services create devices for their users with `PUT /_matrix/client/v3/devices/{deviceId}`, which answers 201 when it created the device and 200 when it renamed an existing one (MSC4190).
+The device gets an access token that is never handed out: the application service keeps using its `as_token` with `device_id`.
+`DELETE /devices/{deviceId}`, `POST /delete_devices` and replacing cross-signing keys with `POST /keys/device_signing/upload` need no user-interactive authentication for application services.
+With [delegated authentication](#msc3861-oidc-delegated-authentication), these device endpoints stay available to application services only, and `m.login.application_service` logins as well as application service registrations without `inhibit_login: true` fail with 400 `M_APPSERVICE_LOGIN_UNSUPPORTED`.
+An `as_token` without `user_id` then acts as the sender, as it does without delegated authentication.
 
 ## Authentication
 

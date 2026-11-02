@@ -1498,12 +1498,10 @@ func TestPushRules(t *testing.T) {
 				},
 			},
 			{
-				name:           "can get rules by scope and content kind",
+				// MSC4210 removed the only default content rule.
+				name:           "can not get rules by scope and empty content kind",
 				request:        httptest.NewRequest(http.MethodGet, "/_matrix/client/v3/pushrules/global/content/", strings.NewReader("")),
-				wantStatusCode: http.StatusOK,
-				validateFunc: func(t *testing.T, respBody *bytes.Buffer) {
-					assert.Equal(t, gjson.GetBytes(defaultRules, "global.content").Raw, respBody.String())
-				},
+				wantStatusCode: http.StatusBadRequest,
 			},
 			{
 				name:           "can not get rules by scope and room kind",

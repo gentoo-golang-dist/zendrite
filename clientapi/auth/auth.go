@@ -54,10 +54,19 @@ func VerifyUserFromRequest(
 			JSON: spec.MissingToken(err.Error()),
 		}
 	}
+	query := req.URL.Query()
+	// Appservices may also assert a device (MSC4326). The unstable parameter
+	// keeps its historical MSC3202 name.
+	deviceID, unstableDeviceID := query.Get("device_id"), false
+	if deviceID == "" {
+		deviceID = query.Get("org.matrix.msc3202.device_id")
+		unstableDeviceID = deviceID != ""
+	}
 	var res api.QueryAccessTokenResponse
 	err = userAPI.QueryAccessToken(req.Context(), &api.QueryAccessTokenRequest{
-		AccessToken:      token,
-		AppServiceUserID: req.URL.Query().Get("user_id"),
+		AccessToken:        token,
+		AppServiceUserID:   query.Get("user_id"),
+		AppServiceDeviceID: deviceID,
 	}, &res)
 	if err != nil {
 		util.GetLogger(req.Context()).WithError(err).Error("userAPI.QueryAccessToken failed")
@@ -72,6 +81,16 @@ func VerifyUserFromRequest(
 				Code: http.StatusForbidden,
 				JSON: spec.Forbidden(res.Err),
 			}
+		}
+	}
+	if res.UnknownDevice {
+		errCode := "M_UNKNOWN_DEVICE"
+		if unstableDeviceID {
+			errCode = "ORG.MATRIX.MSC4326.M_UNKNOWN_DEVICE"
+		}
+		return nil, &util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.MatrixError{ErrCode: spec.MatrixErrorCode(errCode), Err: "Unknown device for the asserted user"},
 		}
 	}
 	if res.Device == nil {

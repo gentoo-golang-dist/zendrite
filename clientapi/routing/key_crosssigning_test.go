@@ -71,6 +71,27 @@ func Test_UploadCrossSigningDeviceKeys_ValidRequest(t *testing.T) {
 
 // Require UIA if there is an existing master key and there is no auth provided.
 func Test_UploadCrossSigningDeviceKeys_Unauthorized(t *testing.T) {
+	res := uploadReplacementCrossSigningKeys(t, &api.Device{UserID: "@user:example.com", ID: "device"}, &config.MSCs{})
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+}
+
+// Appservices replace cross-signing keys without UIA (MSC4190), also with
+// delegated authentication.
+func Test_UploadCrossSigningDeviceKeys_AppServiceSkipsUIA(t *testing.T) {
+	device := &api.Device{UserID: "@user:example.com", ID: "AS_Device", AppserviceID: "bridge"}
+	for _, mscCfg := range []*config.MSCs{{}, {MSCs: []string{"msc3861"}}} {
+		if res := uploadReplacementCrossSigningKeys(t, device, mscCfg); res.Code != http.StatusOK {
+			t.Fatalf("MSCs %v: expected status %d, got %d: %+v", mscCfg.MSCs, http.StatusOK, res.Code, res.JSON)
+		}
+	}
+}
+
+// uploadReplacementCrossSigningKeys uploads cross-signing keys, without auth,
+// that differ from the user's existing master key.
+func uploadReplacementCrossSigningKeys(t *testing.T, device *api.Device, mscCfg *config.MSCs) util.JSONResponse {
+	t.Helper()
 	userID := "@user:example.com"
 
 	// Note that there is no auth field.
@@ -114,13 +135,7 @@ func Test_UploadCrossSigningDeviceKeys_Unauthorized(t *testing.T) {
 			},
 		},
 	}
-	device := &api.Device{UserID: "@user:example.com", ID: "device"}
-	cfg := &config.ClientAPI{}
-
-	res := UploadCrossSigningDeviceKeys(req, keyserverAPI, device, getAccountByPassword, cfg, &config.MSCs{})
-	if res.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
-	}
+	return UploadCrossSigningDeviceKeys(req, keyserverAPI, device, getAccountByPassword, &config.ClientAPI{}, mscCfg)
 }
 
 // Invalid JSON is rejected.

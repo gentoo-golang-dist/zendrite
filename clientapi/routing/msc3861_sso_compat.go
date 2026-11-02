@@ -959,6 +959,12 @@ func (h *ssoCompatHandler) serveLogin() http.Handler {
 			}
 		}
 
+		// Appservices create devices with PUT /devices/{deviceId} instead
+		// (MSC4190).
+		if gjson.GetBytes(body, "type").String() == authtypes.LoginTypeApplicationService {
+			return appServiceLoginUnsupported()
+		}
+
 		// Only m.login.token is allowed under MSC3861; everything else is delegated.
 		if gjson.GetBytes(body, "type").String() != authtypes.LoginTypeToken {
 			return util.JSONResponse{

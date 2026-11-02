@@ -615,17 +615,10 @@ func (a *UserInternalAPI) QueryAccessToken(ctx context.Context, req *api.QueryAc
 	if a.Config.MSCs != nil && a.Config.MSCs.Enabled("msc3861") {
 		return a.queryAccessTokenMSC3861(ctx, req, res)
 	}
-	if req.AppServiceUserID != "" {
-		appServiceDevice, err := a.queryAppServiceToken(ctx, req.AccessToken, req.AppServiceUserID)
-		if err != nil || appServiceDevice != nil {
-			if err != nil {
-				res.Err = err.Error()
-			}
-			res.Device = appServiceDevice
-
-			return nil
-		}
-		// If the provided token wasn't an as_token (both err and appServiceDevice are nil), continue with normal auth.
+	// Without an asserted identity, an as_token falls through to the
+	// lookup below and resolves to its sender's device.
+	if a.queryAppServiceAccessToken(ctx, req, res, false) {
+		return nil
 	}
 	device, err := a.DB.GetDeviceByAccessToken(ctx, req.AccessToken)
 	if err != nil {
@@ -661,6 +654,16 @@ func (a *UserInternalAPI) QueryAccessToken(ctx context.Context, req *api.QueryAc
 	device.AccountType = acc.AccountType
 	device.Locked = acc.Locked
 	device.Suspended = acc.Suspended
+	// An appservice that asserts no identity acts through its sender's
+	// device, whose access token is the as_token. Mark it as the appservice
+	// so it keeps the appservice privileges, such as managing devices
+	// without user-interactive authentication (MSC4190).
+	for _, as := range a.AppServices {
+		if as.ASToken == req.AccessToken {
+			device.AppserviceID = as.ID
+			break
+		}
+	}
 	res.Device = device
 	return nil
 }
@@ -686,9 +689,33 @@ func (a *UserInternalAPI) IsAccountDeactivated(ctx context.Context, localpart st
 	return a.DB.IsAccountDeactivated(ctx, localpart, serverName)
 }
 
+// queryAppServiceAccessToken answers an access token query for an as_token.
+// It returns false when the token is not an as_token, or when it asserts no
+// identity and anyAssertion is false: the caller then continues with normal
+// authentication, ignoring the asserted user and device.
+func (a *UserInternalAPI) queryAppServiceAccessToken(ctx context.Context, req *api.QueryAccessTokenRequest, res *api.QueryAccessTokenResponse, anyAssertion bool) bool {
+	if !anyAssertion && req.AppServiceUserID == "" && req.AppServiceDeviceID == "" {
+		return false
+	}
+	appServiceDevice, err := a.queryAppServiceToken(ctx, req.AccessToken, req.AppServiceUserID, req.AppServiceDeviceID)
+	if err == nil && appServiceDevice == nil {
+		return false
+	}
+	var unknownDevice *api.ErrorUnknownDevice
+	switch {
+	case errors.As(err, &unknownDevice):
+		res.UnknownDevice = true
+	case err != nil:
+		res.Err = err.Error()
+	}
+	res.Device = appServiceDevice
+	return true
+}
+
 // Return the appservice 'device' or nil if the token is not an appservice. Returns an error if there was a problem
-// creating a 'device'.
-func (a *UserInternalAPI) queryAppServiceToken(ctx context.Context, token, appServiceUserID string) (*api.Device, error) {
+// creating a 'device'. With an asserted device ID (MSC4326) the returned device
+// is that device of the user, which must exist.
+func (a *UserInternalAPI) queryAppServiceToken(ctx context.Context, token, appServiceUserID, appServiceDeviceID string) (*api.Device, error) {
 	// Search for app service with given access_token
 	var appService *config.ApplicationService
 	for _, as := range a.AppServices {
@@ -721,16 +748,29 @@ func (a *UserInternalAPI) queryAppServiceToken(ctx context.Context, token, appSe
 		account, err := a.DB.GetAccountByLocalpart(ctx, localpart, domain)
 		// Verify that the account exists and either appServiceID matches or
 		// it belongs to the appservice user namespaces
-		if err == nil && (account.AppServiceID == appService.ID || appService.IsInterestedInUserID(appServiceUserID)) {
-			// Set the userID of dummy device
-			dev.UserID = appServiceUserID
-			return &dev, nil
+		if err != nil || (account.AppServiceID != appService.ID && !appService.IsInterestedInUserID(appServiceUserID)) {
+			return nil, &api.ErrorForbidden{Message: "appservice has not registered this user"}
 		}
-		return nil, &api.ErrorForbidden{Message: "appservice has not registered this user"}
+		// Set the userID of dummy device
+		dev.UserID = appServiceUserID
+	} else {
+		// AS is not masquerading as any user, so act as its sender.
+		localpart, domain = appService.SenderLocalpart, a.Config.Matrix.ServerName
+		dev.UserID = userutil.MakeUserID(localpart, domain)
 	}
 
-	// AS is not masquerading as any user, so use AS's sender_localpart
-	dev.UserID = appService.SenderLocalpart
+	if appServiceDeviceID != "" {
+		// AS is masquerading as one of the user's devices (MSC4326).
+		device, err := a.DB.GetDeviceByID(ctx, localpart, domain, appServiceDeviceID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, &api.ErrorUnknownDevice{DeviceID: appServiceDeviceID}
+		}
+		if err != nil {
+			return nil, err
+		}
+		dev.ID = device.ID
+		dev.DisplayName = device.DisplayName
+	}
 	return &dev, nil
 }
 

@@ -1657,37 +1657,45 @@ func Setup(
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodGet, http.MethodOptions)
 
-	if oidcEnabled {
-		v3mux.Handle("/devices/{deviceID}", msc3861ForbiddenHandler("device_data")).Methods(http.MethodPut, http.MethodOptions)
-		v3mux.Handle("/devices/{deviceID}", msc3861ForbiddenHandler("delete_device")).Methods(http.MethodDelete, http.MethodOptions)
-		v3mux.Handle("/delete_devices", msc3861ForbiddenHandler("delete_devices")).Methods(http.MethodPost, http.MethodOptions)
-	} else {
-		v3mux.Handle("/devices/{deviceID}",
-			httputil.MakeAuthAPI("device_data", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
-				vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
-				if err != nil {
-					return util.ErrorResponse(err)
-				}
-				return UpdateDeviceByID(req, userAPI, device, vars["deviceID"])
-			}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
-		).Methods(http.MethodPut, http.MethodOptions)
-
-		v3mux.Handle("/devices/{deviceID}",
-			httputil.MakeAuthAPI("delete_device", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
-				vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
-				if err != nil {
-					return util.ErrorResponse(err)
-				}
-				return DeleteDeviceById(req, userInteractiveAuth, userAPI, device, vars["deviceID"])
-			}, httputil.WithAllowCallGuests()),
-		).Methods(http.MethodDelete, http.MethodOptions)
-
-		v3mux.Handle("/delete_devices",
-			httputil.MakeAuthAPI("delete_devices", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
-				return DeleteDevices(req, userInteractiveAuth, userAPI, device)
-			}, httputil.WithAllowCallGuests()),
-		).Methods(http.MethodPost, http.MethodOptions)
+	// With delegated authentication, devices are managed through the OIDC
+	// provider. Appservices still manage their users' devices here (MSC4190).
+	appServiceOnly := func(handler func(*http.Request, *userapi.Device) util.JSONResponse) func(*http.Request, *userapi.Device) util.JSONResponse {
+		if !oidcEnabled {
+			return handler
+		}
+		return func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			if device.AppserviceID == "" {
+				return msc3861ForbiddenResponse()
+			}
+			return handler(req, device)
+		}
 	}
+
+	v3mux.Handle("/devices/{deviceID}",
+		httputil.MakeAuthAPI("device_data", userAPI, appServiceOnly(func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+			if err != nil {
+				return util.ErrorResponse(err)
+			}
+			return UpdateDeviceByID(req, userAPI, device, vars["deviceID"])
+		}), httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
+	).Methods(http.MethodPut, http.MethodOptions)
+
+	v3mux.Handle("/devices/{deviceID}",
+		httputil.MakeAuthAPI("delete_device", userAPI, appServiceOnly(func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+			if err != nil {
+				return util.ErrorResponse(err)
+			}
+			return DeleteDeviceById(req, userInteractiveAuth, userAPI, device, vars["deviceID"])
+		}), httputil.WithAllowCallGuests()),
+	).Methods(http.MethodDelete, http.MethodOptions)
+
+	v3mux.Handle("/delete_devices",
+		httputil.MakeAuthAPI("delete_devices", userAPI, appServiceOnly(func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			return DeleteDevices(req, userInteractiveAuth, userAPI, device)
+		}), httputil.WithAllowCallGuests()),
+	).Methods(http.MethodPost, http.MethodOptions)
 
 	v3mux.Handle("/notifications",
 		httputil.MakeAuthAPI("get_notifications", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {

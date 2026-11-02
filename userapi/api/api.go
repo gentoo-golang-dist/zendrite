@@ -304,6 +304,10 @@ type QueryAccessTokenRequest struct {
 	// optional user ID, valid only if the token is an appservice.
 	// https://matrix.org/docs/spec/application_service/r0.1.2#using-sync-and-events
 	AppServiceUserID string
+	// optional device ID, valid only if the token is an appservice (MSC4326).
+	// The device must belong to the asserted user, or to the appservice's
+	// sender when no user ID is asserted.
+	AppServiceDeviceID string
 }
 
 // QueryAccessTokenResponse is the response for QueryAccessToken.
@@ -314,6 +318,9 @@ type QueryAccessTokenResponse struct {
 	// client may refresh it, rather than the session being destroyed, with
 	// MSC3861 delegated authentication or a native refresh token (MSC2918).
 	SoftLogout bool
+	// UnknownDevice is true when an appservice asserted a device that the
+	// user does not have (MSC4326).
+	UnknownDevice bool
 }
 
 // QueryAccountDataRequest is the request for QueryAccountData.
@@ -582,6 +589,16 @@ type ErrorForbidden struct {
 
 func (e *ErrorForbidden) Error() string {
 	return "Forbidden: " + e.Message
+}
+
+// ErrorUnknownDevice is returned when an appservice asserts a device that
+// does not exist for the user (MSC4326).
+type ErrorUnknownDevice struct {
+	DeviceID string
+}
+
+func (e *ErrorUnknownDevice) Error() string {
+	return "unknown device: " + e.DeviceID
 }
 
 // ErrorConflict is an error indicating that there was a conflict which resulted in the request being aborted.

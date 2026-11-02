@@ -45,7 +45,8 @@ const (
 	EventMatchCondition ConditionKind = "event_match"
 
 	// ContainsDisplayNameCondition indicates the current user's
-	// display name must be found in the content body.
+	// display name must be found in the content body. MSC4210 (spec v1.17)
+	// deprecated it; it is still evaluated for user-defined rules.
 	ContainsDisplayNameCondition ConditionKind = "contains_display_name"
 
 	// RoomMemberCountCondition matches a simple arithmetic comparison
