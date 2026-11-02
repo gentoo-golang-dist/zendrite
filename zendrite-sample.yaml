@@ -284,6 +284,7 @@ client_api:
   # are needed — challenges are generated and verified locally.
   # captcha_provider: altcha
   # altcha_hmac_key: "generate-a-random-secret-here"
+  # Upper bound of SHA-256 attempts needed to solve a challenge (difficulty).
   # altcha_max_number: 50000
   # altcha_expiry: "5m"
 

@@ -9,8 +9,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
-	altcha "github.com/altcha-org/altcha-lib-go"
+	altcha "github.com/altcha-org/altcha-lib-go/v2"
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -166,31 +167,21 @@ func Test_AuthFallback_Altcha(t *testing.T) {
 	// Base64-encoded payload that the client would submit.
 	solveChallenge := func(t *testing.T, cfg *config.ClientAPI) string {
 		t.Helper()
-		challenge, err := altcha.CreateChallenge(altcha.ChallengeOptions{
-			HMACKey:   cfg.AltchaHMACKey,
-			MaxNumber: cfg.AltchaMaxNumber,
-		})
+		challenge, err := newAltchaChallenge(cfg, time.Now().Add(time.Minute))
 		if err != nil {
-			t.Fatalf("CreateChallenge: %v", err)
+			t.Fatalf("newAltchaChallenge: %v", err)
 		}
-		solution, err := altcha.SolveChallenge(
-			challenge.Challenge, challenge.Salt,
-			altcha.Algorithm(challenge.Algorithm),
-			int(challenge.MaxNumber), 0, nil,
-		)
+		solution, err := altcha.SolveChallenge(altcha.SolveChallengeOptions{
+			Challenge: challenge,
+			DeriveKey: altcha.DeriveKeySHA(),
+		})
 		if err != nil {
 			t.Fatalf("SolveChallenge: %v", err)
 		}
 		if solution == nil {
 			t.Fatal("SolveChallenge returned nil")
 		}
-		payload := altcha.Payload{
-			Algorithm: challenge.Algorithm,
-			Challenge: challenge.Challenge,
-			Number:    int64(solution.Number),
-			Salt:      challenge.Salt,
-			Signature: challenge.Signature,
-		}
+		payload := altcha.Payload{Challenge: challenge, Solution: *solution}
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)
@@ -206,8 +197,39 @@ func Test_AuthFallback_Altcha(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("unexpected status: %d, want %d", rec.Code, http.StatusOK)
 		}
-		if !strings.Contains(rec.Body.String(), "altcha-widget") {
-			t.Fatalf("expected ALTCHA widget in body, got: %s", rec.Body.String())
+		body := rec.Body.String()
+		if !strings.Contains(body, "altcha-widget") {
+			t.Fatalf("expected ALTCHA widget in body, got: %s", body)
+		}
+		// Widget v3 is the first to speak the v2 challenge protocol, and
+		// takes the challenge URL in the "challenge" attribute.
+		if !strings.Contains(body, "npm/altcha@3/") {
+			t.Fatalf("expected ALTCHA widget v3 script in body, got: %s", body)
+		}
+		if !strings.Contains(body, `challenge="/_zendrite/altcha/challenge"`) {
+			t.Fatalf("expected challenge attribute in body, got: %s", body)
+		}
+	})
+
+	t.Run("challenge endpoint serves a signed v2 challenge", func(t *testing.T) {
+		cfg := newAltchaCfg()
+		rec := httptest.NewRecorder()
+		ServeAltchaChallenge(rec, httptest.NewRequest(http.MethodGet, "/", nil), &cfg)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("unexpected status: %d, want %d", rec.Code, http.StatusOK)
+		}
+		var challenge altcha.Challenge
+		if err := json.Unmarshal(rec.Body.Bytes(), &challenge); err != nil {
+			t.Fatalf("json.Unmarshal: %v", err)
+		}
+		if challenge.Signature == "" {
+			t.Fatal("challenge is not signed")
+		}
+		if challenge.Parameters.Algorithm != altchaAlgorithm {
+			t.Fatalf("unexpected algorithm: %q, want %q", challenge.Parameters.Algorithm, altchaAlgorithm)
+		}
+		if challenge.Parameters.ExpiresAt == 0 {
+			t.Fatal("challenge has no expiry")
 		}
 	})
 
@@ -228,18 +250,79 @@ func Test_AuthFallback_Altcha(t *testing.T) {
 		}
 	})
 
-	t.Run("POST with invalid solution returns 401", func(t *testing.T) {
-		cfg := newAltchaCfg()
-		// Submit garbage as the ALTCHA payload.
-		bogus := base64.StdEncoding.EncodeToString([]byte(`{"algorithm":"SHA-256","challenge":"bad","number":0,"salt":"bad","signature":"bad"}`))
-
+	postAltcha := func(t *testing.T, cfg *config.ClientAPI, payload string) int {
+		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, "/?session=1337", nil)
 		req.Form = url.Values{}
-		req.Form.Add("altcha", bogus)
+		req.Form.Add("altcha", payload)
 		rec := httptest.NewRecorder()
-		AuthFallback(rec, req, authtypes.LoginTypeAltcha, &cfg)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("unexpected status: %d, want %d", rec.Code, http.StatusUnauthorized)
+		AuthFallback(rec, req, authtypes.LoginTypeAltcha, cfg)
+		return rec.Code
+	}
+
+	for name, payload := range map[string]string{
+		"unsigned garbage": base64.StdEncoding.EncodeToString([]byte(`{"challenge":{"parameters":{"algorithm":"SHA-256","nonce":"00","salt":"00","cost":1,"keyLength":32,"keyPrefix":"00"}},"solution":{"counter":0,"derivedKey":"00"}}`)),
+		"invalid base64":   "!!!not-base64!!!",
+		"invalid JSON":     base64.StdEncoding.EncodeToString([]byte("{")),
+	} {
+		t.Run("POST with "+name+" returns 401", func(t *testing.T) {
+			cfg := newAltchaCfg()
+			if code := postAltcha(t, &cfg, payload); code != http.StatusUnauthorized {
+				t.Fatalf("unexpected status: %d, want %d", code, http.StatusUnauthorized)
+			}
+		})
+	}
+
+	t.Run("POST with solution signed by another key returns 401", func(t *testing.T) {
+		other := newAltchaCfg()
+		other.AltchaHMACKey = "another-hmac-secret"
+		encoded := solveChallenge(t, &other)
+
+		cfg := newAltchaCfg()
+		if code := postAltcha(t, &cfg, encoded); code != http.StatusUnauthorized {
+			t.Fatalf("unexpected status: %d, want %d", code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("POST with wrong counter returns 401", func(t *testing.T) {
+		cfg := newAltchaCfg()
+		raw, err := base64.StdEncoding.DecodeString(solveChallenge(t, &cfg))
+		if err != nil {
+			t.Fatalf("DecodeString: %v", err)
+		}
+		var payload altcha.Payload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatalf("json.Unmarshal: %v", err)
+		}
+		payload.Solution.Counter++
+		tampered, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if code := postAltcha(t, &cfg, base64.StdEncoding.EncodeToString(tampered)); code != http.StatusUnauthorized {
+			t.Fatalf("unexpected status: %d, want %d", code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("POST with expired challenge returns 401", func(t *testing.T) {
+		cfg := newAltchaCfg()
+		challenge, err := newAltchaChallenge(&cfg, time.Now().Add(-time.Minute))
+		if err != nil {
+			t.Fatalf("newAltchaChallenge: %v", err)
+		}
+		solution, err := altcha.SolveChallenge(altcha.SolveChallengeOptions{
+			Challenge: challenge,
+			DeriveKey: altcha.DeriveKeySHA(),
+		})
+		if err != nil || solution == nil {
+			t.Fatalf("SolveChallenge: %v, %v", solution, err)
+		}
+		payloadJSON, err := json.Marshal(altcha.Payload{Challenge: challenge, Solution: *solution})
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if code := postAltcha(t, &cfg, base64.StdEncoding.EncodeToString(payloadJSON)); code != http.StatusUnauthorized {
+			t.Fatalf("unexpected status: %d, want %d", code, http.StatusUnauthorized)
 		}
 	})
 

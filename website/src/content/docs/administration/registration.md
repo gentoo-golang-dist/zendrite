@@ -36,6 +36,8 @@ client_api:
 
 [ALTCHA](https://altcha.org/) is an open-source, self-hosted CAPTCHA that uses proof-of-work instead of external API calls.
 The server generates a cryptographic challenge, the client solves it by brute-force hashing, and the server verifies the solution locally using HMAC.
+Zendrite issues challenges in the ALTCHA v2 protocol, which the bundled fallback page solves with version 3 of the ALTCHA widget.
+A custom client that renders its own widget needs ALTCHA widget 3 or newer.
 This means there are no third-party dependencies or privacy concerns.
 
 First, generate a random HMAC key (at least 32 characters):
@@ -53,7 +55,7 @@ client_api:
   enable_registration_captcha: true
   captcha_provider: altcha
   altcha_hmac_key: "your-generated-hmac-key"
-  altcha_max_number: 50000    # proof-of-work difficulty (default 50000)
+  altcha_max_number: 50000    # most SHA-256 attempts a client needs (default 50000)
   altcha_expiry: "5m"         # how long a challenge is valid (default 5m)
 ```
 

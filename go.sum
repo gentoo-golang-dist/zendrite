@@ -8,8 +8,8 @@ github.com/DeRuina/timberjack v1.4.9 h1:9RjDMSkUDQRYzwVNB/FLonXNurcZVEh9sK43m2jw
 github.com/DeRuina/timberjack v1.4.9/go.mod h1:DCXjOescYyzTrOryf57SEbSeCOqkBQ3QjH7Pn03i5Cs=
 github.com/RoaringBitmap/roaring/v2 v2.27.0 h1:rTzs+cuH9YBj6j4L9GF2DcK2NmOfdUvLI+ZFhyLy8g8=
 github.com/RoaringBitmap/roaring/v2 v2.27.0/go.mod h1:BZufmFbox589n3j5eOmyTaLSGXbRLc2LmQvjKjzSEGU=
-github.com/altcha-org/altcha-lib-go v1.0.0 h1:7oPti0aUS+YCep8nwt5b9g4jYfCU55ZruWESL8G9K5M=
-github.com/altcha-org/altcha-lib-go v1.0.0/go.mod h1:I8ESLVWR9C58uvGufB/AJDPhaSU4+4Oh3DLpVtgwDAk=
+github.com/altcha-org/altcha-lib-go/v2 v2.4.1 h1:Y1lIhe+Y4QI/w1KV0wsCEfCzSmaBWJgu4I3gAKtHYaU=
+github.com/altcha-org/altcha-lib-go/v2 v2.4.1/go.mod h1:n3KVRk3ziFGC5GIPkiSFMSROrAZ0wezy88///KeYdRo=
 github.com/antithesishq/antithesis-sdk-go v0.8.0 h1:bVV5ZAuwaREn4klRSJusYaA+A7NXq8Qi9C/knCaQ2N4=
 github.com/antithesishq/antithesis-sdk-go v0.8.0/go.mod h1:FQyySiasQQM8735Ddel3MRojmy4dA1IqCeyJ5jmPMbI=
 github.com/aws/aws-sdk-go-v2 v1.47.5 h1:5yA+A+BiXbDq1ZLbYwPViwhEGDMdR0MEhL8Jh2LnLS4=

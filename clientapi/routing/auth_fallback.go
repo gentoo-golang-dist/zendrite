@@ -68,7 +68,7 @@ const altchaTemplate = `
 <title>Authentication</title>
 <meta name='viewport' content='width=device-width, initial-scale=1,
     user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-<script async defer src="https://cdn.jsdelivr.net/npm/altcha/dist/altcha.min.js" type="module"></script>
+<script async defer src="https://cdn.jsdelivr.net/npm/altcha@3/dist/main/altcha.min.js" type="module"></script>
 <style>
   body { font-family: sans-serif; margin: 2em; }
 </style>
@@ -85,7 +85,7 @@ const altchaTemplate = `
         </p>
         <input type="hidden" name="session" value="{{.session}}" />
         <input type="hidden" name="altcha" id="altchaPayload" />
-        <altcha-widget challengeurl="{{.challengeUrl}}" auto="onload"></altcha-widget>
+        <altcha-widget challenge="{{.challengeUrl}}" auto="onload"></altcha-widget>
     </div>
 </form>
 <script>

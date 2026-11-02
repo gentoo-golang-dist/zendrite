@@ -66,7 +66,8 @@ type ClientAPI struct {
 	// verify ALTCHA proof-of-work challenges.
 	AltchaHMACKey string `yaml:"altcha_hmac_key"`
 	// AltchaMaxNumber controls the difficulty of the proof-of-work
-	// challenge (default 50000).
+	// challenge: the server picks a secret counter up to this value and the
+	// client hashes once per counter until it finds it (default 50000).
 	AltchaMaxNumber int64 `yaml:"altcha_max_number"`
 	// AltchaExpiry is how long an ALTCHA challenge remains valid
 	// (default "5m"). Parsed as a time.Duration string.
