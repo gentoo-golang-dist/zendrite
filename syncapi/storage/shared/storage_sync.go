@@ -789,6 +789,20 @@ func (d *DatabaseTransaction) MaxStreamPositionForStickyEvents(ctx context.Conte
 	return types.StreamPosition(id), err
 }
 
+func (d *DatabaseTransaction) MaxStreamPositionForProfileUpdates(ctx context.Context) (types.StreamPosition, error) {
+	id, err := d.ProfileUpdates.SelectMaxProfileUpdateID(ctx, d.txn)
+	return types.StreamPosition(id), err
+}
+
+// ProfileUpdatesInRange returns at most limit changes to local users'
+// profiles with positions after from and up to and including to, in stream
+// order (MSC4262).
+func (d *DatabaseTransaction) ProfileUpdatesInRange(
+	ctx context.Context, from, to types.StreamPosition, limit int,
+) ([]types.ProfileUpdate, error) {
+	return d.ProfileUpdates.SelectProfileUpdatesInRange(ctx, d.txn, from, to, limit)
+}
+
 // StickyEventsInRooms returns the MSC4354 sticky events in the given rooms
 // that are unexpired at now, with stream positions after from and up to and
 // including to, in stream order. A limit of zero or less returns them all.

@@ -350,6 +350,8 @@ type ExtensionRequest struct {
 	Typing      *TypingRequest      `json:"typing,omitempty"`
 	// StickyEvents is the MSC4354 sticky events extension (MSC4480).
 	StickyEvents *StickyEventsRequest `json:"org.matrix.msc4354.sticky_events,omitempty"`
+	// Profiles is the MSC4262 profile updates extension.
+	Profiles *ProfilesRequest `json:"org.matrix.msc4262.profiles,omitempty"`
 }
 
 // ToDeviceRequest configures to-device message extension.
@@ -397,6 +399,30 @@ type StickyEventsRequest struct {
 	Limit *int `json:"limit,omitempty"`
 }
 
+// ProfilesRequest configures the MSC4262 profile updates extension.
+type ProfilesRequest struct {
+	Enabled bool `json:"enabled"`
+	// Fields lists the profile fields the client wants. Without it, every
+	// field is in scope.
+	Fields *[]string `json:"fields,omitempty"`
+	Lists  []string  `json:"lists,omitempty"` // Optional list filter (MSC3959)
+	Rooms  []string  `json:"rooms,omitempty"` // Optional room filter (MSC3960)
+}
+
+// ProfilesResponse carries profile updates per user (MSC4262). A nil entry,
+// sent as null, tells the client that it no longer shares a room with the
+// user and may stop tracking their profile.
+type ProfilesResponse struct {
+	Users map[string]*ProfileUserUpdate `json:"users"`
+}
+
+// ProfileUserUpdate holds the profile fields of one user that were set or
+// changed, and those that were removed. Each part is omitted when empty.
+type ProfileUserUpdate struct {
+	Updated map[string]json.RawMessage `json:"updated,omitempty"`
+	Removed []string                   `json:"removed,omitempty"`
+}
+
 // ExtensionResponse contains all extension responses from the server.
 type ExtensionResponse struct {
 	ToDevice    *V4ToDeviceResponse  `json:"to_device,omitempty"`
@@ -406,6 +432,8 @@ type ExtensionResponse struct {
 	Typing      *TypingResponse      `json:"typing,omitempty"`
 	// StickyEvents is omitted when there are no sticky events to deliver.
 	StickyEvents *StickyEventsResponse `json:"org.matrix.msc4354.sticky_events,omitempty"`
+	// Profiles is omitted when there are no profile updates to deliver.
+	Profiles *ProfilesResponse `json:"org.matrix.msc4262.profiles,omitempty"`
 }
 
 // StickyEventsResponse carries unexpired MSC4354 sticky events per room,

@@ -117,6 +117,10 @@ type StreamingToken struct {
 	// StickyPosition is the position in the MSC4354 sticky events stream.
 	// Tokens issued before the stream existed omit it, which reads as zero.
 	StickyPosition StreamPosition
+	// ProfilePosition is the position in the profile updates stream, which
+	// the MSC4262 sliding sync extension reads. Tokens issued before the
+	// stream existed omit it, which reads as zero.
+	ProfilePosition StreamPosition
 }
 
 // This will be used as a fallback by json.Marshal.
@@ -132,12 +136,13 @@ func (s *StreamingToken) UnmarshalText(text []byte) (err error) {
 
 func (t StreamingToken) String() string {
 	posStr := fmt.Sprintf(
-		"s%d_%d_%d_%d_%d_%d_%d_%d_%d_%d",
+		"s%d_%d_%d_%d_%d_%d_%d_%d_%d_%d_%d",
 		t.PDUPosition, t.TypingPosition,
 		t.ReceiptPosition, t.SendToDevicePosition,
 		t.InvitePosition, t.AccountDataPosition,
 		t.DeviceListPosition, t.NotificationDataPosition,
 		t.PresencePosition, t.StickyPosition,
+		t.ProfilePosition,
 	)
 	return posStr
 }
@@ -165,12 +170,14 @@ func (t *StreamingToken) IsAfter(other StreamingToken) bool {
 		return true
 	case t.StickyPosition > other.StickyPosition:
 		return true
+	case t.ProfilePosition > other.ProfilePosition:
+		return true
 	}
 	return false
 }
 
 func (t *StreamingToken) IsEmpty() bool {
-	return t == nil || t.PDUPosition+t.TypingPosition+t.ReceiptPosition+t.SendToDevicePosition+t.InvitePosition+t.AccountDataPosition+t.DeviceListPosition+t.NotificationDataPosition+t.PresencePosition+t.StickyPosition == 0
+	return t == nil || t.PDUPosition+t.TypingPosition+t.ReceiptPosition+t.SendToDevicePosition+t.InvitePosition+t.AccountDataPosition+t.DeviceListPosition+t.NotificationDataPosition+t.PresencePosition+t.StickyPosition+t.ProfilePosition == 0
 }
 
 // WithUpdates returns a copy of the StreamingToken with updates applied from another StreamingToken.
@@ -216,6 +223,9 @@ func (t *StreamingToken) ApplyUpdates(other StreamingToken) {
 	}
 	if other.StickyPosition > t.StickyPosition {
 		t.StickyPosition = other.StickyPosition
+	}
+	if other.ProfilePosition > t.ProfilePosition {
+		t.ProfilePosition = other.ProfilePosition
 	}
 }
 
@@ -308,7 +318,7 @@ func NewStreamTokenFromString(tok string) (token StreamingToken, err error) {
 	// s478_0_0_0_0_13.dl-0-2 but we have now removed partitioned stream positions
 	tok = strings.Split(tok, ".")[0]
 	parts := strings.Split(tok[1:], "_")
-	var positions [10]StreamPosition
+	var positions [11]StreamPosition
 	for i, p := range parts {
 		if i >= len(positions) {
 			break
@@ -332,6 +342,7 @@ func NewStreamTokenFromString(tok string) (token StreamingToken, err error) {
 		NotificationDataPosition: positions[7],
 		PresencePosition:         positions[8],
 		StickyPosition:           positions[9],
+		ProfilePosition:          positions[10],
 	}
 	return token, nil
 }
@@ -777,6 +788,16 @@ type TopologicalRelation struct {
 // MaxStickyEventsInSync is how many sticky events one sync response carries
 // at most, as suggested by MSC4354. Newly joined rooms are exempt.
 const MaxStickyEventsInSync = 100
+
+// ProfileUpdate is a change to one field of a local user's profile in the
+// profile updates stream (MSC4262).
+type ProfileUpdate struct {
+	// Position is the change's position in the profile updates stream.
+	Position StreamPosition
+	UserID   string
+	// Field is the name of the profile field that was set or removed.
+	Field string
+}
 
 // StickyEvent is an MSC4354 sticky event in the sticky events stream.
 type StickyEvent struct {

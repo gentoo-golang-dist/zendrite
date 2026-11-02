@@ -21,6 +21,12 @@ type AccountData struct {
 	IgnoredUsers *types.IgnoredUsers `json:"ignored_users,omitempty"` // optional
 }
 
+// ProfileUpdate tells the sync API which fields of a local user's profile
+// changed, so that MSC4262 sliding sync clients learn about them.
+type ProfileUpdate struct {
+	Fields []string `json:"fields"`
+}
+
 type ReadMarkerJSON struct {
 	FullyRead   string `json:"m.fully_read"`
 	Read        string `json:"m.read"`

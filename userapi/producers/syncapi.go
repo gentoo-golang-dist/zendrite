@@ -23,6 +23,9 @@ type SyncAPI struct {
 	producer              JetStreamPublisher
 	clientDataTopic       string
 	notificationDataTopic string
+	// ProfileUpdateTopic receives the names of changed profile fields
+	// (MSC4262). Without it, profile changes are not published.
+	ProfileUpdateTopic string
 }
 
 func NewSyncAPI(db storage.UserDatabase, js JetStreamPublisher, clientDataTopic string, notificationDataTopic string) *SyncAPI {
@@ -54,6 +57,27 @@ func (p *SyncAPI) SendAccountData(userID string, data eventutil.AccountData) err
 		"data_type": data.Type,
 	}).Tracef("Producing to topic '%s'", p.clientDataTopic)
 
+	_, err = p.producer.PublishMsg(m)
+	return err
+}
+
+// SendProfileUpdate tells the Sync API server which fields of a local user's
+// profile changed.
+func (p *SyncAPI) SendProfileUpdate(userID string, fields ...string) error {
+	if p.ProfileUpdateTopic == "" || len(fields) == 0 {
+		return nil
+	}
+	m := &nats.Msg{
+		Subject: p.ProfileUpdateTopic,
+		Header:  nats.Header{},
+	}
+	m.Header.Set(jetstream.UserID, userID)
+
+	var err error
+	m.Data, err = json.Marshal(eventutil.ProfileUpdate{Fields: fields})
+	if err != nil {
+		return err
+	}
 	_, err = p.producer.PublishMsg(m)
 	return err
 }

@@ -264,6 +264,7 @@ The explicit configurable list mirrors the implemented cases in `setup/mscs/mscs
 | `org.matrix.msc3916.stable` | Always, existing compatibility flag. | Authenticated download, thumbnail, and configuration handlers in `mediaapi/routing/routing.go`. |
 | `org.matrix.simplified_msc3575` | Always, existing compatibility flag. | Native sliding-sync handler and compatibility route in `syncapi/routing/routing.go`. |
 | `org.matrix.msc4143` | True only with nonempty `global.rtc_foci`; false otherwise. | RTC transport endpoint and well-known focus discovery share that configuration. |
+| `org.matrix.msc4262` | Always. | Sliding sync profile updates: the `org.matrix.msc4262.profiles` extension in `syncapi/sync/v4_profiles.go`, fed by the profile updates stream that `userapi` publishes to. |
 | `org.matrix.msc4354` | Always. | Sticky events: `org.matrix.msc4354.sticky_duration_ms` on `/send` and the `msc4354_sticky` section of `/sync`. |
 | `com.beeper.msc4169` | Always. | Redactions through `PUT /send/m.room.redaction` in every room version. |
 | `uk.half-shot.msc2666.query_mutual_rooms.stable` | Always. | The stable `GET /v1/mutual_rooms`, for clients that check the flag rather than v1.19. |

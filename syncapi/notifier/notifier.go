@@ -260,6 +260,12 @@ func (n *Notifier) OnNewPresence(
 	n._wakeupUsers(sharedUsers, nil, n.currPos)
 }
 
+// OnNewProfileUpdate wakes the users who share a room with userID, and userID
+// themselves, after a change to userID's profile (MSC4262).
+func (n *Notifier) OnNewProfileUpdate(userID string, posUpdate types.StreamingToken) {
+	n.OnNewPresence(posUpdate, userID)
+}
+
 func (n *Notifier) SharedUsers(userID string) []string {
 	n.lock.RLock()
 	defer n.lock.RUnlock()

@@ -45,6 +45,11 @@ type DatabaseTransaction interface {
 	// StickyEventsByID returns those of the given events that are unexpired
 	// MSC4354 sticky events at now.
 	StickyEventsByID(ctx context.Context, eventIDs []string, now spec.Timestamp) ([]types.StickyEvent, error)
+	MaxStreamPositionForProfileUpdates(ctx context.Context) (types.StreamPosition, error)
+	// ProfileUpdatesInRange returns at most limit changes to local users'
+	// profiles with positions after from and up to and including to, in
+	// stream order (MSC4262).
+	ProfileUpdatesInRange(ctx context.Context, from, to types.StreamPosition, limit int) ([]types.ProfileUpdate, error)
 
 	CurrentState(ctx context.Context, roomID string, stateFilterPart *synctypes.StateFilter, excludeEventIDs []string) ([]*rstypes.HeaderedEvent, error)
 	GetStateDeltasForFullStateSync(ctx context.Context, device *userapi.Device, r types.Range, userID string, stateFilter *synctypes.StateFilter, rsAPI api.SyncRoomserverAPI) ([]types.StateDelta, []string, error)
@@ -175,6 +180,10 @@ type Database interface {
 	// stream and returns its position, which an event already in the stream
 	// keeps. It first removes the events that have expired by now.
 	InsertStickyEvent(ctx context.Context, roomID, eventID, sender string, expiresAt, now spec.Timestamp) (types.StreamPosition, error)
+	// InsertProfileUpdates records that the given fields of a local user's
+	// profile changed, and returns the position of the last one in the
+	// profile updates stream (MSC4262).
+	InsertProfileUpdates(ctx context.Context, userID string, fields []string) (types.StreamPosition, error)
 	// PurgeRoomState completely purges room state from the sync API. This is done when
 	// receiving an output event that completely resets the state.
 	PurgeRoomState(ctx context.Context, roomID string) error

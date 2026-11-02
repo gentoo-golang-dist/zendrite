@@ -32,12 +32,12 @@ func (f *FakeRoomserverAPI) QuerySenderIDForUser(ctx context.Context, roomID spe
 func TestSyncTokens(t *testing.T) {
 	t.Parallel()
 	shouldPass := map[string]string{
-		"s4_0_0_0_0_0_0_0_3_0": StreamingToken{4, 0, 0, 0, 0, 0, 0, 0, 3, 0}.String(),
-		"s3_1_0_0_0_0_2_0_5_0": StreamingToken{3, 1, 0, 0, 0, 0, 2, 0, 5, 0}.String(),
-		"s3_1_2_3_5_0_0_0_6_7": StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 7}.String(),
-		"t3_1":                 TopologyToken{3, 1}.String(),
+		"s4_0_0_0_0_0_0_0_3_0_0": StreamingToken{4, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0}.String(),
+		"s3_1_0_0_0_0_2_0_5_0_0": StreamingToken{3, 1, 0, 0, 0, 0, 2, 0, 5, 0, 0}.String(),
+		"s3_1_2_3_5_0_0_0_6_7_8": StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 7, 8}.String(),
+		"t3_1":                   TopologyToken{3, 1}.String(),
 		"t9223372036854775807_9223372036854775807": TopologyToken{Depth: math.MaxInt64, PDUPosition: math.MaxInt64}.String(),
-		"s9223372036854775807_1_2_3_5_0_0_0_6_0":   StreamingToken{math.MaxInt64, 1, 2, 3, 5, 0, 0, 0, 6, 0}.String(),
+		"s9223372036854775807_1_2_3_5_0_0_0_6_0_0": StreamingToken{math.MaxInt64, 1, 2, 3, 5, 0, 0, 0, 6, 0, 0}.String(),
 	}
 
 	for a, b := range shouldPass {
@@ -92,10 +92,10 @@ func TestSyncTokenStickyPosition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 0}); old != want {
+	if want := (StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 0, 0}); old != want {
 		t.Fatalf("old token parsed as %+v, want %+v", old, want)
 	}
-	if got := old.String(); got != "s3_1_2_3_5_0_0_0_6_0" {
+	if got := old.String(); got != "s3_1_2_3_5_0_0_0_6_0_0" {
 		t.Fatalf("old token re-encoded as %q", got)
 	}
 
@@ -115,6 +115,41 @@ func TestSyncTokenStickyPosition(t *testing.T) {
 	old.ApplyUpdates(StreamingToken{StickyPosition: 4})
 	if old.StickyPosition != 4 {
 		t.Fatalf("ApplyUpdates left the sticky position at %d", old.StickyPosition)
+	}
+}
+
+// Tokens issued before the MSC4262 profile updates stream existed have ten
+// positions. They must keep parsing, with the profile position at zero, and
+// the profile position must take part in comparisons and updates.
+func TestSyncTokenProfilePosition(t *testing.T) {
+	t.Parallel()
+	old, err := NewStreamTokenFromString("s3_1_2_3_5_0_0_0_6_9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 9, 0}); old != want {
+		t.Fatalf("old token parsed as %+v, want %+v", old, want)
+	}
+	if got := old.String(); got != "s3_1_2_3_5_0_0_0_6_9_0" {
+		t.Fatalf("old token re-encoded as %q", got)
+	}
+
+	profile, err := NewStreamTokenFromString("s3_1_2_3_5_0_0_0_6_9_4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.ProfilePosition != 4 {
+		t.Fatalf("profile position parsed as %d, want 4", profile.ProfilePosition)
+	}
+	if !profile.IsAfter(old) || old.IsAfter(profile) {
+		t.Fatal("a token ahead only in the profile stream must compare as after")
+	}
+	if (&StreamingToken{ProfilePosition: 1}).IsEmpty() {
+		t.Fatal("a token with only a profile position is not empty")
+	}
+	old.ApplyUpdates(StreamingToken{ProfilePosition: 5})
+	if old.ProfilePosition != 5 {
+		t.Fatalf("ApplyUpdates left the profile position at %d", old.ProfilePosition)
 	}
 }
 

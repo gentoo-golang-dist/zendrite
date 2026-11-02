@@ -1113,7 +1113,25 @@ func (a *UserInternalAPI) QueryPushRules(ctx context.Context, userID string) (*p
 }
 
 func (a *UserInternalAPI) SetAvatarURL(ctx context.Context, localpart string, serverName spec.ServerName, avatarURL string) (*authtypes.Profile, bool, error) {
-	return a.DB.SetAvatarURL(ctx, localpart, serverName, avatarURL)
+	profile, changed, err := a.DB.SetAvatarURL(ctx, localpart, serverName, avatarURL)
+	if err == nil && changed {
+		a.sendProfileUpdate(ctx, localpart, serverName, authtypes.ProfileFieldAvatarURL)
+	}
+	return profile, changed, err
+}
+
+// sendProfileUpdate tells the sync API that fields of a local user's profile
+// changed (MSC4262). The change is already stored, so a failure to publish it
+// is logged rather than failing the request: sliding sync clients then miss
+// the update until they next sync from scratch.
+func (a *UserInternalAPI) sendProfileUpdate(ctx context.Context, localpart string, serverName spec.ServerName, fields ...string) {
+	if a.SyncProducer == nil {
+		return
+	}
+	userID := fmt.Sprintf("@%s:%s", localpart, serverName)
+	if err := a.SyncProducer.SendProfileUpdate(userID, fields...); err != nil {
+		util.GetLogger(ctx).WithError(err).WithField("user_id", userID).Error("Failed to publish profile update to the sync API")
+	}
 }
 
 func (a *UserInternalAPI) QueryNumericLocalpart(ctx context.Context, req *api.QueryNumericLocalpartRequest, res *api.QueryNumericLocalpartResponse) error {
@@ -1149,15 +1167,27 @@ func (a *UserInternalAPI) QueryAccountByPassword(ctx context.Context, req *api.Q
 }
 
 func (a *UserInternalAPI) SetDisplayName(ctx context.Context, localpart string, serverName spec.ServerName, displayName string) (*authtypes.Profile, bool, error) {
-	return a.DB.SetDisplayName(ctx, localpart, serverName, displayName)
+	profile, changed, err := a.DB.SetDisplayName(ctx, localpart, serverName, displayName)
+	if err == nil && changed {
+		a.sendProfileUpdate(ctx, localpart, serverName, authtypes.ProfileFieldDisplayName)
+	}
+	return profile, changed, err
 }
 
 func (a *UserInternalAPI) SetProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string, value json.RawMessage) error {
-	return a.DB.SetProfileField(ctx, localpart, serverName, fieldName, value)
+	if err := a.DB.SetProfileField(ctx, localpart, serverName, fieldName, value); err != nil {
+		return err
+	}
+	a.sendProfileUpdate(ctx, localpart, serverName, fieldName)
+	return nil
 }
 
 func (a *UserInternalAPI) DeleteProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string) error {
-	return a.DB.DeleteProfileField(ctx, localpart, serverName, fieldName)
+	if err := a.DB.DeleteProfileField(ctx, localpart, serverName, fieldName); err != nil {
+		return err
+	}
+	a.sendProfileUpdate(ctx, localpart, serverName, fieldName)
+	return nil
 }
 
 func (a *UserInternalAPI) QueryLocalpartForThreePID(ctx context.Context, req *api.QueryLocalpartForThreePIDRequest, res *api.QueryLocalpartForThreePIDResponse) error {

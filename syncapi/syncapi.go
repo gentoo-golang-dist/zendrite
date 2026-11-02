@@ -183,6 +183,13 @@ func AddPublicRoutes(
 		logrus.WithError(err).Panicf("failed to start receipts consumer")
 	}
 
+	profileUpdateConsumer := consumers.NewOutputProfileUpdateConsumer(
+		processContext, &zendriteCfg.SyncAPI, js, syncDB, notifier, streams.ProfileUpdatesStreamProvider,
+	)
+	if err = profileUpdateConsumer.Start(); err != nil {
+		logrus.WithError(err).Panicf("failed to start profile update consumer")
+	}
+
 	rateLimits := httputil.NewRateLimits(&zendriteCfg.ClientAPI.RateLimiting, processContext.Context())
 
 	routing.Setup(

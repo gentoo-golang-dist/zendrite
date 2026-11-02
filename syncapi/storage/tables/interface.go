@@ -299,6 +299,19 @@ type UnPartialStatedRooms interface {
 	PurgeUnPartialStatedRooms(ctx context.Context, txn *sql.Tx, roomID string) error
 }
 
+// ProfileUpdates is the stream of changes to local users' profiles, one row
+// per changed field, which the MSC4262 sliding sync extension reads.
+type ProfileUpdates interface {
+	// InsertProfileUpdate records that a field of the user's profile was set
+	// or removed, and returns its position in the stream.
+	InsertProfileUpdate(ctx context.Context, txn *sql.Tx, userID, fieldName string) (types.StreamPosition, error)
+	// SelectProfileUpdatesInRange returns at most limit changes with positions
+	// after from and up to and including to, in stream order.
+	SelectProfileUpdatesInRange(ctx context.Context, txn *sql.Tx, from, to types.StreamPosition, limit int) ([]types.ProfileUpdate, error)
+	// SelectMaxProfileUpdateID returns the latest position in the stream.
+	SelectMaxProfileUpdateID(ctx context.Context, txn *sql.Tx) (int64, error)
+}
+
 // StickyEvents tracks MSC4354 sticky events in their own stream, so that sync
 // can deliver unexpired sticky events beyond the timeline. Rows outlive their
 // expiry until they are cleaned up, so every read takes the current time.

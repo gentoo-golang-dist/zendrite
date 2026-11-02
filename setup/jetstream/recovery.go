@@ -58,4 +58,5 @@ var syncRecoveryConsumers = []struct{ stream, consumer string }{
 	{OutputSendToDeviceEvent, "SyncAPISendToDeviceConsumer"},
 	{OutputReceiptEvent, "SyncAPIReceiptConsumer"},
 	{OutputPresenceEvent, "SyncAPIPresenceConsumer"},
+	{OutputProfileUpdate, "SyncAPIProfileUpdateConsumer"},
 }

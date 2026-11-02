@@ -19,6 +19,7 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | [MSC3575](https://github.com/matrix-org/matrix-spec-proposals/pull/3575) | Sliding Sync (v1) | N/A | Implemented (legacy, superseded by MSC4186) |
 | [MSC4354](https://github.com/matrix-org/matrix-spec-proposals/pull/4354) | Sticky events | N/A | Implemented (unstable prefix): see [sticky events](#sticky-events) |
 | [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480) | Sliding sync extension: sticky events | N/A | Implemented: the `org.matrix.msc4354.sticky_events` extension |
+| [MSC4262](https://github.com/matrix-org/matrix-spec-proposals/pull/4262) | Sliding sync extension: profile updates | N/A | Implemented (unstable prefix): see [profile updates in sliding sync](#profile-updates-in-sliding-sync) |
 | [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) | `state_after` in `/sync` | 1.16 | Implemented: with `use_state_after=true`, joined and left rooms carry `state_after`, the state at the end of the timeline, instead of `state`. The unstable `org.matrix.msc4222.use_state_after` parameter is answered with `org.matrix.msc4222.state_after`. See [state after the timeline](#state-after-the-timeline) |
 
 ### Sticky events
@@ -45,6 +46,30 @@ History visibility does not hide sticky events from joined users, in `/sync`, sl
 When a server joins a room, Zendrite sends it the sticky events that local users sent there and that are still sticky.
 Zendrite remembers these events in memory, so after a restart it only sends sticky events created since.
 Soft-failed sticky events are not re-evaluated when the room state changes.
+
+### Profile updates in sliding sync
+
+`/versions` advertises `org.matrix.msc4262` in `unstable_features`, and sliding sync serves the `org.matrix.msc4262.profiles` extension with the request and response shape of Synapse.
+The extension takes `enabled`, an optional `fields` list (all fields when it is left out), and the usual `lists` and `rooms` filters.
+It answers with `users`, which maps a user ID to the fields that were set or changed under `updated` and the fields that were removed under `removed`, each present only when not empty, or to `null` when the syncing user no longer shares any room with that user.
+The extension is left out of a response with nothing to deliver.
+
+- The first time a joined room is sent on a connection, or when the `fields` filter changed since it was, the whole profiles of its members are sent.
+  When the room's members load lazily (`["m.room.member", "$LAZY"]` or `lazy_members`), only the timeline senders and the member state in the response are sent, along with the room's heroes the first time.
+- An initial sync also sends the syncing user's own profile.
+- Every change a local user who shares a joined room with the syncing user makes to their profile is sent, also when the room is outside the lists' windows, and so are the syncing user's own changes.
+- Users who join a room shared with the syncing user have their whole profile sent.
+- A change is acknowledged only when the client syncs from the `pos` of the response that carried it; syncing again from an older `pos` sends it again.
+
+Profile changes reach sliding sync through a profile updates stream in the sync API database, with its own position in the sync token.
+Which rooms of a connection have had their members' profiles sent is stored per connection position in the database, like the rest of the connection state, so a successor in a high availability deployment continues from it.
+
+Zendrite does not track the global profiles of remote users.
+Their profiles are the display name and avatar URL of their membership event in a shared room, and a change is sent when a new membership event changes them.
+Their custom fields are not sent.
+Removing custom fields by deactivating an account is not sent.
+One response reads at most 1,000 profile changes and 1,000 membership events per room; further profile changes follow in the next response.
+`/sync` does not carry profile updates (MSC4429).
 
 ### State after the timeline
 

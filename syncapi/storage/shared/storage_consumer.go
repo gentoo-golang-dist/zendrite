@@ -54,6 +54,7 @@ type Database struct {
 	SlidingSyncRoomMetadata tables.SlidingSyncRoomMetadata
 	UnPartialStatedRooms    tables.UnPartialStatedRooms
 	StickyEvents            tables.StickyEvents
+	ProfileUpdates          tables.ProfileUpdates
 }
 
 func (d *Database) NewDatabaseSnapshot(ctx context.Context) (*DatabaseTransaction, error) {
@@ -412,6 +413,23 @@ func (d *Database) InsertStickyEvent(
 		}
 		pos, err = d.StickyEvents.InsertStickyEvent(ctx, txn, roomID, eventID, sender, expiresAt)
 		return err
+	})
+	return pos, err
+}
+
+// InsertProfileUpdates records that the given fields of a local user's profile
+// changed, and returns the position of the last one in the profile updates
+// stream (MSC4262).
+func (d *Database) InsertProfileUpdates(
+	ctx context.Context, userID string, fields []string,
+) (pos types.StreamPosition, err error) {
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		for _, field := range fields {
+			if pos, err = d.ProfileUpdates.InsertProfileUpdate(ctx, txn, userID, field); err != nil {
+				return fmt.Errorf("d.ProfileUpdates.InsertProfileUpdate: %w", err)
+			}
+		}
+		return nil
 	})
 	return pos, err
 }

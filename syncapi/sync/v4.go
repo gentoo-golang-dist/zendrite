@@ -87,6 +87,9 @@ type V4ConnectionState struct {
 	// Rooms whose account_data position this response has already written, so
 	// copyForwardAccountDataState knows which ones still need carrying over.
 	AccountDataWritten map[string]bool
+	// Rooms whose profiles stream state this response has already written,
+	// so copyForwardProfilesState knows which ones still need carrying over.
+	ProfilesWritten map[string]bool
 }
 
 // laggingRoomSet lists the rooms whose own last-sent token sits behind the
@@ -1407,6 +1410,10 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 		if copyErr := rp.copyForwardAccountDataState(ctx, connState); copyErr != nil { //nolint:contextcheck
 			return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
 		}
+		// Likewise for the rooms whose member profiles were sent (MSC4262).
+		if copyErr := rp.copyForwardProfilesState(ctx, connState); copyErr != nil { //nolint:contextcheck
+			return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
+		}
 		succeeded = true
 		if err != nil {
 			logrus.WithError(err).Error("Failed to process extensions")
@@ -1546,6 +1553,11 @@ func v4ResponseHasUpdates(response types.SlidingSyncResponse) bool {
 
 		// Sticky events (MSC4354)
 		if response.Extensions.StickyEvents != nil && len(response.Extensions.StickyEvents.Rooms) > 0 {
+			return true
+		}
+
+		// Profile updates (MSC4262)
+		if response.Extensions.Profiles != nil && len(response.Extensions.Profiles.Users) > 0 {
 			return true
 		}
 	}

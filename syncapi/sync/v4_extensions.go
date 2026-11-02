@@ -316,6 +316,29 @@ func (rp *RequestPool) ProcessExtensions(
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, toPos, nil, err
+	}
+
+	// Process profile updates extension (MSC4262). A response that could not
+	// read every change since the last one serves the profile stream only as
+	// far as it read, so the rest follow in the next response.
+	if req.Extensions.Profiles != nil && req.Extensions.Profiles.Enabled {
+		profilesResp, profilesPos, err := rp.processProfilesExtension(ctx, snapshot, connState, userID, req.Extensions.Profiles, req, fromPos, toPos, responseLists, roomSubscriptions, responseRooms)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, toPos, nil, ctx.Err()
+			}
+			logrus.WithError(err).Error("Failed to process profiles extension")
+			if fromPos != nil {
+				updatedPos.ProfilePosition = fromPos.ProfilePosition
+			}
+		} else {
+			resp.Profiles = profilesResp
+			updatedPos.ProfilePosition = profilesPos
+		}
+	}
+
 	return resp, updatedPos, deliveredReceipts, nil
 }
 

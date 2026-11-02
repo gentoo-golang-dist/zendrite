@@ -132,6 +132,10 @@ func (d *SyncServerDatasource) prepare(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	profileUpdates, err := NewSqliteProfileUpdatesTable(d.db, &d.streamID)
+	if err != nil {
+		return err
+	}
 
 	// apply migrations which need multiple tables
 	m := sqlutil.NewMigrator(d.db)
@@ -178,6 +182,7 @@ func (d *SyncServerDatasource) prepare(ctx context.Context) (err error) {
 		SlidingSyncRoomMetadata: slidingSyncRoomMetadata,
 		UnPartialStatedRooms:    unPartialStatedRooms,
 		StickyEvents:            stickyEvents,
+		ProfileUpdates:          profileUpdates,
 	}
 	return nil
 }

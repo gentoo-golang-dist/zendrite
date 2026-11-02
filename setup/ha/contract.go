@@ -57,8 +57,9 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // (MSC2246), level 11 records erased users (MSC4025), level 12 locks
 // accounts (MSC3939), level 13 suspends accounts (MSC3823) and stores room
 // reports (MSC4151), level 14 flags resynced rooms for forward extremity
-// repair, and level 15 stores user reports (MSC4260).
-const releaseLevel = 15
+// repair, level 15 stores user reports (MSC4260), and level 16 adds the
+// profile updates stream (MSC4262).
+const releaseLevel = 16
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades

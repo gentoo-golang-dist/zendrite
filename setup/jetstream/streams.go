@@ -33,6 +33,9 @@ var (
 	RequestPresence         = "GetPresence"
 	OutputPresenceEvent     = "OutputPresenceEvent"
 	InputFulltextReindex    = "InputFulltextReindex"
+	// OutputProfileUpdate carries the names of the profile fields a local
+	// user changed, for the sync API's profile updates stream (MSC4262).
+	OutputProfileUpdate = "OutputProfileUpdate"
 )
 
 var safeCharacters = regexp.MustCompile("[^A-Za-z0-9$]+")
@@ -105,6 +108,11 @@ var streams = []*nats.StreamConfig{
 	},
 	{
 		Name:      OutputNotificationData,
+		Retention: nats.InterestPolicy,
+		Storage:   nats.FileStorage,
+	},
+	{
+		Name:      OutputProfileUpdate,
 		Retention: nats.InterestPolicy,
 		Storage:   nats.FileStorage,
 	},

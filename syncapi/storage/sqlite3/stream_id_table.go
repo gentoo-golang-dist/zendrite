@@ -34,6 +34,8 @@ INSERT INTO syncapi_stream_id (stream_name, stream_id) VALUES ("unpartialstated"
   ON CONFLICT DO NOTHING;
 INSERT INTO syncapi_stream_id (stream_name, stream_id) VALUES ("sticky", 0)
   ON CONFLICT DO NOTHING;
+INSERT INTO syncapi_stream_id (stream_name, stream_id) VALUES ("profile", 0)
+  ON CONFLICT DO NOTHING;
 `
 
 const increaseStreamIDStmt = "" +
@@ -107,5 +109,11 @@ func (s *StreamIDStatements) nextUnPartialStatedID(ctx context.Context, txn *sql
 func (s *StreamIDStatements) nextStickyID(ctx context.Context, txn *sql.Tx) (pos types.StreamPosition, err error) {
 	increaseStmt := sqlutil.TxStmt(txn, s.increaseStreamIDStmt)
 	err = increaseStmt.QueryRowContext(ctx, "sticky").Scan(&pos)
+	return
+}
+
+func (s *StreamIDStatements) nextProfileID(ctx context.Context, txn *sql.Tx) (pos types.StreamPosition, err error) {
+	increaseStmt := sqlutil.TxStmt(txn, s.increaseStreamIDStmt)
+	err = increaseStmt.QueryRowContext(ctx, "profile").Scan(&pos)
 	return
 }

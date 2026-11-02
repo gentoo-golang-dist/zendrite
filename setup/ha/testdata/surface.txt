@@ -279,6 +279,9 @@ column syncapi_presence | last_active_ts | bigint | NO |
 column syncapi_presence | presence | integer | NO |
 column syncapi_presence | status_msg | text | YES |
 column syncapi_presence | user_id | text | NO |
+column syncapi_profile_updates | field_name | text | NO |
+column syncapi_profile_updates | id | bigint | NO | nextval('syncapi_profile_update_id'::regclass)
+column syncapi_profile_updates | user_id | text | NO |
 column syncapi_receipts | event_id | text | NO |
 column syncapi_receipts | id | bigint | NO | nextval('syncapi_receipt_id'::regclass)
 column syncapi_receipts | receipt_ts | bigint | NO |
@@ -630,6 +633,7 @@ index syncapi_peeks | syncapi_peeks_user_id_device_id_idx | CREATE INDEX syncapi
 index syncapi_presence | presence_presences_unique | CREATE UNIQUE INDEX presence_presences_unique ON public.syncapi_presence USING btree (user_id)
 index syncapi_presence | syncapi_presence_pkey | CREATE UNIQUE INDEX syncapi_presence_pkey ON public.syncapi_presence USING btree (id)
 index syncapi_presence | syncapi_presence_user_id | CREATE INDEX syncapi_presence_user_id ON public.syncapi_presence USING btree (user_id)
+index syncapi_profile_updates | syncapi_profile_updates_pkey | CREATE UNIQUE INDEX syncapi_profile_updates_pkey ON public.syncapi_profile_updates USING btree (id)
 index syncapi_receipts | syncapi_receipts_pkey | CREATE UNIQUE INDEX syncapi_receipts_pkey ON public.syncapi_receipts USING btree (id)
 index syncapi_receipts | syncapi_receipts_room_id | CREATE INDEX syncapi_receipts_room_id ON public.syncapi_receipts USING btree (room_id)
 index syncapi_receipts | syncapi_receipts_unique | CREATE UNIQUE INDEX syncapi_receipts_unique ON public.syncapi_receipts USING btree (room_id, receipt_type, user_id, thread_id)
@@ -1042,6 +1046,10 @@ constraint syncapi_presence | syncapi_presence_last_active_ts_not_null | NOT NUL
 constraint syncapi_presence | syncapi_presence_pkey | PRIMARY KEY (id)
 constraint syncapi_presence | syncapi_presence_presence_not_null | NOT NULL presence
 constraint syncapi_presence | syncapi_presence_user_id_not_null | NOT NULL user_id
+constraint syncapi_profile_updates | syncapi_profile_updates_field_name_not_null | NOT NULL field_name
+constraint syncapi_profile_updates | syncapi_profile_updates_id_not_null | NOT NULL id
+constraint syncapi_profile_updates | syncapi_profile_updates_pkey | PRIMARY KEY (id)
+constraint syncapi_profile_updates | syncapi_profile_updates_user_id_not_null | NOT NULL user_id
 constraint syncapi_receipts | syncapi_receipts_event_id_not_null | NOT NULL event_id
 constraint syncapi_receipts | syncapi_receipts_id_not_null | NOT NULL id
 constraint syncapi_receipts | syncapi_receipts_pkey | PRIMARY KEY (id)
@@ -1297,6 +1305,7 @@ sequence roomserver_state_snapshot_nid_seq | bigint | 1
 sequence syncapi_filter_id_seq | integer | 1
 sequence syncapi_notification_data_id_seq | bigint | 1
 sequence syncapi_presence_id | bigint | 1
+sequence syncapi_profile_update_id | bigint | 1
 sequence syncapi_receipt_id | bigint | 1
 sequence syncapi_relation_id | bigint | 1
 sequence syncapi_send_to_device_id | bigint | 1
@@ -1362,4 +1371,5 @@ stream {"name":"OutputTypingEvent","retention":"interest","max_consumers":0,"max
 stream {"name":"OutputClientData","retention":"interest","max_consumers":0,"max_msgs":0,"max_bytes":0,"discard":"old","max_age":0,"max_msgs_per_subject":0,"storage":"file","num_replicas":0,"compression":"none","allow_direct":false,"mirror_direct":false,"consumer_limits":{},"allow_msg_ttl":false}
 stream {"name":"OutputReceiptEvent","retention":"interest","max_consumers":0,"max_msgs":0,"max_bytes":0,"discard":"old","max_age":0,"max_msgs_per_subject":0,"storage":"file","num_replicas":0,"compression":"none","allow_direct":false,"mirror_direct":false,"consumer_limits":{},"allow_msg_ttl":false}
 stream {"name":"OutputNotificationData","retention":"interest","max_consumers":0,"max_msgs":0,"max_bytes":0,"discard":"old","max_age":0,"max_msgs_per_subject":0,"storage":"file","num_replicas":0,"compression":"none","allow_direct":false,"mirror_direct":false,"consumer_limits":{},"allow_msg_ttl":false}
+stream {"name":"OutputProfileUpdate","retention":"interest","max_consumers":0,"max_msgs":0,"max_bytes":0,"discard":"old","max_age":0,"max_msgs_per_subject":0,"storage":"file","num_replicas":0,"compression":"none","allow_direct":false,"mirror_direct":false,"consumer_limits":{},"allow_msg_ttl":false}
 stream {"name":"OutputPresenceEvent","retention":"interest","max_consumers":0,"max_msgs":0,"max_bytes":0,"discard":"old","max_age":300000000000,"max_msgs_per_subject":0,"storage":"memory","num_replicas":0,"compression":"none","allow_direct":false,"mirror_direct":false,"consumer_limits":{},"allow_msg_ttl":false}

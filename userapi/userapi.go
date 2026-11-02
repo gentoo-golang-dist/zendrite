@@ -94,6 +94,7 @@ func NewInternalAPI(
 		zendriteCfg.Global.JetStream.Prefixed(jetstream.OutputClientData),
 		zendriteCfg.Global.JetStream.Prefixed(jetstream.OutputNotificationData),
 	)
+	syncProducer.ProfileUpdateTopic = zendriteCfg.Global.JetStream.Prefixed(jetstream.OutputProfileUpdate)
 	keyChangeProducer := &producers.KeyChange{
 		Topic:     zendriteCfg.Global.JetStream.Prefixed(jetstream.OutputKeyChangeEvent),
 		JetStream: js,

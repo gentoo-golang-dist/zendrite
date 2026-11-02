@@ -520,6 +520,14 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 						)
 					},
 				),
+				ProfilePosition: withTransaction(
+					syncReq.Since.ProfilePosition,
+					func(txn storage.DatabaseTransaction) types.StreamPosition {
+						return rp.streams.ProfileUpdatesStreamProvider.CompleteSync(
+							syncReq.Context, txn, syncReq,
+						)
+					},
+				),
 			}
 		} else {
 			// Incremental sync
@@ -612,6 +620,15 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 						return rp.streams.StickyEventsStreamProvider.IncrementalSync(
 							syncReq.Context, txn, syncReq,
 							syncReq.Since.StickyPosition, rp.Notifier.CurrentPosition().StickyPosition,
+						)
+					},
+				),
+				ProfilePosition: withTransaction(
+					syncReq.Since.ProfilePosition,
+					func(txn storage.DatabaseTransaction) types.StreamPosition {
+						return rp.streams.ProfileUpdatesStreamProvider.IncrementalSync(
+							syncReq.Context, txn, syncReq,
+							syncReq.Since.ProfilePosition, rp.Notifier.CurrentPosition().ProfilePosition,
 						)
 					},
 				),

@@ -72,6 +72,9 @@ type SyncUserAPI interface {
 	PerformDeviceUpdate(ctx context.Context, req *PerformDeviceUpdateRequest, res *PerformDeviceUpdateResponse) error
 	QueryDevices(ctx context.Context, req *QueryDevicesRequest, res *QueryDevicesResponse) error
 	QueryDeviceInfos(ctx context.Context, req *QueryDeviceInfosRequest, res *QueryDeviceInfosResponse) error
+	// QueryProfile returns a local user's profile, for the MSC4262 sliding
+	// sync extension.
+	QueryProfile(ctx context.Context, userID string) (*authtypes.Profile, error)
 }
 
 // DehydratedDeviceAPI is the API for managing dehydrated devices (MSC3814).
