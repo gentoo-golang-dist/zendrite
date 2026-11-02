@@ -56,12 +56,17 @@ func (rp *RequestPool) detectRoomMembership(
 			logrus.WithError(inviteErr).WithField("room_id", roomID).Warn("Failed to check for invites")
 		} else if invite, hasInvite := invites[roomID]; hasInvite {
 			if _, isRetired := retired[roomID]; !isRetired {
-				// The invites table also holds knocks.
-				result.membership = spec.Invite
-				if eventMembership, _ := invite.Membership(); eventMembership == spec.Knock {
+				// The invites table also holds knocks. Invites are not
+				// served while the user blocks them (MSC4380).
+				eventMembership, _ := invite.Membership()
+				switch {
+				case eventMembership == spec.Knock:
 					result.membership = spec.Knock
+					result.inviteEvent = invite
+				case !rp.invitesBlocked(ctx, userID):
+					result.membership = spec.Invite
+					result.inviteEvent = invite
 				}
-				result.inviteEvent = invite
 			}
 		}
 	}

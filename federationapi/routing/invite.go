@@ -314,6 +314,13 @@ func handleInviteResult(ctx context.Context, inviteEvent gomatrixserverlib.PDU, 
 
 	headeredInvite := &types.HeaderedEvent{PDU: inviteEvent}
 	if err = rsAPI.HandleInvite(ctx, headeredInvite); err != nil {
+		var blocked api.ErrInviteBlocked
+		if errors.As(err, &blocked) {
+			return nil, &util.JSONResponse{
+				Code: http.StatusForbidden,
+				JSON: blocked.MatrixError(),
+			}
+		}
 		util.GetLogger(ctx).WithError(err).Error("HandleInvite failed")
 		return nil, &util.JSONResponse{
 			Code: http.StatusInternalServerError,

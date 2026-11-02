@@ -99,6 +99,16 @@ State events, and aggregations that arrive with events over federation, are neve
 | [MSC3266](https://github.com/matrix-org/matrix-spec-proposals/pull/3266) | Room summary API | 1.15 | Implemented: `GET /_matrix/client/v1/room_summary/{roomIdOrAlias}`, and client and federation `/hierarchy` rooms carry `room_version` and, for encrypted rooms, `encryption`. Summaries of remote rooms keep both fields when the remote server sends them |
 | [MSC3765](https://github.com/matrix-org/matrix-spec-proposals/pull/3765) | Rich text in room topics | 1.15 | Implemented: `createRoom` with `topic` adds a `text/plain` representation in `m.topic`. `/publicRooms`, `/hierarchy`, room summaries and `/search` use the first `text/plain` representation in `m.topic` (a missing `mimetype` counts as `text/plain`) and fall back to the `topic` key |
 | [MSC4267](https://github.com/matrix-org/matrix-spec-proposals/pull/4267) | Forget room on leave ([`m.forget_forced_upon_leave` capability](https://spec.matrix.org/v1.18/client-server-api/#mforget_forced_upon_leave-capability)) | 1.18 | Implemented (opt-in via [`auto_forget_on_leave`](/administration/auto-forget-on-leave/)) |
+| [MSC4380](https://github.com/matrix-org/matrix-spec-proposals/pull/4380) | Invite blocking | 1.18 | Implemented: see [invite blocking](#invite-blocking) |
+
+### Invite blocking
+
+A user who sets the `m.invite_permission_config` account data to `{"default_action": "block"}` receives no room invites.
+Inviting them through `POST /rooms/{roomId}/invite`, the `invite` list of `POST /createRoom`, `PUT /rooms/{roomId}/state/m.room.member/{userId}` or the federation `/invite` endpoints fails with 403 `M_INVITE_BLOCKED`.
+`createRoom` still creates the room, as with any other failed invite.
+`/sync` and sliding sync leave out invites the user already has, and serve them again once blocking is turned off; other endpoints and application services see invites as usual.
+Any other `default_action`, or no account data, allows invites.
+The unstable `org.matrix.msc4380.invite_permission_config` type is read when the stable type is not set, and `/versions` advertises `org.matrix.msc4380` and `org.matrix.msc4380.stable`.
 
 ## Registration
 

@@ -55,9 +55,11 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 		// Query the invites table using InviteEventsInRange
 		// Use range from 0 to max to get all current invites
 		maxID, maxIDErr := snapshot.MaxStreamPositionForInvites(ctx)
+		// Invites are not served while the user blocks them (MSC4380).
+		invitesBlocked := membership == spec.Invite && rp.invitesBlocked(ctx, userID)
 		if maxIDErr != nil {
 			logrus.WithError(maxIDErr).Warn("Failed to get max invite ID")
-		} else if maxID > 0 {
+		} else if maxID > 0 && !invitesBlocked {
 			// Get all invite events for this user
 			inviteRange := types.Range{
 				From:      0,
@@ -679,4 +681,16 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// invitesBlocked reports whether the user blocks every room invite (MSC4380),
+// in which case sliding sync serves none of their invites. A failure to read
+// the setting is logged and the invites are served.
+func (rp *RequestPool) invitesBlocked(ctx context.Context, userID string) bool {
+	blocked, err := userapi.InvitesBlocked(ctx, rp.userAPI, userID)
+	if err != nil {
+		logrus.WithError(err).WithField("user_id", userID).Warn("[V4_SYNC] Failed to read the invite permission config")
+		return false
+	}
+	return blocked
 }

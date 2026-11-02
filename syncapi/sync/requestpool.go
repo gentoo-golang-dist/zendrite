@@ -320,6 +320,13 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 			JSON: spec.Unknown(err.Error()),
 		}
 	}
+	if syncReq.InvitesBlocked, err = userapi.InvitesBlocked(syncReq.Context, rp.userAPI, device.UserID); err != nil {
+		util.GetLogger(syncReq.Context).WithError(err).Error("userapi.InvitesBlocked failed")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
 	if syncReq.UseStateAfter() {
 		// MSC4222: rename the state section of every room, including those
 		// only other streams added, once the response is complete.

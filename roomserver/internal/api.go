@@ -60,6 +60,7 @@ type RoomserverInternalAPI struct {
 	ServerACLs             *acls.ServerACLs
 	fsAPI                  fsAPI.RoomserverFederationAPI
 	asAPI                  asAPI.AppServiceInternalAPI
+	userAPI                userapi.RoomserverUserAPI
 	NATSClient             *nats.Conn
 	JetStream              nats.JetStreamContext
 	Durable                string
@@ -287,8 +288,17 @@ func (r *RoomserverInternalAPI) ScheduleAutoPurgeIfEligible(ctx context.Context,
 }
 
 func (r *RoomserverInternalAPI) SetUserAPI(userAPI userapi.RoomserverUserAPI) {
+	r.userAPI = userAPI
 	r.Leaver.UserAPI = userAPI
 	r.Inputer.UserAPI = userAPI
+}
+
+// InvitesBlocked implements api.InviteBlockingAPI.
+func (r *RoomserverInternalAPI) InvitesBlocked(ctx context.Context, userID spec.UserID) (bool, error) {
+	if r.userAPI == nil || !r.Cfg.Global.IsLocalServerName(userID.Domain()) {
+		return false, nil
+	}
+	return userapi.InvitesBlocked(ctx, r.userAPI, userID.String())
 }
 
 func (r *RoomserverInternalAPI) SetAppserviceAPI(asAPI asAPI.AppServiceInternalAPI) {
@@ -318,6 +328,18 @@ func (r *RoomserverInternalAPI) StateQuerier() gomatrixserverlib.StateQuerier {
 func (r *RoomserverInternalAPI) HandleInvite(
 	ctx context.Context, inviteEvent *types.HeaderedEvent,
 ) error {
+	if inviteEvent.StateKey() != nil {
+		invitee, err := r.QueryUserIDForSender(ctx, inviteEvent.RoomID(), spec.SenderID(*inviteEvent.StateKey()))
+		if err == nil && invitee != nil {
+			blocked, blockErr := r.InvitesBlocked(ctx, *invitee)
+			if blockErr != nil {
+				return blockErr
+			}
+			if blocked {
+				return api.ErrInviteBlocked{Invitee: *invitee}
+			}
+		}
+	}
 	outputEvents, err := r.ProcessInviteMembership(ctx, inviteEvent)
 	if err != nil {
 		return err

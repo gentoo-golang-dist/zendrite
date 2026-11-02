@@ -519,7 +519,14 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 			})
 			var errInvalidID api.ErrInvalidID
 			var errNotAllowed api.ErrNotAllowed
+			var errInviteBlocked api.ErrInviteBlocked
 			switch {
+			case errors.As(err, &errInviteBlocked):
+				// As with other failed invites, the room stays created.
+				return "", &util.JSONResponse{
+					Code: http.StatusForbidden,
+					JSON: errInviteBlocked.MatrixError(),
+				}
 			case errors.As(err, &errInvalidID):
 				return "", &util.JSONResponse{
 					Code: http.StatusBadRequest,

@@ -31,6 +31,9 @@ type SyncRequest struct {
 	MembershipChanges map[string]struct{}
 	// Updated by the PDU stream.
 	IgnoredUsers IgnoredUsers
+	// InvitesBlocked is true when the user blocks every room invite
+	// (MSC4380), so the invite stream leaves invites out.
+	InvitesBlocked bool
 	// Rooms the user joined within this incremental sync. Updated by the PDU
 	// stream, read by the sticky events stream.
 	NewlyJoinedRooms map[string]struct{}

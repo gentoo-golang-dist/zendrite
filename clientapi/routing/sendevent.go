@@ -251,6 +251,9 @@ func sendEventContent(
 	if resErr != nil {
 		return "", resErr
 	}
+	if resErr = checkInviteBlocked(ctx, rsAPI, e); resErr != nil {
+		return "", resErr
+	}
 	if stateKey == nil {
 		if resErr = validateAnnotation(ctx, rsAPI, e, txnAndSessionID); resErr != nil {
 			return "", resErr
@@ -309,6 +312,36 @@ func sendEventContent(
 	sendEventDuration.With(prometheus.Labels{"action": "submit"}).Observe(float64(timeToSubmitEvent.Milliseconds()))
 
 	return eventID, nil
+}
+
+// checkInviteBlocked refuses an invite sent as a membership state event to a
+// local user who blocks every room invite (MSC4380).
+func checkInviteBlocked(ctx context.Context, rsAPI api.ClientRoomserverAPI, e gomatrixserverlib.PDU) *util.JSONResponse {
+	if e.Type() != spec.MRoomMember || e.StateKey() == nil {
+		return nil
+	}
+	if membership, err := e.Membership(); err != nil || membership != spec.Invite {
+		return nil
+	}
+	invitee, err := rsAPI.QueryUserIDForSender(ctx, e.RoomID(), spec.SenderID(*e.StateKey()))
+	if err != nil || invitee == nil {
+		return nil
+	}
+	blocked, err := rsAPI.InvitesBlocked(ctx, *invitee)
+	if err != nil {
+		util.GetLogger(ctx).WithError(err).Error("rsAPI.InvitesBlocked failed")
+		return &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	if blocked {
+		return &util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: api.ErrInviteBlocked{Invitee: *invitee}.MatrixError(),
+		}
+	}
+	return nil
 }
 
 func updatePowerLevels(ctx context.Context, r map[string]any, roomID string, rsAPI api.ClientRoomserverAPI) error {

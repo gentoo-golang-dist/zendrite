@@ -156,6 +156,15 @@ func (r *Inviter) PerformInvite(
 	}
 
 	isTargetLocal := r.Cfg.Matrix.IsLocalServerName(req.InviteInput.Invitee.Domain())
+	if isTargetLocal {
+		blocked, blockErr := r.RSAPI.InvitesBlocked(ctx, req.InviteInput.Invitee)
+		if blockErr != nil {
+			return blockErr
+		}
+		if blocked {
+			return api.ErrInviteBlocked{Invitee: req.InviteInput.Invitee}
+		}
+	}
 
 	signingKey := req.InviteInput.PrivateKey
 	if info.RoomVersion == gomatrixserverlib.RoomVersionPseudoIDs {

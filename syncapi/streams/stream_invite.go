@@ -89,6 +89,10 @@ func (p *InviteStreamProvider) IncrementalSync(
 			req.Response.Rooms.Knock[roomID] = kr
 			continue
 		}
+		// Invites are not served while the user blocks them (MSC4380).
+		if req.InvitesBlocked {
+			continue
+		}
 		ir, err := types.NewInviteResponse(ctx, p.rsAPI, inviteEvent, eventFormat)
 		if err != nil {
 			req.Log.WithError(err).Error("failed creating invite response")

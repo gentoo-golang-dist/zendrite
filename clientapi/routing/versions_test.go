@@ -41,6 +41,8 @@ func TestVersions(t *testing.T) {
 		"uk.tcpip.msc4133":              true,
 		"uk.tcpip.msc4133.stable":       true,
 		"com.beeper.msc4169":            true,
+		"org.matrix.msc4380":            true,
+		"org.matrix.msc4380.stable":     true,
 	}
 	tests := []struct {
 		name     string

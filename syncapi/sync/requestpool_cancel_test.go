@@ -187,6 +187,10 @@ type otkUserAPI struct {
 	userapi.SyncUserAPI
 }
 
+func (otkUserAPI) QueryAccountData(context.Context, *userapi.QueryAccountDataRequest, *userapi.QueryAccountDataResponse) error {
+	return nil
+}
+
 func (otkUserAPI) QueryOneTimeKeys(context.Context, *userapi.QueryOneTimeKeysRequest, *userapi.QueryOneTimeKeysResponse) error {
 	return nil
 }

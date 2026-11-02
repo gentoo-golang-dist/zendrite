@@ -387,7 +387,10 @@ func sendInvite(
 	{
 		var e roomserverAPI.ErrInvalidID
 		var e1 roomserverAPI.ErrNotAllowed
+		var blocked roomserverAPI.ErrInviteBlocked
 		switch {
+		case errors.As(err, &blocked):
+			return util.JSONResponse{Code: http.StatusForbidden, JSON: blocked.MatrixError()}, blocked
 		case errors.As(err, &e):
 			return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.InvalidParam(e.Error())}, e
 		case errors.As(err, &e1):

@@ -96,6 +96,16 @@ func (s *syncRoomserverAPI) GetPartialStateRoomIDs(ctx context.Context) ([]strin
 type syncUserAPI struct {
 	userapi.SyncUserAPI
 	accounts []userapi.Device
+	// globalAccountData maps user ID and type to content.
+	globalAccountData map[string]map[string]json.RawMessage
+}
+
+func (s *syncUserAPI) QueryAccountData(ctx context.Context, req *userapi.QueryAccountDataRequest, res *userapi.QueryAccountDataResponse) error {
+	res.GlobalAccountData = map[string]json.RawMessage{}
+	if data, ok := s.globalAccountData[req.UserID][req.DataType]; ok {
+		res.GlobalAccountData[req.DataType] = data
+	}
+	return nil
 }
 
 func (s *syncUserAPI) QueryAccessToken(ctx context.Context, req *userapi.QueryAccessTokenRequest, res *userapi.QueryAccessTokenResponse) error {
