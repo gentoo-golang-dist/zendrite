@@ -314,6 +314,15 @@ func (u *RoomUpdater) RejectedMembershipNIDs() ([]types.EventNID, error) {
 	return u.d.EventsTable.SelectRejectedEventNIDsOfType(u.ctx, u.txn, u.roomInfo.RoomNID, types.MRoomMemberNID)
 }
 
+// AcceptedOutlierMembershipNIDs returns the accepted membership events of the
+// room stored as outliers, without state of their own, in event NID order.
+func (u *RoomUpdater) AcceptedOutlierMembershipNIDs() ([]types.EventNID, error) {
+	if u.roomInfo == nil {
+		return nil, types.ErrorInvalidRoomInfo
+	}
+	return u.d.EventsTable.SelectAcceptedOutlierEventNIDsOfType(u.ctx, u.txn, u.roomInfo.RoomNID, types.MRoomMemberNID)
+}
+
 // SetEventUnrejected marks a rejected event as accepted.
 func (u *RoomUpdater) SetEventUnrejected(eventNID types.EventNID) error {
 	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {

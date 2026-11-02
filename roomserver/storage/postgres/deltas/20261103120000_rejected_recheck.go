@@ -48,3 +48,15 @@ func UpRejectedRecheckRejoins(ctx context.Context, tx *sql.Tx) error {
 	}
 	return nil
 }
+
+// UpRejectedRecheckStaleMemberships schedules the recheck of rejected events
+// once more, unless it is still pending. The recheck now also adds to the
+// current state the memberships stored as outliers that follow the one it
+// holds for their user.
+func UpRejectedRecheckStaleMemberships(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO roomserver_rejected_recheck (after_room_nid)
+		SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM roomserver_rejected_recheck);`); err != nil {
+		return fmt.Errorf("failed to schedule the stale membership repair: %w", err)
+	}
+	return nil
+}

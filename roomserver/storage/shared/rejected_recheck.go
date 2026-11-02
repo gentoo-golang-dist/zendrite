@@ -20,7 +20,8 @@ func (d *Database) RejectedRecheckCursor(ctx context.Context) (types.RoomNID, bo
 }
 
 // RoomsWithRejectedEventsAfter returns up to limit rooms after afterRoomNID
-// that hold rejected events with state, in NID order.
+// that hold rejected events with state or accepted outlier memberships, in
+// NID order.
 func (d *Database) RoomsWithRejectedEventsAfter(ctx context.Context, afterRoomNID types.RoomNID, limit int) ([]types.RoomNID, error) {
 	roomNIDs, err := d.RejectedRecheckTable.SelectRoomsWithRejectedEventsAfter(ctx, nil, afterRoomNID, limit)
 	if err != nil {

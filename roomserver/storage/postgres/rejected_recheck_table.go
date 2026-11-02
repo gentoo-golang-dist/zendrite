@@ -35,10 +35,13 @@ const updateRejectedRecheckCursorSQL = "" +
 const deleteRejectedRecheckSQL = "" +
 	"DELETE FROM roomserver_rejected_recheck"
 
-// Outliers, which have no state snapshot, cannot be checked again.
+// Rejected outliers, which have no state snapshot, cannot be checked again.
+// Rooms with accepted outlier memberships are listed too, since such a
+// membership can be newer than the one the current state holds.
 const selectRoomsWithRejectedEventsAfterSQL = "" +
 	"SELECT DISTINCT room_nid FROM roomserver_events" +
-	" WHERE room_nid > $1 AND is_rejected = TRUE AND state_snapshot_nid <> 0" +
+	" WHERE room_nid > $1 AND ((is_rejected = TRUE AND state_snapshot_nid <> 0)" +
+	" OR (event_type_nid = 5 AND state_snapshot_nid = 0 AND is_rejected = FALSE))" +
 	" ORDER BY room_nid ASC LIMIT $2"
 
 type rejectedRecheckStatements struct {
@@ -62,6 +65,9 @@ func CreateRejectedRecheckTable(db *sql.DB) error {
 	}, sqlutil.Migration{
 		Version: "roomserver: recheck rejected events after rejoins",
 		Up:      deltas.UpRejectedRecheckRejoins,
+	}, sqlutil.Migration{
+		Version: "roomserver: add outlier memberships that follow the current state",
+		Up:      deltas.UpRejectedRecheckStaleMemberships,
 	})
 	return m.Up(context.Background())
 }

@@ -78,6 +78,9 @@ type Events interface {
 	// SelectRejectedEventNIDsOfType returns the rejected events of a type in a
 	// room, in event NID order.
 	SelectRejectedEventNIDsOfType(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, eventTypeNID types.EventTypeNID) ([]types.EventNID, error)
+	// SelectAcceptedOutlierEventNIDsOfType returns the accepted outliers of a
+	// type in a room, in event NID order.
+	SelectAcceptedOutlierEventNIDsOfType(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, eventTypeNID types.EventTypeNID) ([]types.EventNID, error)
 	// SelectRejectedEventNIDs returns the rejected events of a room, in event
 	// NID order.
 	SelectRejectedEventNIDs(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) ([]types.EventNID, error)
@@ -103,7 +106,8 @@ type RejectedRecheck interface {
 	UpdateRejectedRecheckCursor(ctx context.Context, txn *sql.Tx, afterRoomNID types.RoomNID) error
 	DeleteRejectedRecheck(ctx context.Context, txn *sql.Tx) error
 	// SelectRoomsWithRejectedEventsAfter returns up to limit rooms after
-	// afterRoomNID that hold rejected events with state, in NID order.
+	// afterRoomNID that hold rejected events with state or accepted outlier
+	// memberships, in NID order.
 	SelectRoomsWithRejectedEventsAfter(ctx context.Context, txn *sql.Tx, afterRoomNID types.RoomNID, limit int) ([]types.RoomNID, error)
 }
 

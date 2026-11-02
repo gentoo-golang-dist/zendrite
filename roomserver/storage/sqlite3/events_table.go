@@ -123,6 +123,10 @@ const selectEventRejectedSQL = "" +
 
 const selectRoomsWithEventTypeNIDSQL = `SELECT DISTINCT room_nid FROM roomserver_events WHERE event_type_nid = $1`
 
+const selectAcceptedOutlierEventNIDsOfTypeSQL = "" +
+	"SELECT event_nid FROM roomserver_events" +
+	" WHERE room_nid = $1 AND event_type_nid = $2 AND state_snapshot_nid = 0 AND is_rejected = 0 ORDER BY event_nid ASC"
+
 const selectRejectedEventNIDsOfTypeSQL = "" +
 	"SELECT event_nid FROM roomserver_events" +
 	" WHERE room_nid = $1 AND event_type_nid = $2 AND is_rejected = 1 ORDER BY event_nid ASC"
@@ -155,6 +159,7 @@ type eventStatements struct {
 	selectRoomsWithEventTypeNIDStmt               *sql.Stmt
 	updateEventStateKeyNIDStmt                    *sql.Stmt
 	selectRejectedEventNIDsOfTypeStmt             *sql.Stmt
+	selectAcceptedOutlierEventNIDsOfTypeStmt      *sql.Stmt
 	updateEventUnrejectedStmt                     *sql.Stmt
 	selectRejectedEventNIDsStmt                   *sql.Stmt
 	// bulkSelectEventNIDStmt               *sql.Stmt
@@ -217,6 +222,7 @@ func PrepareEventsTable(db *sql.DB) (tables.Events, error) {
 		{&s.selectRoomsWithEventTypeNIDStmt, selectRoomsWithEventTypeNIDSQL},
 		{&s.updateEventStateKeyNIDStmt, updateEventStateKeyNIDSQL},
 		{&s.selectRejectedEventNIDsOfTypeStmt, selectRejectedEventNIDsOfTypeSQL},
+		{&s.selectAcceptedOutlierEventNIDsOfTypeStmt, selectAcceptedOutlierEventNIDsOfTypeSQL},
 		{&s.updateEventUnrejectedStmt, updateEventUnrejectedSQL},
 		{&s.selectRejectedEventNIDsStmt, selectRejectedEventNIDsSQL},
 	}.Prepare(db)
@@ -754,6 +760,25 @@ func (s *eventStatements) SelectRejectedEventNIDsOfType(
 		return nil, err
 	}
 	defer internal.CloseAndLogIfError(ctx, rows, "SelectRejectedEventNIDsOfType: rows.close() failed")
+	var result []types.EventNID
+	for rows.Next() {
+		var eventNID types.EventNID
+		if err = rows.Scan(&eventNID); err != nil {
+			return nil, err
+		}
+		result = append(result, eventNID)
+	}
+	return result, rows.Err()
+}
+
+func (s *eventStatements) SelectAcceptedOutlierEventNIDsOfType(
+	ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, eventTypeNID types.EventTypeNID,
+) ([]types.EventNID, error) {
+	rows, err := sqlutil.TxStmt(txn, s.selectAcceptedOutlierEventNIDsOfTypeStmt).QueryContext(ctx, roomNID, eventTypeNID)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectAcceptedOutlierEventNIDsOfType: rows.close() failed")
 	var result []types.EventNID
 	for rows.Next() {
 		var eventNID types.EventNID

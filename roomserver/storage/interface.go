@@ -258,7 +258,8 @@ type Database interface {
 	// rejected events has checked rooms, and false if it is not pending.
 	RejectedRecheckCursor(ctx context.Context) (types.RoomNID, bool, error)
 	// RoomsWithRejectedEventsAfter returns up to limit rooms after
-	// afterRoomNID that hold rejected events with state.
+	// afterRoomNID that hold rejected events with state or accepted outlier
+	// memberships.
 	RoomsWithRejectedEventsAfter(ctx context.Context, afterRoomNID types.RoomNID, limit int) ([]types.RoomNID, error)
 	// AdvanceRejectedRecheck records the progress of the recheck, or ends it.
 	AdvanceRejectedRecheck(ctx context.Context, afterRoomNID types.RoomNID, done bool) error
@@ -332,7 +333,8 @@ type RoomDatabase interface {
 	// rejected events has checked rooms, and false if it is not pending.
 	RejectedRecheckCursor(ctx context.Context) (types.RoomNID, bool, error)
 	// RoomsWithRejectedEventsAfter returns up to limit rooms after
-	// afterRoomNID that hold rejected events with state.
+	// afterRoomNID that hold rejected events with state or accepted outlier
+	// memberships.
 	RoomsWithRejectedEventsAfter(ctx context.Context, afterRoomNID types.RoomNID, limit int) ([]types.RoomNID, error)
 	// AdvanceRejectedRecheck records the progress of the recheck, or ends it.
 	AdvanceRejectedRecheck(ctx context.Context, afterRoomNID types.RoomNID, done bool) error
