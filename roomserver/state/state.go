@@ -1610,6 +1610,39 @@ func (v *StateResolution) ResolveDuplicateKeys(
 	return v.resolveByKey(ctx, byKey)
 }
 
+// StateAfterEventsWith returns the entries for the given tuples of the state
+// after the given events, with the given entries added. Keys that this leaves
+// with more than one event, from the states after different events or from an
+// added entry, are resolved with the room version's state resolution
+// algorithm over the full state, since the auth checks it runs for the
+// conflicting events need more of the state than the tuples asked for.
+func (v *StateResolution) StateAfterEventsWith(
+	ctx context.Context, prevStates []types.StateAtEvent, added []types.StateEntry,
+	stateKeyTuples []gomatrixserverlib.StateKeyTuple,
+) ([]types.StateEntry, error) {
+	combined, err := v.LoadCombinedStateAfterEvents(ctx, prevStates)
+	if err != nil {
+		return nil, fmt.Errorf("v.LoadCombinedStateAfterEvents: %w", err)
+	}
+	full, err := v.ResolveDuplicateKeys(ctx, append(combined, added...))
+	if err != nil {
+		return nil, err
+	}
+	numericTuples, err := v.stringTuplesToNumericTuples(ctx, stateKeyTuples)
+	if err != nil {
+		return nil, err
+	}
+	sort.Sort(stateEntrySorter(full))
+	var result []types.StateEntry
+	for _, tuple := range numericTuples {
+		if eventNID, ok := stateEntryMap(full).lookup(tuple); ok {
+			result = append(result, types.StateEntry{StateKeyTuple: tuple, EventNID: eventNID})
+		}
+	}
+	sort.Sort(stateEntrySorter(result))
+	return result, nil
+}
+
 // resolveByKey resolves the keys that hold more than one entry.
 func (v *StateResolution) resolveByKey(
 	ctx context.Context, byKey map[types.StateKeyTuple][]types.StateEntry,

@@ -254,6 +254,14 @@ type Database interface {
 	MiskeyedStateEventsAfter(ctx context.Context, afterEventNID types.EventNID, limit int) ([]shared.MiskeyedStateEvent, types.EventNID, bool, error)
 	// AdvanceStateKeyRepair records the progress of the repair, or ends it.
 	AdvanceStateKeyRepair(ctx context.Context, afterEventNID types.EventNID, done bool) error
+	// RejectedRecheckCursor returns the room NID up to which the recheck of
+	// rejected events has checked rooms, and false if it is not pending.
+	RejectedRecheckCursor(ctx context.Context) (types.RoomNID, bool, error)
+	// RoomsWithRejectedEventsAfter returns up to limit rooms after
+	// afterRoomNID that hold rejected events with state.
+	RoomsWithRejectedEventsAfter(ctx context.Context, afterRoomNID types.RoomNID, limit int) ([]types.RoomNID, error)
+	// AdvanceRejectedRecheck records the progress of the recheck, or ends it.
+	AdvanceRejectedRecheck(ctx context.Context, afterRoomNID types.RoomNID, done bool) error
 	// RoomIDFromNID returns the room ID for a given room NID
 	RoomIDFromNID(ctx context.Context, roomNID types.RoomNID) (string, error)
 }
@@ -318,6 +326,16 @@ type RoomDatabase interface {
 	MiskeyedStateEventsAfter(ctx context.Context, afterEventNID types.EventNID, limit int) ([]shared.MiskeyedStateEvent, types.EventNID, bool, error)
 	// AdvanceStateKeyRepair records the progress of the repair, or ends it.
 	AdvanceStateKeyRepair(ctx context.Context, afterEventNID types.EventNID, done bool) error
+	// RoomIDFromNID returns the room ID for a given room NID.
+	RoomIDFromNID(ctx context.Context, roomNID types.RoomNID) (string, error)
+	// RejectedRecheckCursor returns the room NID up to which the recheck of
+	// rejected events has checked rooms, and false if it is not pending.
+	RejectedRecheckCursor(ctx context.Context) (types.RoomNID, bool, error)
+	// RoomsWithRejectedEventsAfter returns up to limit rooms after
+	// afterRoomNID that hold rejected events with state.
+	RoomsWithRejectedEventsAfter(ctx context.Context, afterRoomNID types.RoomNID, limit int) ([]types.RoomNID, error)
+	// AdvanceRejectedRecheck records the progress of the recheck, or ends it.
+	AdvanceRejectedRecheck(ctx context.Context, afterRoomNID types.RoomNID, done bool) error
 	// ClientTransactionEventID returns the event a client transaction produced,
 	// or "" if the transaction is unknown.
 	ClientTransactionEventID(ctx context.Context, roomID, senderID string, sessionID int64, transactionID string) (string, error)

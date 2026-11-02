@@ -148,6 +148,9 @@ func (d *Database) create(db *sql.DB) error {
 	if err := CreateStateKeyRepairTable(db); err != nil {
 		return err
 	}
+	if err := CreateRejectedRecheckTable(db); err != nil {
+		return err
+	}
 	if err := CreateAnnotationsTable(db); err != nil {
 		return err
 	}
@@ -232,6 +235,10 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 	if err != nil {
 		return err
 	}
+	rejectedRecheck, err := PrepareRejectedRecheckTable(db)
+	if err != nil {
+		return err
+	}
 	annotations, err := PrepareAnnotationsTable(db)
 	if err != nil {
 		return err
@@ -281,6 +288,7 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 		PartialStateTable:       partialState,
 		ClientTransactionsTable: clientTransactions,
 		StateKeyRepairTable:     stateKeyRepair,
+		RejectedRecheckTable:    rejectedRecheck,
 	}
 	return nil
 }

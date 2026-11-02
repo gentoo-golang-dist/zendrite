@@ -16,6 +16,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
@@ -207,38 +208,10 @@ func (r *Inputer) repairRoomStateKeys(
 		}
 
 		// Memberships rejected because of the wrong keys pass their checks
-		// now. Accept them and add them to the state the room continues from.
-		var acceptedEntries []types.StateEntry
-		if acceptedEntries, err = r.recheckRejectedMemberships(ctx, updater, &roomState, roomInfo, repairedNIDs); err != nil {
+		// now, and so do the events of their senders. Accept them and add
+		// the memberships to the state the room continues from.
+		if accepted, acceptedEvents, updates, err = r.acceptRecheckedEvents(ctx, updater, &roomState, roomInfo, repairedNIDs, memberKeys); err != nil {
 			return "", 0, 0, nil, err
-		}
-		accepted = len(acceptedEntries)
-		allAccepted := acceptedEntries
-		if acceptedEntries, err = r.withoutSoftFailed(ctx, updater, &roomState, roomInfo, acceptedEntries); err != nil {
-			return "", 0, 0, nil, err
-		}
-		if len(acceptedEntries) > 0 {
-			stateBefore := updater.CurrentStateSnapshotNID()
-			if err = addAcceptedMemberships(ctx, updater, &roomState, roomNID, acceptedEntries); err != nil {
-				return "", 0, 0, nil, err
-			}
-			for _, entry := range acceptedEntries {
-				memberKeys[entry.EventStateKeyNID] = struct{}{}
-			}
-			var outputs []api.OutputEvent
-			if outputs, err = acceptedMembershipOutputs(ctx, updater, &roomState, roomInfo, stateBefore, acceptedEntries); err != nil {
-				return "", 0, 0, nil, err
-			}
-			updates = append(updates, outputs...)
-		}
-
-		// The events their senders sent while the memberships were rejected
-		// pass with them now. They were sent before any later change of the
-		// memberships, so those left out of the current state count too.
-		if len(allAccepted) > 0 {
-			if acceptedEvents, err = r.recheckRejectedTimelineEvents(ctx, updater, &roomState, roomInfo, allAccepted); err != nil {
-				return "", 0, 0, nil, err
-			}
 		}
 
 		if len(memberKeys) > 0 {
@@ -257,6 +230,49 @@ func (r *Inputer) repairRoomStateKeys(
 	}
 	succeeded = true
 	return roomID, resolved, accepted, acceptedEvents, nil
+}
+
+// acceptRecheckedEvents checks the room's rejected memberships and timeline
+// events again, accepts those that pass, and adds the accepted memberships
+// that also pass against the current state to it. If repaired is not nil,
+// only memberships that depend on one of its events are checked. It adds the
+// state keys of the memberships it added to the current state to memberKeys,
+// and returns how many memberships it accepted, the timeline events it
+// accepted, and the output events announcing the added memberships.
+func (r *Inputer) acceptRecheckedEvents(
+	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
+	roomInfo *types.RoomInfo, repaired map[types.EventNID]struct{}, memberKeys map[types.EventStateKeyNID]struct{},
+) (int, []acceptedTimelineEvent, []api.OutputEvent, error) {
+	acceptedEntries, err := r.recheckRejectedMemberships(ctx, updater, roomState, roomInfo, repaired)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	accepted := len(acceptedEntries)
+	if acceptedEntries, err = r.withoutSoftFailed(ctx, updater, roomState, roomInfo, acceptedEntries); err != nil {
+		return 0, nil, nil, err
+	}
+	var updates []api.OutputEvent
+	if len(acceptedEntries) > 0 {
+		stateBefore := updater.CurrentStateSnapshotNID()
+		if err = addAcceptedMemberships(ctx, updater, roomState, roomInfo.RoomNID, acceptedEntries); err != nil {
+			return 0, nil, nil, err
+		}
+		for _, entry := range acceptedEntries {
+			memberKeys[entry.EventStateKeyNID] = struct{}{}
+		}
+		if updates, err = acceptedMembershipOutputs(ctx, updater, roomState, roomInfo, stateBefore, acceptedEntries); err != nil {
+			return 0, nil, nil, err
+		}
+	}
+
+	// The events their senders sent while their memberships were rejected
+	// pass with them now. They were sent before any later change of the
+	// memberships, so those left out of the current state count too.
+	acceptedEvents, err := r.recheckRejectedTimelineEvents(ctx, updater, roomState, roomInfo)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	return accepted, acceptedEvents, updates, nil
 }
 
 // resolveRepairedSnapshots settles the keys held twice in the room's current
@@ -369,8 +385,8 @@ func (r *Inputer) updateRepairedMemberships(
 
 // recheckRejectedMemberships checks again, in the order they were stored, the
 // room's rejected membership events whose auth events or state before them
-// include one of the given repaired events or a membership accepted here, and
-// accepts those that pass against their auth events and the state before them,
+// include one of the given repaired events or a membership accepted here, or
+// all of them if repaired is nil, and accepts those that pass against their auth events and the state before them,
 // as when they arrived. A membership rejected because the state it was checked
 // against missed events stored under the wrong key passes now; one rejected
 // for another reason fails again. Outliers, which have no state of their own,
@@ -392,6 +408,8 @@ func (r *Inputer) recheckRejectedMemberships(
 	}
 	slices.SortFunc(events, func(a, b types.Event) int { return cmp.Compare(a.EventNID, b.EventNID) })
 
+	// Without repaired events to depend on, every rejected membership is
+	// checked.
 	relevant := maps.Clone(repaired)
 	var accepted []types.StateEntry
 	for _, ev := range events {
@@ -407,11 +425,11 @@ func (r *Inputer) recheckRejectedMemberships(
 		if aerr != nil {
 			return nil, aerr
 		}
-		stateBefore, known, serr := stateBeforeForAuth(ctx, updater, roomState, ev.PDU)
+		stateBefore, known, serr := stateBeforeForAuth(ctx, updater, roomState, ev.PDU, authEvents)
 		if serr != nil {
 			return nil, serr
 		}
-		if !known || !dependsOn(authEvents, stateBefore, relevant) {
+		if !known || (relevant != nil && !dependsOn(authEvents, stateBefore, relevant)) {
 			continue
 		}
 		allowed, aerr := r.allowedBy(ctx, ev.PDU, pdusOf(authEvents))
@@ -429,7 +447,9 @@ func (r *Inputer) recheckRejectedMemberships(
 		if err = updater.SetEventUnrejected(ev.EventNID); err != nil {
 			return nil, fmt.Errorf("updater.SetEventUnrejected: %w", err)
 		}
-		relevant[ev.EventNID] = struct{}{}
+		if relevant != nil {
+			relevant[ev.EventNID] = struct{}{}
+		}
 		entries, eerr := updater.StateEntriesForEventNIDs(ctx, []types.EventNID{ev.EventNID})
 		if eerr != nil {
 			return nil, fmt.Errorf("updater.StateEntriesForEventNIDs: %w", eerr)
@@ -478,10 +498,18 @@ func acceptedAuthEvents(
 }
 
 // stateBeforeForAuth returns the entries of the state before an event that
-// its auth needs, and the room's history visibility, from the state after its
-// prev events. It returns false if the state at any of them is unknown.
+// its auth needs, and the room's history visibility, from the full state
+// after its prev events, with the sender's membership and, for a restricted
+// join, the authorizing user's membership among its accepted auth events
+// added. The state before a rejected event was calculated when memberships the
+// repair accepted since were rejected, so it can miss the sender's own join or
+// the join of the user who authorized a restricted join. Where the state
+// holds another membership for the same user, state resolution over the full
+// state decides between them, so a later leave or ban stays. It returns false
+// if the state at any prev event is unknown.
 func stateBeforeForAuth(
-	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution, event gomatrixserverlib.PDU,
+	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
+	event gomatrixserverlib.PDU, authEvents []types.Event,
 ) ([]types.StateEntry, bool, error) {
 	prevIDs := event.PrevEventIDs()
 	if len(prevIDs) == 0 {
@@ -491,11 +519,31 @@ func stateBeforeForAuth(
 	if err != nil || !known {
 		return nil, false, err
 	}
+	// Only the sender's own membership and that of the user who authorized a
+	// restricted join are added, whatever else the auth events cite.
+	cited := map[string]bool{string(event.SenderID()): true}
+	if event.Type() == spec.MRoomMember {
+		if via := gjson.GetBytes(event.Content(), "join_authorised_via_users_server"); via.Type == gjson.String { //nolint:misspell // Matrix spec uses British spelling
+			cited[via.String()] = true
+		}
+	}
+	var memberNIDs []types.EventNID
+	for _, authEvent := range authEvents {
+		if authEvent.Type() == spec.MRoomMember && authEvent.StateKey() != nil && cited[*authEvent.StateKey()] {
+			memberNIDs = append(memberNIDs, authEvent.EventNID)
+		}
+	}
+	var added []types.StateEntry
+	if len(memberNIDs) > 0 {
+		if added, err = updater.StateEntriesForEventNIDs(ctx, memberNIDs); err != nil {
+			return nil, false, fmt.Errorf("updater.StateEntriesForEventNIDs: %w", err)
+		}
+	}
 	tuples := gomatrixserverlib.StateNeededForAuth([]gomatrixserverlib.PDU{event}).Tuples()
 	tuples = append(tuples, gomatrixserverlib.StateKeyTuple{EventType: spec.MRoomHistoryVisibility, StateKey: ""})
-	entries, err := roomState.LoadStateAfterEventsForStringTuples(ctx, prevStates, tuples)
+	entries, err := roomState.StateAfterEventsWith(ctx, prevStates, added, tuples)
 	if err != nil {
-		return nil, false, fmt.Errorf("roomState.LoadStateAfterEventsForStringTuples: %w", err)
+		return nil, false, fmt.Errorf("roomState.StateAfterEventsWith: %w", err)
 	}
 	return entries, true, nil
 }
@@ -800,46 +848,27 @@ func latestEventStates(ctx context.Context, updater *shared.RoomUpdater) ([]type
 }
 
 // recheckRejectedTimelineEvents checks again the room's rejected timeline
-// events that cite one of the given accepted memberships, their sender's own,
-// as an auth event, and
-// accepts those that pass. Their state before them was calculated while the
-// membership was rejected, so they are checked against that state with the
-// membership added, and where the state holds another membership for the
-// sender, state resolution decides between them. Outliers, state events and
-// redactions are left alone. Accepted events are announced as old events,
-// which adds them to the room history without changing the current state, as
-// for backfilled events, once the transaction is committed and redactions are
-// applied to them. In a room with a policy server, an event must also be
-// signed by it, as new events must; one it refuses, or that cannot be checked,
-// stays rejected. It returns the accepted events.
+// events, and accepts those that pass. The state before them was calculated
+// while their sender's membership may have been rejected, so they are checked
+// against it with the memberships among their accepted auth events added,
+// their sender's own included, and where the state holds another membership
+// for the sender, state resolution decides between them. Outliers, state
+// events and redactions are left alone. Accepted events are announced as old
+// events, which adds them to the room history without changing the current
+// state, as for backfilled events, once the transaction is committed and
+// redactions are applied to them. In a room with a policy server, an event
+// must also be signed by it, as new events must; one it refuses, or that
+// cannot be checked, stays rejected. It returns the accepted events.
 func (r *Inputer) recheckRejectedTimelineEvents(
 	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
-	roomInfo *types.RoomInfo, acceptedMemberships []types.StateEntry,
+	roomInfo *types.RoomInfo,
 ) ([]acceptedTimelineEvent, error) {
-	membershipNIDs := make([]types.EventNID, len(acceptedMemberships))
-	entryByNID := make(map[types.EventNID]types.StateEntry, len(acceptedMemberships))
-	for i, entry := range acceptedMemberships {
-		membershipNIDs[i] = entry.EventNID
-		entryByNID[entry.EventNID] = entry
-	}
-	memberships, err := updater.Events(ctx, roomInfo.RoomVersion, membershipNIDs)
-	if err != nil {
-		return nil, fmt.Errorf("updater.Events: %w", err)
-	}
-	type citedMembership struct {
-		entry  types.StateEntry
-		target string
-	}
-	membershipByID := make(map[string]citedMembership, len(memberships))
-	for _, membership := range memberships {
-		if membership.StateKey() != nil {
-			membershipByID[membership.EventID()] = citedMembership{entryByNID[membership.EventNID], *membership.StateKey()}
-		}
-	}
-
 	rejectedNIDs, err := updater.RejectedEventNIDs()
 	if err != nil {
 		return nil, fmt.Errorf("updater.RejectedEventNIDs: %w", err)
+	}
+	if len(rejectedNIDs) == 0 {
+		return nil, nil
 	}
 	rejected, err := updater.Events(ctx, roomInfo.RoomVersion, rejectedNIDs)
 	if err != nil {
@@ -850,15 +879,6 @@ func (r *Inputer) recheckRejectedTimelineEvents(
 	var accepted []acceptedTimelineEvent
 	for _, ev := range rejected {
 		if ev.StateKey() != nil || ev.Type() == spec.MRoomRedaction {
-			continue
-		}
-		var cited []types.StateEntry
-		for _, authEventID := range ev.AuthEventIDs() {
-			if membership, ok := membershipByID[authEventID]; ok && membership.target == string(ev.SenderID()) {
-				cited = append(cited, membership.entry)
-			}
-		}
-		if len(cited) == 0 {
 			continue
 		}
 		// Outliers have no state of their own to check them against.
@@ -880,15 +900,12 @@ func (r *Inputer) recheckRejectedTimelineEvents(
 		if !allowed {
 			continue
 		}
-		entries, known, serr := stateBeforeForAuth(ctx, updater, roomState, ev.PDU)
+		entries, known, serr := stateBeforeForAuth(ctx, updater, roomState, ev.PDU, authEvents)
 		if serr != nil {
 			return nil, serr
 		}
 		if !known {
 			continue
-		}
-		if entries, serr = roomState.ResolveDuplicateKeys(ctx, append(entries, cited...)); serr != nil {
-			return nil, fmt.Errorf("roomState.ResolveDuplicateKeys: %w", serr)
 		}
 		if allowed, aerr = r.allowedByState(ctx, updater, roomInfo, ev.PDU, entries); aerr != nil {
 			return nil, aerr

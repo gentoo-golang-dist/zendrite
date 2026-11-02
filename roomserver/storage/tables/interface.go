@@ -94,6 +94,19 @@ type AuthTypeEvent struct {
 	EventJSON        []byte
 }
 
+// RejectedRecheck holds the progress of the one-off recheck of rejected
+// events, room by room.
+type RejectedRecheck interface {
+	// SelectRejectedRecheckCursor returns the room NID the recheck has
+	// checked rooms up to, and false if it is not pending.
+	SelectRejectedRecheckCursor(ctx context.Context, txn *sql.Tx) (afterRoomNID types.RoomNID, pending bool, err error)
+	UpdateRejectedRecheckCursor(ctx context.Context, txn *sql.Tx, afterRoomNID types.RoomNID) error
+	DeleteRejectedRecheck(ctx context.Context, txn *sql.Tx) error
+	// SelectRoomsWithRejectedEventsAfter returns up to limit rooms after
+	// afterRoomNID that hold rejected events with state, in NID order.
+	SelectRoomsWithRejectedEventsAfter(ctx context.Context, txn *sql.Tx, afterRoomNID types.RoomNID, limit int) ([]types.RoomNID, error)
+}
+
 // StateKeyRepair holds the progress of the one-off repair of state events
 // stored under the wrong state key NID. It has a row while the repair is
 // pending.

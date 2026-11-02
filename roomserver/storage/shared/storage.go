@@ -63,7 +63,9 @@ type Database struct {
 	// StateKeyRepairTable tracks the one-off repair of state events stored
 	// under the wrong state key NID.
 	StateKeyRepairTable tables.StateKeyRepair
-	GetRoomUpdaterFn    func(ctx context.Context, roomInfo *types.RoomInfo) (*RoomUpdater, error)
+	// RejectedRecheckTable tracks the one-off recheck of rejected events.
+	RejectedRecheckTable tables.RejectedRecheck
+	GetRoomUpdaterFn     func(ctx context.Context, roomInfo *types.RoomInfo) (*RoomUpdater, error)
 }
 
 // EventDatabase contains all tables needed to work with events.

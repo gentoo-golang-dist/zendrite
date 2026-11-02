@@ -233,11 +233,13 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 	}
 
 	// Store state events that were stored under the wrong state key under
-	// their own key first, since the next repair reads the current state.
-	// Then repair rooms whose partial state resync finished before resyncs
+	// their own key first, since the next repairs read the current state.
+	// Then check the rejected events again against the repaired state, and
+	// repair rooms whose partial state resync finished before resyncs
 	// repaired the forward extremities themselves.
 	r.ProcessContext.Go(func() {
 		r.RepairStateKeys(r.ProcessContext.Context())
+		r.RecheckRejectedEvents(r.ProcessContext.Context())
 		r.RepairResyncedRooms(r.ProcessContext.Context())
 	})
 
