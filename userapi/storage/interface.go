@@ -198,6 +198,16 @@ type Notification interface {
 	DeleteOldNotifications(ctx context.Context) error
 }
 
+// Rendezvous stores the rendezvous sessions of QR code login.
+type Rendezvous interface {
+	CreateRendezvousSession(ctx context.Context, session *api.RendezvousSession, maxAnonymous, maxPerUser int) error
+	GetRendezvousSession(ctx context.Context, id string, kind api.RendezvousKind, now spec.Timestamp) (*api.RendezvousSession, error)
+	GetRendezvousTxn(ctx context.Context, id string, kind api.RendezvousKind, txnID string, now spec.Timestamp) (int64, bool, error)
+	WriteRendezvousSession(ctx context.Context, write *api.RendezvousWrite) (*api.RendezvousSession, error)
+	DeleteRendezvousSession(ctx context.Context, id string, kind api.RendezvousKind, now spec.Timestamp) (bool, error)
+	PurgeRendezvousSessions(ctx context.Context, now spec.Timestamp) error
+}
+
 type DehydratedDevice interface {
 	StoreDehydratedDevice(ctx context.Context, userID, deviceID string, deviceData json.RawMessage) error
 	GetDehydratedDevice(ctx context.Context, userID string) (deviceID string, deviceData json.RawMessage, err error)
@@ -227,6 +237,7 @@ type UserDatabase interface {
 	OpenID
 	Profile
 	Pusher
+	Rendezvous
 	Statistics
 	ThreePID
 	ThreadSubscriptions

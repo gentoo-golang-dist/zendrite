@@ -277,6 +277,7 @@ The explicit configurable list mirrors the implemented cases in `setup/mscs/mscs
 | `org.matrix.msc2444`, `org.matrix.msc2753`, `org.matrix.msc2836`, `org.matrix.msc3814` | Only when the respective implemented MSC is configured. | Federation peeking, client peeking, experimental relations, and dehydrated-device modules respectively. |
 | `org.matrix.msc3861` | Only when MSC3861 is enabled. | Delegated authentication routes and token introspection. |
 | `org.matrix.msc2965`, `org.matrix.msc2967` | Implied by MSC3861, never enabled by listing those names alone. | Authentication metadata and OAuth scope integration. |
+| `org.matrix.msc4108` | With MSC3861, unless `mscs.rendezvous.msc4108_enabled` is false. | The 2024 MSC4108 rendezvous API for QR code login in `clientapi/routing/rendezvous.go`, which Element X checks this flag for. The MSC4388 rendezvous API has no flag; clients discover it with `GET /io.element.msc4388/rendezvous`. |
 
 These retained flags describe existing feature implementations, not an exhaustive certification of every proposal revision.
 MSC4115 membership annotation is already applied in sync; listing `msc4115` does not activate a separate implementation and no longer synthesizes an `org.matrix.msc4115` flag.

@@ -43,6 +43,7 @@ type Database struct {
 	Profiles              tables.ProfileTable
 	ProfileFields         tables.ProfileFieldsTable
 	DelayedEvents         tables.DelayedEventsTable
+	Rendezvous            tables.RendezvousTable
 	AccountDatas          tables.AccountDataTable
 	ThreePIDs             tables.ThreePIDTable
 	ExternalIDs           tables.ExternalIDsTable

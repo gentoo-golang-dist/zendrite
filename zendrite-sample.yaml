@@ -535,6 +535,24 @@ mscs:
   #     tokens; the browser-binding cookie does not prevent that, because the
   #     victim's own browser runs the flow and holds the cookie.
 
+  # Rendezvous sessions for QR code login (MSC4108). Only available with
+  # msc3861, where both APIs are on by default.
+  # rendezvous:
+  #   msc4388_mode: authenticated  # MSC4388 API: "authenticated" (only users
+  #     with an access token create sessions), "open" (anyone can) or "off"
+  #   msc4108_enabled: true  # the 2024 MSC4108 API that Element X uses; its
+  #     clients create sessions without an access token
+  #   session_lifetime: 3m  # between 2m and 5m
+  #   max_sessions: 1000  # active sessions created without an access token
+  #   rate_limiting:  # every rendezvous request, per address
+  #     enabled: true
+  #     threshold: 20
+  #     cooloff_ms: 4000
+  #   create_rate_limiting:  # session creation, per address or device
+  #     enabled: true
+  #     threshold: 5
+  #     cooloff_ms: 60000
+
 # Configuration for the Sync API.
 sync_api:
   # This option controls which HTTP header to inspect to find the real remote IP

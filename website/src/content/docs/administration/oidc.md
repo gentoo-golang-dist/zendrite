@@ -143,6 +143,7 @@ Responses are cached for 15 minutes, and a stale copy is served if the provider 
 
 Clients with native OIDC support, such as Element X, use the metadata above and talk to the provider directly.
 Nothing else is required for them.
+They can also sign in a new device by scanning a QR code, through the rendezvous sessions described under [QR code login](/mscs/#qr-code-login), which are on by default.
 
 Clients without it, such as current Element Web and Element Desktop, use the legacy SSO compatibility layer that Zendrite provides:
 

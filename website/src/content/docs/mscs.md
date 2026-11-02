@@ -376,6 +376,58 @@ An `as_token` without `user_id` then acts as the sender, as it does without dele
 | [MSC3861](https://github.com/matrix-org/matrix-spec-proposals/pull/3861) | Next-gen auth (OIDC) | 1.15 | Opt-in (`msc3861`) |
 | [MSC4312](https://github.com/matrix-org/matrix-spec-proposals/pull/4312) | `m.oauth` user-interactive authentication | 1.17 | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): replacing cross-signing keys asks for confirmation through the provider's account management page |
 | [MSC4191](https://github.com/matrix-org/matrix-spec-proposals/pull/4191), [MSC3824](https://github.com/matrix-org/matrix-spec-proposals/pull/3824), [MSC4341](https://github.com/matrix-org/matrix-spec-proposals/pull/4341) | OAuth 2.0 account management, OAuth-aware clients, device authorization grant | 1.18 | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): `/auth_metadata` passes on the provider's account management URL, actions and grant types, and `GET /login` marks SSO as `oauth_aware_preferred` |
+| [MSC4108](https://github.com/matrix-org/matrix-spec-proposals/pull/4108), [MSC4388](https://github.com/matrix-org/matrix-spec-proposals/pull/4388) | QR code login and its rendezvous sessions | N/A | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): the MSC4388 rendezvous API and the 2024 MSC4108 rendezvous API that Element X still uses. See [QR code login](#qr-code-login) |
+
+### QR code login
+
+[MSC4108](https://github.com/matrix-org/matrix-spec-proposals/pull/4108) signs in a new device by scanning a QR code shown on a device that is already signed in, or the other way round.
+The two devices exchange messages through a rendezvous session on the homeserver, encrypted end to end, and the new device then signs in with the OAuth 2.0 device authorization grant of [MSC3861](#msc3861-oidc-delegated-authentication).
+Zendrite only provides the rendezvous sessions; the provider handles the sign-in.
+Both rendezvous APIs below are on by default when MSC3861 is enabled, and unavailable without it.
+
+The current MSC4108 text moves the rendezvous session to [MSC4388](https://github.com/matrix-org/matrix-spec-proposals/pull/4388), served under `/_matrix/client/unstable/io.element.msc4388/rendezvous`:
+
+- `GET /rendezvous` reports `create_available`: whether the requester may create a session.
+- `POST /rendezvous` creates a session with an initial `data` payload and returns its `id`, `sequence_token` and `expires_in_ms`.
+- `GET /rendezvous/{id}` returns the payload, its `sequence_token` and `expires_in_ms`, without an access token.
+  A request that a browser makes to navigate to the URL (`Sec-Fetch-Dest` other than `empty`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-User: ?1` or `Sec-Fetch-Site: none`) is refused with 403 `M_FORBIDDEN`, so a session cannot serve content to someone who opens its link.
+- `PUT /rendezvous/{id}/{txnId}` replaces the payload if `sequence_token` is still the current one, and otherwise fails with 409 `IO_ELEMENT_MSC4388_CONCURRENT_WRITE`.
+  The `sequence_token` of a successful write is recorded against its transaction ID for the session's lifetime: a retry with that transaction ID gets the same answer and writes nothing, whatever its body.
+  A session remembers its last 100 transaction IDs.
+- `DELETE /rendezvous/{id}` ends a session.
+
+Payloads are limited to 4096 bytes (413 `M_TOO_LARGE`), and sequence tokens count the writes of a session, starting at `1`.
+Only users with an access token can create MSC4388 sessions by default; guests cannot.
+`msc4388_mode: open` lets anyone create them, which allows a new device that has not chosen its homeserver yet to use this one.
+Even then, a request with an invalid access token fails with 401, as MSC4388 requires.
+
+Current Element X and matrix-rust-sdk releases still create their sessions through the 2024 version of MSC4108, under `/_matrix/client/unstable/org.matrix.msc4108/rendezvous`, and Element X only offers QR code login when `/versions` advertises `org.matrix.msc4108`.
+Zendrite serves it alongside MSC4388, as Synapse does.
+`POST` creates a session from a `text/plain` body and returns its `url`; `GET`, `PUT` and `DELETE` on that URL read, replace and end it, with the `ETag` as the sequence (`If-None-Match` for 304, `If-Match` for the compare-and-swap, 412 on a stale ETag).
+Its clients create sessions without an access token, so this API is always open; turn it off with `msc4108_enabled: false`.
+The session URL is built from `mscs.msc3861.public_base_url`, else `global.well_known_client_name`, else the request's host.
+MSC4388 has no `/versions` flag; clients discover it through `GET /rendezvous`.
+
+Sessions are stored in the user API database, so every replica of an HA deployment serves them, and a write is a compare-and-swap on the database row.
+They expire `session_lifetime` (default three minutes, between two and five allowed) after their creation, and expired sessions are deleted every five minutes.
+At most `max_sessions` (default 1000) sessions created without an access token, or by guest and suspended accounts in open mode, may be active at once; further such creations get 429.
+Other users do not count towards it, so anonymous callers cannot lock them out of QR code login; each of them may have ten active sessions instead.
+Every rendezvous request is rate limited per address by `rate_limiting` (default a burst of 20, then five per second), before any access token is checked.
+Creation is additionally limited by `create_rate_limiting` (default five per minute), per device for requests with an access token and per address otherwise.
+Both devices poll the session about once a second, possibly from the same address.
+
+```yaml
+mscs:
+  mscs:
+    - msc3861
+  rendezvous:
+    # off, authenticated (default) or open
+    msc4388_mode: authenticated
+    msc4108_enabled: true
+    session_lifetime: 3m
+    # active sessions created without an access token
+    max_sessions: 1000
+```
 
 ## VoIP
 

@@ -52,6 +52,7 @@ func TestVersions(t *testing.T) {
 		mscs     []string
 		rtcFoci  []config.RTCFocus
 		maxDelay time.Duration
+		msc4108  *bool
 		features map[string]bool
 	}{
 		{name: "defaults"},
@@ -68,6 +69,17 @@ func TestVersions(t *testing.T) {
 		{
 			name: "OIDC implies discovery and scopes",
 			mscs: []string{"msc3861"},
+			features: map[string]bool{
+				"org.matrix.msc3861": true,
+				"org.matrix.msc2965": true,
+				"org.matrix.msc2967": true,
+				"org.matrix.msc4108": true,
+			},
+		},
+		{
+			name:    "OIDC with the MSC4108 rendezvous API turned off",
+			mscs:    []string{"msc3861"},
+			msc4108: new(false),
 			features: map[string]bool{
 				"org.matrix.msc3861": true,
 				"org.matrix.msc2965": true,
@@ -105,6 +117,7 @@ func TestVersions(t *testing.T) {
 			cfg.MSCs.MSCs = tc.mscs
 			cfg.Global.RTCFoci = tc.rtcFoci
 			cfg.ClientAPI.DelayedEvents.MaxDelay = tc.maxDelay
+			cfg.MSCs.Rendezvous.MSC4108Enabled = tc.msc4108
 			// Values without the MSC enabled must not activate OIDC discovery.
 			cfg.MSCs.MSC3861.Issuer = "https://auth.example.com"
 			routers := httputil.NewRouters()

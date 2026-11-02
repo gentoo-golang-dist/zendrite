@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -102,6 +103,9 @@ func (l *RateLimits) Limit(req *http.Request, device *userapi.Device) *util.JSON
 	} else {
 		if forwardedFor := req.Header.Get("X-Forwarded-For"); forwardedFor != "" {
 			caller = forwardedFor
+		} else if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+			// Without the port, so that new connections share a limit.
+			caller = host
 		} else {
 			caller = req.RemoteAddr
 		}

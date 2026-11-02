@@ -132,6 +132,12 @@ func Setup(
 		unstableFeatures["org.matrix.msc2965"] = true
 		unstableFeatures["org.matrix.msc2967"] = true
 	}
+	// MSC4108: QR code login through the 2024 rendezvous API. Element X only
+	// offers QR code login when this is advertised. MSC4388 has no flag:
+	// clients discover it with GET /io.element.msc4388/rendezvous.
+	if mscCfg.MSC4108Enabled() {
+		unstableFeatures["org.matrix.msc4108"] = true
+	}
 
 	// singleflight protects /join endpoints from being invoked
 	// multiple times from the same user and room, otherwise
@@ -473,6 +479,13 @@ func Setup(
 		Methods(http.MethodGet, http.MethodPut, http.MethodOptions)
 
 	unstableMux := publicAPIMux.PathPrefix("/unstable").Subrouter()
+
+	// QR code login (MSC4108): rendezvous sessions over MSC4388 and the 2024
+	// MSC4108 API. Both need MSC3861.
+	newRendezvous(mscCfg, cfg, userAPI,
+		httputil.NewRateLimits(&mscCfg.Rendezvous.RateLimiting, ctx),
+		httputil.NewRateLimits(&mscCfg.Rendezvous.CreateRateLimiting, ctx),
+	).register(unstableMux)
 
 	// MSC4140: delayed events. Scheduling goes through the send and state
 	// endpoints below; these manage and look up scheduled events.

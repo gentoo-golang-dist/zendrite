@@ -59,9 +59,10 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // reports (MSC4151), level 14 flags resynced rooms for forward extremity
 // repair, level 15 stores user reports (MSC4260), level 16 adds the profile
 // updates stream (MSC4262), level 17 schedules the repair of state events
-// stored under the wrong state key, and level 18 stores thread subscriptions
-// (MSC4306).
-const releaseLevel = 18
+// stored under the wrong state key, level 18 stores thread subscriptions
+// (MSC4306), and level 19 stores the rendezvous sessions of QR code login
+// (MSC4108, MSC4388).
+const releaseLevel = 19
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades

@@ -126,6 +126,35 @@ type ProfileFieldsTable interface {
 	DeleteProfileFields(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName) error
 }
 
+// RendezvousTable stores the rendezvous sessions of QR code login
+// (MSC4108 over MSC4388) and the transaction IDs of their successful writes.
+// Every query ignores sessions that expired at now.
+type RendezvousTable interface {
+	InsertRendezvousSession(ctx context.Context, txn *sql.Tx, session *api.RendezvousSession) error
+	// CountActiveRendezvousSessions counts unexpired anonymous sessions.
+	CountActiveRendezvousSessions(ctx context.Context, txn *sql.Tx, now spec.Timestamp) (int, error)
+	// CountActiveUserRendezvousSessions counts a user's unexpired sessions
+	// that are not anonymous.
+	CountActiveUserRendezvousSessions(ctx context.Context, txn *sql.Tx, userID string, now spec.Timestamp) (int, error)
+	// SelectRendezvousSession returns nil if there is no such session.
+	SelectRendezvousSession(ctx context.Context, txn *sql.Tx, id string, kind api.RendezvousKind, now spec.Timestamp) (*api.RendezvousSession, error)
+	// UpdateRendezvousSession replaces the payload if the session's sequence
+	// is still expectedSequence, and returns the session as written, without
+	// its data, or nil if it did not write.
+	UpdateRendezvousSession(ctx context.Context, txn *sql.Tx, id string, kind api.RendezvousKind, expectedSequence int64, data []byte, contentType string, now spec.Timestamp) (*api.RendezvousSession, error)
+	// DeleteRendezvousSession deletes a session and its transaction IDs, and
+	// reports whether the session was there and unexpired.
+	DeleteRendezvousSession(ctx context.Context, txn *sql.Tx, id string, kind api.RendezvousKind, now spec.Timestamp) (bool, error)
+	SelectRendezvousTxn(ctx context.Context, txn *sql.Tx, id, txnID string) (int64, bool, error)
+	InsertRendezvousTxn(ctx context.Context, txn *sql.Tx, id, txnID string, sequence int64, expires spec.Timestamp) error
+	// DeleteRendezvousTxnsUpTo forgets the transaction IDs of a session that
+	// recorded a sequence up to and including the given one.
+	DeleteRendezvousTxnsUpTo(ctx context.Context, txn *sql.Tx, id string, sequence int64) error
+	// DeleteExpiredRendezvousSessions deletes the sessions and transaction
+	// IDs that expired at now.
+	DeleteExpiredRendezvousSessions(ctx context.Context, txn *sql.Tx, now spec.Timestamp) error
+}
+
 // DelayedEventsTable stores MSC4140 delayed events and, for a while, the
 // outcome of finalized ones.
 type DelayedEventsTable interface {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -23,6 +24,70 @@ type MSCs struct {
 
 	// MSC3861 configuration for OIDC delegated authentication.
 	MSC3861 MSC3861Config `yaml:"msc3861"`
+
+	// Rendezvous configures the rendezvous sessions that QR code login
+	// (MSC4108) runs over. It needs MSC3861.
+	Rendezvous Rendezvous `yaml:"rendezvous"`
+}
+
+// Rendezvous modes for MSC4388.
+const (
+	RendezvousModeOff           = "off"
+	RendezvousModeAuthenticated = "authenticated"
+	RendezvousModeOpen          = "open"
+)
+
+// Rendezvous configures the rendezvous sessions of QR code login: the
+// MSC4388 API, which current MSC4108 builds on, and the 2024 MSC4108 API
+// that current Element X and matrix-rust-sdk releases still use. Both are on
+// by default when MSC3861 is enabled, and unavailable otherwise.
+type Rendezvous struct {
+	// MSC4388Mode is "authenticated" (default with MSC3861): only users with
+	// an access token create sessions; "open": anyone can, which lets a new
+	// device that has not chosen a homeserver yet use this one; or "off".
+	MSC4388Mode string `yaml:"msc4388_mode"`
+
+	// MSC4108Enabled turns the 2024 MSC4108 API on or off. Its clients create
+	// sessions without an access token, so it is always open. It defaults to
+	// true with MSC3861, as Element X only offers QR code login when /versions
+	// advertises org.matrix.msc4108.
+	MSC4108Enabled *bool `yaml:"msc4108_enabled"`
+
+	// SessionLifetime is how long a session lives after its creation. MSC4388
+	// asks for 2 to 5 minutes.
+	SessionLifetime time.Duration `yaml:"session_lifetime"`
+
+	// MaxSessions limits the unexpired sessions created without an access
+	// token, or by guest and suspended accounts, across the deployment.
+	// Further such sessions are refused with 429 while the limit is reached.
+	// Other users do not count towards it and have a limit of 10 sessions
+	// each instead, so anonymous callers cannot lock signed-in users out.
+	MaxSessions int `yaml:"max_sessions"`
+
+	// RateLimiting limits every rendezvous request per address. Both devices
+	// poll the session about once a second and may share an address.
+	RateLimiting RateLimiting `yaml:"rate_limiting"`
+
+	// CreateRateLimiting additionally limits session creation, per device
+	// for requests with an access token and per address otherwise.
+	CreateRateLimiting RateLimiting `yaml:"create_rate_limiting"`
+}
+
+// Defaults for the rendezvous session lifetime and limits.
+const (
+	defaultRendezvousSessionLifetime = 3 * time.Minute
+	minRendezvousSessionLifetime     = 2 * time.Minute
+	maxRendezvousSessionLifetime     = 5 * time.Minute
+	defaultRendezvousMaxSessions     = 1000
+)
+
+func (r *Rendezvous) Defaults() {
+	r.SessionLifetime = defaultRendezvousSessionLifetime
+	r.MaxSessions = defaultRendezvousMaxSessions
+	// A burst of 20 requests, then five per second.
+	r.RateLimiting = RateLimiting{Enabled: true, Threshold: 20, CooloffMS: 4000} //nolint:mnd
+	// Five sessions a minute.
+	r.CreateRateLimiting = RateLimiting{Enabled: true, Threshold: 5, CooloffMS: 60000} //nolint:mnd
 }
 
 // MSC3861Config holds configuration for delegated OIDC authentication via MSC3861.
@@ -168,6 +233,7 @@ func isLocalhostHost(host string) bool {
 }
 
 func (c *MSCs) Defaults(opts DefaultOpts) {
+	c.Rendezvous.Defaults()
 	if opts.Generate {
 		if !opts.SingleDatabase {
 			c.Database.ConnectionString = "file:mscs.db"
@@ -185,10 +251,67 @@ func (c *MSCs) Enabled(msc string) bool {
 	return false
 }
 
+// MSC4388Mode is the effective MSC4388 rendezvous mode: off without MSC3861,
+// and authenticated when MSC3861 is on and no mode is configured.
+func (c *MSCs) MSC4388Mode() string {
+	if !c.Enabled("msc3861") {
+		return RendezvousModeOff
+	}
+	if c.Rendezvous.MSC4388Mode == "" {
+		return RendezvousModeAuthenticated
+	}
+	return c.Rendezvous.MSC4388Mode
+}
+
+// MSC4108Enabled reports whether the 2024 MSC4108 rendezvous API is on: by
+// default whenever MSC3861 is.
+func (c *MSCs) MSC4108Enabled() bool {
+	if !c.Enabled("msc3861") {
+		return false
+	}
+	return c.Rendezvous.MSC4108Enabled == nil || *c.Rendezvous.MSC4108Enabled
+}
+
+func (c *MSCs) verifyRendezvous(configErrs *ConfigErrors) {
+	r := &c.Rendezvous
+	switch r.MSC4388Mode {
+	case "", RendezvousModeOff, RendezvousModeAuthenticated, RendezvousModeOpen:
+	default:
+		configErrs.Add("mscs.rendezvous.msc4388_mode must be 'off', 'authenticated' or 'open'")
+	}
+	if !c.Enabled("msc3861") {
+		// QR code login hands the new device over to the OAuth 2.0 device
+		// authorization grant, which only exists with MSC3861.
+		if r.MSC4388Mode == RendezvousModeAuthenticated || r.MSC4388Mode == RendezvousModeOpen {
+			configErrs.Add("mscs.rendezvous.msc4388_mode needs msc3861 to be enabled")
+		}
+		if r.MSC4108Enabled != nil && *r.MSC4108Enabled {
+			configErrs.Add("mscs.rendezvous.msc4108_enabled needs msc3861 to be enabled")
+		}
+	}
+	if r.SessionLifetime < minRendezvousSessionLifetime || r.SessionLifetime > maxRendezvousSessionLifetime {
+		configErrs.Add(fmt.Sprintf("mscs.rendezvous.session_lifetime must be between %s and %s", minRendezvousSessionLifetime, maxRendezvousSessionLifetime))
+	}
+	if r.MaxSessions < 0 {
+		configErrs.Add("mscs.rendezvous.max_sessions must not be negative")
+	}
+	limits := []struct {
+		name  string
+		limit RateLimiting
+	}{{"rate_limiting", r.RateLimiting}, {"create_rate_limiting", r.CreateRateLimiting}}
+	for _, l := range limits {
+		if l.limit.Enabled {
+			checkPositive(configErrs, "mscs.rendezvous."+l.name+".threshold", l.limit.Threshold)
+			checkPositive(configErrs, "mscs.rendezvous."+l.name+".cooloff_ms", l.limit.CooloffMS)
+		}
+	}
+}
+
 func (c *MSCs) Verify(configErrs *ConfigErrors) {
 	if c.Matrix.DatabaseOptions.ConnectionString == "" {
 		checkNotEmpty(configErrs, "mscs.database.connection_string", string(c.Database.ConnectionString))
 	}
+	c.verifyRendezvous(configErrs)
 	if c.Enabled("msc3861") {
 		checkNotEmpty(configErrs, "mscs.msc3861.issuer", c.MSC3861.Issuer)
 		checkNotEmpty(configErrs, "mscs.msc3861.client_id", c.MSC3861.ClientID)

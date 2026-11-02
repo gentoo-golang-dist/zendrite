@@ -180,12 +180,24 @@ func NewInternalAPI(
 		process.Repeat(processContext.Context(), time.Minute, callGuestSweepInterval, sweepCallGuests)
 	}
 
+	// Rendezvous sessions of QR code login expire within minutes. Expired
+	// sessions are already invisible; this only reclaims their rows.
+	purgeRendezvous := func() {
+		if purgeErr := db.PurgeRendezvousSessions(processContext.Context(), spec.AsTimestamp(time.Now())); purgeErr != nil {
+			logrus.WithError(purgeErr).Error("Failed to purge expired rendezvous sessions")
+		}
+	}
+	process.Repeat(processContext.Context(), time.Minute, rendezvousPurgeInterval, purgeRendezvous)
+
 	if zendriteCfg.Global.ReportStats.Enabled {
 		util.StartPhoneHomeCollector(processContext.Context(), time.Now(), zendriteCfg, db)
 	}
 
 	return userAPI
 }
+
+// rendezvousPurgeInterval is how often expired rendezvous sessions are deleted.
+const rendezvousPurgeInterval = 5 * time.Minute
 
 // callGuestSweepInterval is how often expired call guests are deactivated.
 const callGuestSweepInterval = 10 * time.Minute

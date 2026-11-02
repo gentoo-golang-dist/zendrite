@@ -498,6 +498,19 @@ column userapi_registration_tokens | expiry_time | bigint | YES |
 column userapi_registration_tokens | pending | bigint | YES |
 column userapi_registration_tokens | token | text | NO |
 column userapi_registration_tokens | uses_allowed | bigint | YES |
+column userapi_rendezvous_sessions | anonymous | boolean | NO |
+column userapi_rendezvous_sessions | content_type | text | NO |
+column userapi_rendezvous_sessions | data | bytea | NO |
+column userapi_rendezvous_sessions | expires_ts | bigint | NO |
+column userapi_rendezvous_sessions | kind | text | NO |
+column userapi_rendezvous_sessions | last_modified_ts | bigint | NO |
+column userapi_rendezvous_sessions | sequence | bigint | NO |
+column userapi_rendezvous_sessions | session_id | text | NO |
+column userapi_rendezvous_sessions | user_id | text | NO |
+column userapi_rendezvous_txns | expires_ts | bigint | NO |
+column userapi_rendezvous_txns | sequence | bigint | NO |
+column userapi_rendezvous_txns | session_id | text | NO |
+column userapi_rendezvous_txns | txn_id | text | NO |
 column userapi_thread_subscriptions | automatic | boolean | NO |
 column userapi_thread_subscriptions | localpart | text | NO |
 column userapi_thread_subscriptions | room_id | text | NO |
@@ -719,6 +732,11 @@ index userapi_pushers | userapi_pusher_app_id_pushkey_localpart_idx | CREATE UNI
 index userapi_pushers | userapi_pusher_localpart_idx | CREATE INDEX userapi_pusher_localpart_idx ON public.userapi_pushers USING btree (localpart, server_name)
 index userapi_pushers | userapi_pushers_pkey | CREATE UNIQUE INDEX userapi_pushers_pkey ON public.userapi_pushers USING btree (id)
 index userapi_registration_tokens | userapi_registration_tokens_pkey | CREATE UNIQUE INDEX userapi_registration_tokens_pkey ON public.userapi_registration_tokens USING btree (token)
+index userapi_rendezvous_sessions | userapi_rendezvous_sessions_expires_idx | CREATE INDEX userapi_rendezvous_sessions_expires_idx ON public.userapi_rendezvous_sessions USING btree (expires_ts)
+index userapi_rendezvous_sessions | userapi_rendezvous_sessions_pkey | CREATE UNIQUE INDEX userapi_rendezvous_sessions_pkey ON public.userapi_rendezvous_sessions USING btree (session_id)
+index userapi_rendezvous_sessions | userapi_rendezvous_sessions_user_idx | CREATE INDEX userapi_rendezvous_sessions_user_idx ON public.userapi_rendezvous_sessions USING btree (user_id, expires_ts)
+index userapi_rendezvous_txns | userapi_rendezvous_txns_expires_idx | CREATE INDEX userapi_rendezvous_txns_expires_idx ON public.userapi_rendezvous_txns USING btree (expires_ts)
+index userapi_rendezvous_txns | userapi_rendezvous_txns_pkey | CREATE UNIQUE INDEX userapi_rendezvous_txns_pkey ON public.userapi_rendezvous_txns USING btree (session_id, txn_id)
 index userapi_thread_subscriptions | userapi_thread_subscriptions_pkey | CREATE UNIQUE INDEX userapi_thread_subscriptions_pkey ON public.userapi_thread_subscriptions USING btree (localpart, server_name, room_id, thread_root_id)
 index userapi_thread_subscriptions | userapi_thread_subscriptions_stream_idx | CREATE INDEX userapi_thread_subscriptions_stream_idx ON public.userapi_thread_subscriptions USING btree (localpart, server_name, stream_id)
 index userapi_thread_subscriptions | userapi_thread_subscriptions_thread_idx | CREATE INDEX userapi_thread_subscriptions_thread_idx ON public.userapi_thread_subscriptions USING btree (room_id, thread_root_id) WHERE subscribed
@@ -1281,6 +1299,21 @@ constraint userapi_pushers | userapi_pushers_pushkey_ts_ms_not_null | NOT NULL p
 constraint userapi_pushers | userapi_pushers_server_name_not_null | NOT NULL server_name
 constraint userapi_registration_tokens | userapi_registration_tokens_pkey | PRIMARY KEY (token)
 constraint userapi_registration_tokens | userapi_registration_tokens_token_not_null | NOT NULL token
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_anonymous_not_null | NOT NULL anonymous
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_content_type_not_null | NOT NULL content_type
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_data_not_null | NOT NULL data
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_expires_ts_not_null | NOT NULL expires_ts
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_kind_not_null | NOT NULL kind
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_last_modified_ts_not_null | NOT NULL last_modified_ts
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_pkey | PRIMARY KEY (session_id)
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_sequence_not_null | NOT NULL sequence
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_session_id_not_null | NOT NULL session_id
+constraint userapi_rendezvous_sessions | userapi_rendezvous_sessions_user_id_not_null | NOT NULL user_id
+constraint userapi_rendezvous_txns | userapi_rendezvous_txns_expires_ts_not_null | NOT NULL expires_ts
+constraint userapi_rendezvous_txns | userapi_rendezvous_txns_pkey | PRIMARY KEY (session_id, txn_id)
+constraint userapi_rendezvous_txns | userapi_rendezvous_txns_sequence_not_null | NOT NULL sequence
+constraint userapi_rendezvous_txns | userapi_rendezvous_txns_session_id_not_null | NOT NULL session_id
+constraint userapi_rendezvous_txns | userapi_rendezvous_txns_txn_id_not_null | NOT NULL txn_id
 constraint userapi_thread_subscriptions | userapi_thread_subscriptions_automatic_not_null | NOT NULL automatic
 constraint userapi_thread_subscriptions | userapi_thread_subscriptions_localpart_not_null | NOT NULL localpart
 constraint userapi_thread_subscriptions | userapi_thread_subscriptions_pkey | PRIMARY KEY (localpart, server_name, room_id, thread_root_id)

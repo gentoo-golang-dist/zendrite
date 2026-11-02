@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -282,5 +283,68 @@ func TestMSCs_Enabled(t *testing.T) {
 	}
 	if mscs.Enabled("msc9999") {
 		t.Error("expected msc9999 to not be enabled")
+	}
+}
+
+func TestRendezvousConfig(t *testing.T) {
+	t.Parallel()
+	newMSCs := func(mscs ...string) *MSCs {
+		c := &MSCs{Matrix: &Global{}, MSCs: mscs, Database: DatabaseOptions{ConnectionString: "file:mscs.db"}}
+		c.Defaults(DefaultOpts{})
+		return c
+	}
+	rendezvousErrors := func(c *MSCs) []string {
+		configErrs := &ConfigErrors{}
+		c.Verify(configErrs)
+		var errs []string
+		for _, err := range *configErrs {
+			if strings.Contains(err, "mscs.rendezvous") {
+				errs = append(errs, err)
+			}
+		}
+		return errs
+	}
+
+	// Off without MSC3861, authenticated and with MSC4108 by default with it.
+	c := newMSCs()
+	if c.MSC4388Mode() != RendezvousModeOff || c.MSC4108Enabled() {
+		t.Errorf("without msc3861: mode %q, msc4108 %v", c.MSC4388Mode(), c.MSC4108Enabled())
+	}
+	if errs := rendezvousErrors(c); len(errs) != 0 {
+		t.Errorf("defaults without msc3861: %v", errs)
+	}
+	c = newMSCs("msc3861")
+	if c.MSC4388Mode() != RendezvousModeAuthenticated || !c.MSC4108Enabled() {
+		t.Errorf("with msc3861: mode %q, msc4108 %v", c.MSC4388Mode(), c.MSC4108Enabled())
+	}
+	if errs := rendezvousErrors(c); len(errs) != 0 {
+		t.Errorf("defaults with msc3861: %v", errs)
+	}
+	c.Rendezvous.MSC4388Mode = RendezvousModeOpen
+	c.Rendezvous.MSC4108Enabled = new(false)
+	if c.MSC4388Mode() != RendezvousModeOpen || c.MSC4108Enabled() {
+		t.Errorf("configured: mode %q, msc4108 %v", c.MSC4388Mode(), c.MSC4108Enabled())
+	}
+
+	// Enabling either API needs MSC3861; turning them off does not.
+	c = newMSCs()
+	c.Rendezvous.MSC4388Mode = RendezvousModeOff
+	c.Rendezvous.MSC4108Enabled = new(false)
+	if errs := rendezvousErrors(c); len(errs) != 0 {
+		t.Errorf("turned off without msc3861: %v", errs)
+	}
+	c.Rendezvous.MSC4388Mode = RendezvousModeAuthenticated
+	c.Rendezvous.MSC4108Enabled = new(true)
+	if errs := rendezvousErrors(c); len(errs) != 2 {
+		t.Errorf("enabled without msc3861: %v", errs)
+	}
+
+	c = newMSCs("msc3861")
+	c.Rendezvous.MSC4388Mode = "sometimes"
+	c.Rendezvous.SessionLifetime = time.Minute
+	c.Rendezvous.MaxSessions = -1
+	c.Rendezvous.CreateRateLimiting.Threshold = -1
+	if errs := rendezvousErrors(c); len(errs) != 4 {
+		t.Errorf("invalid values: %v", errs)
 	}
 }
