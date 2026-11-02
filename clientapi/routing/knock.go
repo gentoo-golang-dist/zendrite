@@ -75,6 +75,9 @@ func KnockRoomByIDOrAlias(
 	}
 
 	roomID, err := rsAPI.PerformKnock(req.Context(), &knockReq)
+	if res, ok := roomserverAPI.PolicyServerRejection(err); ok {
+		return res
+	}
 	var errInvalidID roomserverAPI.ErrInvalidID
 	var errNotAllowed roomserverAPI.ErrNotAllowed
 	var errHTTP *gomatrix.HTTPError

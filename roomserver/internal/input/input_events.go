@@ -559,6 +559,47 @@ func (r *Inputer) processRoomEvent(
 		}
 	}
 
+	// Have the room's policy server check the event (MSC4284). A local event
+	// it refuses, or that cannot be checked, is neither stored nor sent, and
+	// the client is told why. Such a remote event is soft failed.
+	// Local events that are not sent to other servers are not checked.
+	isLocal := sender != nil && r.Cfg.Matrix.IsLocalServerName(sender.Domain()) &&
+		(input.Origin == "" || r.Cfg.Matrix.IsLocalServerName(input.Origin))
+	if input.Kind == api.KindNew && roomInfo != nil && !isCreateEvent && !isRejected && !softfail &&
+		!isPartialState && !input.SkipEventAuth && (!isLocal || input.SendAsServer != api.DoNotSendToOtherServers) {
+		signed, policyErr := r.checkPolicyServer(ctx, roomInfo, event)
+		var refusal *fedapi.PolicyServerRefusal
+		switch {
+		case policyErr == nil:
+			event = signed
+			headered.PDU = signed
+		case !errors.As(policyErr, &refusal) && !errors.Is(policyErr, errPolicyServerUnavailable):
+			return fmt.Errorf("r.checkPolicyServer: %w", policyErr)
+		default:
+			reason := api.PolicyServerUnavailableReason()
+			if refusal != nil {
+				reason = api.PolicyServerRefusedReason(refusal.ErrCode, refusal.Message)
+			}
+			switch {
+			case isLocal && isBareSelfLeave(event):
+				// Failing closed must not trap users in a room: their own
+				// leave, invite rejection or knock withdrawal is sent
+				// without the signature if it carries nothing but the
+				// membership. Other servers may soft fail it.
+				logger.WithError(policyErr).Warn("Sending a local leave the room's policy server did not sign")
+			case isLocal:
+				logger.WithError(policyErr).Warn("The room's policy server did not sign a local event")
+				return types.RejectedError(reason)
+			default:
+				// Synchronous callers, such as send_join, answer with the
+				// reason.
+				logger.WithError(policyErr).Info("Soft failing an event the room's policy server did not sign")
+				softfail = true
+				rejectionErr = errors.New(reason)
+			}
+		}
+	}
+
 	if roomInfo == nil {
 		roomInfo, err = r.DB.GetOrCreateRoomInfo(ctx, event)
 		if err != nil {

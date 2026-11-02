@@ -90,6 +90,9 @@ type Inputer struct {
 	// This prevents a broken room from burning CPU and memory on every incoming
 	// transaction by repeatedly loading and discarding thousands of state events.
 	missingStateCooldown sync.Map // room ID (string) -> time.Time
+
+	// policyServerCache remembers policy server answers per event (MSC4284).
+	policyServerCache policyServerCache
 }
 
 // missingStateCooldownDuration is how long we skip expensive federation state

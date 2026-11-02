@@ -91,6 +91,9 @@ func JoinRoomByIDOrAlias(
 
 	// Ask the roomserver to perform the join.
 	roomID, _, err := rsAPI.PerformJoin(req.Context(), &joinReq)
+	if res, ok := roomserverAPI.PolicyServerRejection(err); ok {
+		return res
+	}
 	var response util.JSONResponse
 
 	var errInvalidID roomserverAPI.ErrInvalidID

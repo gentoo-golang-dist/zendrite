@@ -365,6 +365,9 @@ func SendLeave(
 	}, &response)
 
 	if response.ErrMsg != "" {
+		if res, ok := api.PolicyServerRejection(errors.New(response.ErrMsg)); ok {
+			return res
+		}
 		util.GetLogger(httpReq.Context()).WithField(logrus.ErrorKey, response.ErrMsg).WithField("not_allowed", response.NotAllowed).Error("producer.SendEvents failed")
 		if response.NotAllowed {
 			return util.JSONResponse{

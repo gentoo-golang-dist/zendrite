@@ -60,6 +60,9 @@ func LeaveRoomByID(
 
 	// Ask the roomserver to perform the leave.
 	if err := rsAPI.PerformLeave(req.Context(), &leaveReq, &leaveRes); err != nil {
+		if res, ok := roomserverAPI.PolicyServerRejection(err); ok {
+			return res
+		}
 		if leaveRes.Code != 0 {
 			return util.JSONResponse{
 				Code: leaveRes.Code,

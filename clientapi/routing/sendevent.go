@@ -293,6 +293,9 @@ func sendEventContent(
 		txnAndSessionID,
 	)
 	if err != nil {
+		if res, ok := api.PolicyServerRejection(err); ok {
+			return "", &res
+		}
 		util.GetLogger(ctx).WithError(err).Error("SendEvents failed")
 		return "", &util.JSONResponse{
 			Code: http.StatusInternalServerError,

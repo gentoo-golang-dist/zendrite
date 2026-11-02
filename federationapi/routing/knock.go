@@ -241,6 +241,9 @@ func SendKnock(
 		}},
 	}, &response)
 	if response.ErrMsg != "" {
+		if res, ok := api.PolicyServerRejection(errors.New(response.ErrMsg)); ok {
+			return res
+		}
 		util.GetLogger(ctx).WithField("not_allowed", response.NotAllowed).WithField("error", response.ErrMsg).Error("failed to input knock event")
 		if response.NotAllowed {
 			return util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden(response.ErrMsg)}

@@ -55,6 +55,11 @@ type RoomserverFederationAPI interface {
 	KeyRing() *gomatrixserverlib.KeyRing
 	// IsServerBackingOff returns true if the server is blacklisted or currently backing off.
 	IsServerBackingOff(serverName spec.ServerName) bool
+	// PolicyServerSign asks a room's policy server to sign an event
+	// (MSC4284) and returns the signatures from its response. A
+	// *PolicyServerRefusal error means the policy server refused; any other
+	// error means it could not be asked.
+	PolicyServerSign(ctx context.Context, origin, policyServer spec.ServerName, event gomatrixserverlib.PDU) (map[string]map[string]spec.Base64Bytes, error)
 
 	// PerformDirectoryLookup looks up a remote room ID from a room alias.
 	PerformDirectoryLookup(ctx context.Context, request *PerformDirectoryLookupRequest, response *PerformDirectoryLookupResponse) error
@@ -273,3 +278,15 @@ type P2PRemoveRelayServersRequest struct {
 }
 
 type P2PRemoveRelayServersResponse struct{}
+
+// PolicyServerRefusal is returned when a policy server refuses to sign an
+// event (MSC4284). ErrCode and Message come from the policy server's error.
+type PolicyServerRefusal struct {
+	StatusCode int
+	ErrCode    string
+	Message    string
+}
+
+func (e *PolicyServerRefusal) Error() string {
+	return fmt.Sprintf("policy server refused the event (%d %s): %s", e.StatusCode, e.ErrCode, e.Message)
+}

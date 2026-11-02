@@ -230,9 +230,34 @@ Previews are cached in memory per URL for `cache_duration` (default `1h`), concu
 | [MSC3938](https://github.com/matrix-org/matrix-spec-proposals/pull/3938) | Remove deprecated `keyId` parameters from `/keys` endpoints | 1.6 | Implemented: `GET /_matrix/key/v2/query/{serverName}` returns all keys of the server. The deprecated forms with a key ID are still served |
 | [MSC2444](https://github.com/matrix-org/matrix-spec-proposals/pull/2444) | Peeking over federation | N/A | Opt-in (`msc2444`) |
 | [MSC4436](https://github.com/matrix-org/matrix-spec-proposals/pull/4436) | Case-insensitive server ACLs | 1.19 | Implemented: `allow` and `deny` globs match the whole server name, ignoring case |
+| [MSC4284](https://github.com/matrix-org/matrix-spec-proposals/pull/4284) | Policy servers | 1.18 | Implemented: see [policy servers](#policy-servers) |
 | [MSC2753](https://github.com/matrix-org/matrix-spec-proposals/pull/2753) | Peeking via `/sync` | N/A | Opt-in (`msc2753`) |
 | [MSC3821](https://github.com/matrix-org/matrix-spec-proposals/pull/3821) | Update redaction rules, again | 1.8 | Implemented: from room version 11, redacting an `m.room.member` event keeps `content.third_party_invite.signed`, so redacted events hash to the same event ID as on other servers |
 | [MSC4311](https://github.com/matrix-org/matrix-spec-proposals/pull/4311) | Create event in invite and knock stripped state | 1.16 | Implemented: `invite_room_state` and `knock_room_state` are sent as full PDUs including `m.room.create`. From room version 12, invites whose state holds PDUs that fail validation are rejected with `M_MISSING_PARAM`. Missing or stripped-only state is accepted with a warning, per the MSC's migration section, as are all failures in earlier room versions. Knock state entries that fail validation are dropped |
+
+### Policy servers
+
+A room names a policy server with an `m.room.policy` state event (empty state key) whose content holds the server in `via` and its signing key in `public_keys.ed25519`.
+The policy server only counts while at least one of its users is joined to the room.
+The unstable `org.matrix.msc4284.policy` event, which may carry the key as `public_key`, is read when the room has no `m.room.policy` event.
+An `m.room.policy` event with any other content, such as `{}`, turns the policy server off.
+
+While a room has a policy server, every new event must carry the policy server's signature, made with the key from the room's current state under the key ID `ed25519:policy_server`.
+Zendrite asks for a missing signature with `POST /_matrix/policy/v1/sign`, or the unstable `/_matrix/policy/unstable/org.matrix.msc4284/sign` when the policy server does not know the stable endpoint, and keeps the signature with the event.
+Answers are cached per event for 10 minutes, and a request gives up after 10 seconds.
+The `m.room.policy` events themselves are never checked, so that a room can always replace or turn off a policy server that stopped working.
+
+Zendrite fails closed:
+
+- An event of a local user that the policy server refuses is neither stored nor sent, and the client gets 400 with the policy server's error, such as `M_FORBIDDEN`.
+  When the policy server cannot be reached, rate limits Zendrite, or answers with an invalid signature, the client gets 503 `M_UNKNOWN`, and can retry.
+  This applies to sending events and state, redactions, joins, knocks, invites, delayed events and profile updates.
+  A user's own leave, invite rejection or knock withdrawal without a reason is the exception: its content is only `{"membership": "leave"}`, so it is sent without the signature and nobody is trapped in a room, and other servers may soft fail it.
+- A remote event that lacks a valid signature, and for which Zendrite cannot get one, is [soft failed](https://spec.matrix.org/latest/server-server-api/#soft-failure): it is stored, but not shown to users or used as current state.
+  `send_join`, `send_leave` and `send_knock` fail with the same errors.
+
+Events in rooms with partial state from a faster join, and local events that are not sent to other servers, are not checked.
+Zendrite does not act as a policy server itself, and does not serve `/.well-known/matrix/policy_server`.
 
 ### Jump to date
 

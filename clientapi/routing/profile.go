@@ -415,6 +415,9 @@ func updateProfile(
 	}
 
 	if err := api.SendEvents(ctx, rsAPI, api.KindNew, events, device.UserDomain(), domain, domain, nil, false); err != nil {
+		if res, ok := api.PolicyServerRejection(err); ok {
+			return res, err
+		}
 		util.GetLogger(ctx).WithError(err).Error("SendEvents failed")
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,

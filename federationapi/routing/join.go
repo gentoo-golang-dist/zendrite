@@ -322,6 +322,9 @@ func SendJoin(
 			},
 		}, &rsResponse)
 		if rsResponse.ErrMsg != "" {
+			if res, ok := api.PolicyServerRejection(errors.New(rsResponse.ErrMsg)); ok {
+				return res
+			}
 			util.GetLogger(httpReq.Context()).WithField(logrus.ErrorKey, rsResponse.ErrMsg).Error("SendEvents failed")
 			if rsResponse.NotAllowed {
 				return util.JSONResponse{

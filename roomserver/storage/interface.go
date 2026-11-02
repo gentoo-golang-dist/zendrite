@@ -289,6 +289,8 @@ type RoomDatabase interface {
 	GetOrCreateEventTypeNID(ctx context.Context, eventType string) (eventTypeNID types.EventTypeNID, err error)
 	GetOrCreateEventStateKeyNID(ctx context.Context, eventStateKey *string) (types.EventStateKeyNID, error)
 	GetStateEvent(ctx context.Context, roomID, evType, stateKey string) (*types.HeaderedEvent, error)
+	// GetServerInRoom returns true if we think a server is in a given room or false otherwise.
+	GetServerInRoom(ctx context.Context, roomNID types.RoomNID, serverName spec.ServerName) (bool, error)
 	// IsRoomPartialState returns true if the room has partial state from a faster join (MSC3706)
 	IsRoomPartialState(ctx context.Context, roomNID types.RoomNID) (bool, error)
 	// GetPartialStateJoinServer returns the server we joined through for a partial state room

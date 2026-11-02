@@ -119,6 +119,9 @@ func sendMembership(ctx context.Context, profileAPI userapi.ClientUserAPI, devic
 		nil,
 		false,
 	); err != nil {
+		if res, ok := roomserverAPI.PolicyServerRejection(err); ok {
+			return res
+		}
 		util.GetLogger(ctx).WithError(err).Error("SendEvents failed")
 		if roomserverAPI.IsInputRejected(err) {
 			return util.JSONResponse{
@@ -388,6 +391,9 @@ func sendInvite(
 		var e roomserverAPI.ErrInvalidID
 		var e1 roomserverAPI.ErrNotAllowed
 		var blocked roomserverAPI.ErrInviteBlocked
+		if res, ok := roomserverAPI.PolicyServerRejection(err); ok {
+			return res, err
+		}
 		switch {
 		case errors.As(err, &blocked):
 			return util.JSONResponse{Code: http.StatusForbidden, JSON: blocked.MatrixError()}, blocked
