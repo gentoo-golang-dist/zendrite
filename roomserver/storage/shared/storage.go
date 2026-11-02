@@ -60,7 +60,10 @@ type Database struct {
 	ReportedUsersTable tables.ReportedUsers
 	// ClientTransactionsTable maps client transaction IDs to their events.
 	ClientTransactionsTable tables.ClientTransactions
-	GetRoomUpdaterFn        func(ctx context.Context, roomInfo *types.RoomInfo) (*RoomUpdater, error)
+	// StateKeyRepairTable tracks the one-off repair of state events stored
+	// under the wrong state key NID.
+	StateKeyRepairTable tables.StateKeyRepair
+	GetRoomUpdaterFn    func(ctx context.Context, roomInfo *types.RoomInfo) (*RoomUpdater, error)
 }
 
 // EventDatabase contains all tables needed to work with events.

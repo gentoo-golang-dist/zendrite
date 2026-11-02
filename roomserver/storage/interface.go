@@ -244,6 +244,16 @@ type Database interface {
 	// ResyncRepairPendingRooms returns the rooms whose forward extremities still
 	// need repairing after a partial state resync.
 	ResyncRepairPendingRooms(ctx context.Context) ([]types.RoomNID, error)
+	// StateKeyRepairCursor returns the event NID up to which the repair of
+	// state events stored under the wrong state key NID has checked events,
+	// and false if the repair is not pending.
+	StateKeyRepairCursor(ctx context.Context) (types.EventNID, bool, error)
+	// MiskeyedStateEventsAfter checks up to limit events after afterEventNID
+	// that can be auth events and returns those stored under the wrong state
+	// key NID, the last event NID checked and whether none remain.
+	MiskeyedStateEventsAfter(ctx context.Context, afterEventNID types.EventNID, limit int) ([]shared.MiskeyedStateEvent, types.EventNID, bool, error)
+	// AdvanceStateKeyRepair records the progress of the repair, or ends it.
+	AdvanceStateKeyRepair(ctx context.Context, afterEventNID types.EventNID, done bool) error
 	// RoomIDFromNID returns the room ID for a given room NID
 	RoomIDFromNID(ctx context.Context, roomNID types.RoomNID) (string, error)
 }
@@ -298,6 +308,16 @@ type RoomDatabase interface {
 	// ResyncRepairPendingRooms returns the rooms whose forward extremities still
 	// need repairing after a partial state resync.
 	ResyncRepairPendingRooms(ctx context.Context) ([]types.RoomNID, error)
+	// StateKeyRepairCursor returns the event NID up to which the repair of
+	// state events stored under the wrong state key NID has checked events,
+	// and false if the repair is not pending.
+	StateKeyRepairCursor(ctx context.Context) (types.EventNID, bool, error)
+	// MiskeyedStateEventsAfter checks up to limit events after afterEventNID
+	// that can be auth events and returns those stored under the wrong state
+	// key NID, the last event NID checked and whether none remain.
+	MiskeyedStateEventsAfter(ctx context.Context, afterEventNID types.EventNID, limit int) ([]shared.MiskeyedStateEvent, types.EventNID, bool, error)
+	// AdvanceStateKeyRepair records the progress of the repair, or ends it.
+	AdvanceStateKeyRepair(ctx context.Context, afterEventNID types.EventNID, done bool) error
 	// ClientTransactionEventID returns the event a client transaction produced,
 	// or "" if the transaction is unknown.
 	ClientTransactionEventID(ctx context.Context, roomID, senderID string, sessionID int64, transactionID string) (string, error)

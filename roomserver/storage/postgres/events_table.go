@@ -98,12 +98,15 @@ const bulkSelectStateEventByIDExcludingRejectedSQL = "" +
 // Bulk look up of events by event NID, optionally filtering by the event type
 // or event state key NIDs if provided. (The CARDINALITY check will return true
 // if the provided arrays are empty, ergo no filtering).
+// Events with the same state key are ordered by depth and then NID, so that
+// the one latest in the room DAG is last and wins when a snapshot holds more
+// than one of them.
 const bulkSelectStateEventByNIDSQL = "" +
 	"SELECT event_type_nid, event_state_key_nid, event_nid FROM roomserver_events" +
 	" WHERE event_nid = ANY($1)" +
 	" AND (CARDINALITY($2::bigint[]) = 0 OR event_type_nid = ANY($2))" +
 	" AND (CARDINALITY($3::bigint[]) = 0 OR event_state_key_nid = ANY($3))" +
-	" ORDER BY event_type_nid, event_state_key_nid ASC"
+	" ORDER BY event_type_nid, event_state_key_nid, depth, event_nid ASC"
 
 const bulkSelectStateAtEventByIDSQL = "" +
 	"SELECT event_type_nid, event_state_key_nid, event_nid, state_snapshot_nid, is_rejected FROM roomserver_events" +
@@ -145,6 +148,9 @@ const selectEventRejectedSQL = "" +
 
 const selectRoomsWithEventTypeNIDSQL = `SELECT DISTINCT room_nid FROM roomserver_events WHERE event_type_nid = $1`
 
+const updateEventStateKeyNIDSQL = "" +
+	"UPDATE roomserver_events SET event_state_key_nid = $1 WHERE event_nid = $2"
+
 type eventStatements struct {
 	insertEventStmt                               *sql.Stmt
 	selectEventStmt                               *sql.Stmt
@@ -165,6 +171,7 @@ type eventStatements struct {
 	selectRoomNIDsForEventNIDsStmt                *sql.Stmt
 	selectEventRejectedStmt                       *sql.Stmt
 	selectRoomsWithEventTypeNIDStmt               *sql.Stmt
+	updateEventStateKeyNIDStmt                    *sql.Stmt
 }
 
 func CreateEventsTable(db *sql.DB) error {
@@ -206,6 +213,7 @@ func PrepareEventsTable(db *sql.DB) (tables.Events, error) {
 		{&s.selectRoomNIDsForEventNIDsStmt, selectRoomNIDsForEventNIDsSQL},
 		{&s.selectEventRejectedStmt, selectEventRejectedSQL},
 		{&s.selectRoomsWithEventTypeNIDStmt, selectRoomsWithEventTypeNIDSQL},
+		{&s.updateEventStateKeyNIDStmt, updateEventStateKeyNIDSQL},
 	}.Prepare(db)
 }
 
@@ -604,4 +612,11 @@ func (s *eventStatements) SelectRoomsWithEventTypeNID(
 	}
 
 	return roomNIDs, rows.Err()
+}
+
+func (s *eventStatements) UpdateEventStateKeyNID(
+	ctx context.Context, txn *sql.Tx, eventNID types.EventNID, eventStateKeyNID types.EventStateKeyNID,
+) error {
+	_, err := sqlutil.TxStmt(txn, s.updateEventStateKeyNIDStmt).ExecContext(ctx, eventStateKeyNID, eventNID)
+	return err
 }

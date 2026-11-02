@@ -232,9 +232,12 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 		logrus.WithError(err).Panic("failed to start roomserver input API")
 	}
 
-	// Repair rooms whose partial state resync finished before resyncs
+	// Store state events that were stored under the wrong state key under
+	// their own key first, since the next repair reads the current state.
+	// Then repair rooms whose partial state resync finished before resyncs
 	// repaired the forward extremities themselves.
 	r.ProcessContext.Go(func() {
+		r.RepairStateKeys(r.ProcessContext.Context())
 		r.RepairResyncedRooms(r.ProcessContext.Context())
 	})
 

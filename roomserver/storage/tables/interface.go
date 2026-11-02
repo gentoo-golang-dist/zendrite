@@ -73,6 +73,32 @@ type Events interface {
 	SelectEventRejected(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, eventID string) (rejected bool, err error)
 
 	SelectRoomsWithEventTypeNID(ctx context.Context, txn *sql.Tx, eventTypeNID types.EventTypeNID) ([]types.RoomNID, error)
+	// UpdateEventStateKeyNID changes the state key NID an event is stored under.
+	UpdateEventStateKeyNID(ctx context.Context, txn *sql.Tx, eventNID types.EventNID, eventStateKeyNID types.EventStateKeyNID) error
+}
+
+// AuthTypeEvent is a stored event of a type that can be an auth event.
+type AuthTypeEvent struct {
+	EventNID         types.EventNID
+	RoomNID          types.RoomNID
+	EventTypeNID     types.EventTypeNID
+	EventStateKeyNID types.EventStateKeyNID
+	EventJSON        []byte
+}
+
+// StateKeyRepair holds the progress of the one-off repair of state events
+// stored under the wrong state key NID. It has a row while the repair is
+// pending.
+type StateKeyRepair interface {
+	// SelectStateKeyRepairCursor returns the event NID the repair has
+	// checked up to, and false once the repair has finished.
+	SelectStateKeyRepairCursor(ctx context.Context, txn *sql.Tx) (afterEventNID types.EventNID, pending bool, err error)
+	UpdateStateKeyRepairCursor(ctx context.Context, txn *sql.Tx, afterEventNID types.EventNID) error
+	DeleteStateKeyRepair(ctx context.Context, txn *sql.Tx) error
+	// SelectAuthTypeEventsAfter returns up to limit events after afterEventNID,
+	// in event NID order, whose type can be an auth event (create, power
+	// levels, join rules, third party invite and member), with their JSON.
+	SelectAuthTypeEventsAfter(ctx context.Context, txn *sql.Tx, afterEventNID types.EventNID, limit int) ([]AuthTypeEvent, error)
 }
 
 type Rooms interface {

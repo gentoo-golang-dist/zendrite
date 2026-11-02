@@ -145,6 +145,9 @@ func (d *Database) create(db *sql.DB) error {
 		return err
 	}
 	// Last, as its migration reads the events tables.
+	if err := CreateStateKeyRepairTable(db); err != nil {
+		return err
+	}
 	if err := CreateAnnotationsTable(db); err != nil {
 		return err
 	}
@@ -225,6 +228,10 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 	if err != nil {
 		return err
 	}
+	stateKeyRepair, err := PrepareStateKeyRepairTable(db)
+	if err != nil {
+		return err
+	}
 	annotations, err := PrepareAnnotationsTable(db)
 	if err != nil {
 		return err
@@ -273,6 +280,7 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 		ReportedUsersTable:      reportedUsers,
 		PartialStateTable:       partialState,
 		ClientTransactionsTable: clientTransactions,
+		StateKeyRepairTable:     stateKeyRepair,
 	}
 	return nil
 }

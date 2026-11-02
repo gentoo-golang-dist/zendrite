@@ -123,6 +123,9 @@ const selectEventRejectedSQL = "" +
 
 const selectRoomsWithEventTypeNIDSQL = `SELECT DISTINCT room_nid FROM roomserver_events WHERE event_type_nid = $1`
 
+const updateEventStateKeyNIDSQL = "" +
+	"UPDATE roomserver_events SET event_state_key_nid = $1 WHERE event_nid = $2"
+
 type eventStatements struct {
 	db                                            *sql.DB
 	insertEventStmt                               *sql.Stmt
@@ -139,6 +142,7 @@ type eventStatements struct {
 	bulkSelectEventIDStmt                         *sql.Stmt
 	selectEventRejectedStmt                       *sql.Stmt
 	selectRoomsWithEventTypeNIDStmt               *sql.Stmt
+	updateEventStateKeyNIDStmt                    *sql.Stmt
 	// bulkSelectEventNIDStmt               *sql.Stmt
 	// bulkSelectUnsentEventNIDStmt         *sql.Stmt
 	// selectRoomNIDsForEventNIDsStmt       *sql.Stmt
@@ -197,6 +201,7 @@ func PrepareEventsTable(db *sql.DB) (tables.Events, error) {
 		// {&s.selectRoomNIDForEventNIDStmt, selectRoomNIDForEventNIDSQL},
 		{&s.selectEventRejectedStmt, selectEventRejectedSQL},
 		{&s.selectRoomsWithEventTypeNIDStmt, selectRoomsWithEventTypeNIDSQL},
+		{&s.updateEventStateKeyNIDStmt, updateEventStateKeyNIDSQL},
 	}.Prepare(db)
 }
 
@@ -357,7 +362,10 @@ func (s *eventStatements) BulkSelectStateEventByNID(
 			params = append(params, v)
 		}
 	}
-	selectOrig += " ORDER BY event_type_nid, event_state_key_nid ASC"
+	// Order events with the same state key by depth and then NID, so that the
+	// one latest in the room DAG is last and wins when a snapshot holds more
+	// than one of them.
+	selectOrig += " ORDER BY event_type_nid, event_state_key_nid, depth, event_nid ASC"
 	selectPrep, err := s.db.Prepare(selectOrig)
 	if err != nil {
 		return nil, fmt.Errorf("s.db.Prepare: %w", err)
@@ -715,4 +723,11 @@ func (s *eventStatements) SelectRoomsWithEventTypeNID(
 	}
 
 	return roomNIDs, rows.Err()
+}
+
+func (s *eventStatements) UpdateEventStateKeyNID(
+	ctx context.Context, txn *sql.Tx, eventNID types.EventNID, eventStateKeyNID types.EventStateKeyNID,
+) error {
+	_, err := sqlutil.TxStmt(txn, s.updateEventStateKeyNIDStmt).ExecContext(ctx, eventStateKeyNID, eventNID)
+	return err
 }

@@ -202,6 +202,7 @@ column roomserver_rooms | state_snapshot_nid | bigint | NO | 0
 column roomserver_state_block | event_nids | ARRAY | NO |
 column roomserver_state_block | state_block_hash | bytea | YES |
 column roomserver_state_block | state_block_nid | bigint | NO | nextval('roomserver_state_block_nid_seq'::regclass)
+column roomserver_state_key_repair | after_event_nid | bigint | NO |
 column roomserver_state_snapshots | room_nid | bigint | NO |
 column roomserver_state_snapshots | state_block_nids | ARRAY | NO |
 column roomserver_state_snapshots | state_snapshot_hash | bytea | YES |
@@ -961,6 +962,7 @@ constraint roomserver_state_block | roomserver_state_block_event_nids_not_null |
 constraint roomserver_state_block | roomserver_state_block_pkey | PRIMARY KEY (state_block_nid)
 constraint roomserver_state_block | roomserver_state_block_state_block_hash_key | UNIQUE (state_block_hash)
 constraint roomserver_state_block | roomserver_state_block_state_block_nid_not_null | NOT NULL state_block_nid
+constraint roomserver_state_key_repair | roomserver_state_key_repair_after_event_nid_not_null | NOT NULL after_event_nid
 constraint roomserver_state_snapshots | roomserver_state_snapshots_pkey | PRIMARY KEY (state_snapshot_nid)
 constraint roomserver_state_snapshots | roomserver_state_snapshots_room_nid_not_null | NOT NULL room_nid
 constraint roomserver_state_snapshots | roomserver_state_snapshots_state_block_nids_not_null | NOT NULL state_block_nids
@@ -1333,6 +1335,7 @@ migration roomserver: drop column reference_sha from roomserver_prev_events
 migration roomserver: flag resynced rooms for extremity repair
 migration roomserver: published appservice
 migration roomserver: published appservice pkey
+migration roomserver: repair state events stored under the wrong state key
 migration roomserver: state blocks refactor
 migration syncapi: add connection receipts table for sliding sync
 migration syncapi: add history visibility column (current_room_state)

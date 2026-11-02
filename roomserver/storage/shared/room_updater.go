@@ -275,3 +275,10 @@ func (u *RoomUpdater) ClearResyncRepairPending(roomNID types.RoomNID) error {
 		return u.d.RoomsTable.ClearResyncRepairPending(u.ctx, txn, roomNID)
 	})
 }
+
+// SetEventStateKeyNID changes the state key NID an event is stored under.
+func (u *RoomUpdater) SetEventStateKeyNID(eventNID types.EventNID, eventStateKeyNID types.EventStateKeyNID) error {
+	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		return u.d.EventsTable.UpdateEventStateKeyNID(u.ctx, txn, eventNID, eventStateKeyNID)
+	})
+}

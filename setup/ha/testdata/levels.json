@@ -110,5 +110,12 @@
     "upgrade_from": 1,
     "rollback_to": 1,
     "surface": "93938aef0045a5689768712ecead11c3fb8439f660af7df72ce0207965266ced"
+  },
+  {
+    "protocol": 1,
+    "level": 17,
+    "upgrade_from": 1,
+    "rollback_to": 1,
+    "surface": "76300b45d5108c30add9028a8bb86034360e85583d41a78ce0d0eb46bd08840f"
   }
 ]
