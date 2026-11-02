@@ -71,6 +71,7 @@ func Test_evaluatePushRules(t *testing.T) {
 			wantAction   pushrules.ActionKind
 			wantActions  []*pushrules.Action
 			wantNotify   bool
+			thread       eventThread
 		}{
 			{
 				name:         "m.receipt doesn't notify",
@@ -121,13 +122,56 @@ func Test_evaluatePushRules(t *testing.T) {
 			},
 		}
 
+		threadReply := `{"type":"m.room.message","content":{"body":"reply","m.relates_to":{"rel_type":"m.thread","event_id":"$root"}},"room_id":"!room:example.com"}`
+		testCases = append(testCases, []struct {
+			name         string
+			eventContent string
+			wantAction   pushrules.ActionKind
+			wantActions  []*pushrules.Action
+			wantNotify   bool
+			thread       eventThread
+		}{
+			// MSC4306: replies in a thread the user is not subscribed to
+			// do not notify, unless they mention the user.
+			{
+				name:         "unsubscribed thread does not notify",
+				eventContent: threadReply,
+				wantAction:   pushrules.UnknownAction,
+				wantActions:  []*pushrules.Action{},
+				thread:       eventThread{inThread: true, subscribers: map[string]bool{"@other:localhost": true}},
+			},
+			{
+				name:         "subscribed thread notifies",
+				eventContent: threadReply,
+				wantNotify:   true,
+				wantAction:   pushrules.NotifyAction,
+				wantActions: []*pushrules.Action{
+					{Kind: pushrules.NotifyAction},
+					{Kind: pushrules.SetTweakAction, Tweak: pushrules.SoundTweak, Value: "default"},
+				},
+				thread: eventThread{inThread: true, subscribers: map[string]bool{"@test:localhost": true}},
+			},
+			{
+				name:         "mention in unsubscribed thread highlights",
+				eventContent: `{"type":"m.room.message","content":{"body":"hey","m.mentions":{"user_ids":["@test:localhost"]},"m.relates_to":{"rel_type":"m.thread","event_id":"$root"}},"room_id":"!room:example.com"}`,
+				wantNotify:   true,
+				wantAction:   pushrules.NotifyAction,
+				wantActions: []*pushrules.Action{
+					{Kind: pushrules.NotifyAction},
+					{Kind: pushrules.SetTweakAction, Tweak: pushrules.SoundTweak, Value: "default"},
+					{Kind: pushrules.SetTweakAction, Tweak: pushrules.HighlightTweak},
+				},
+				thread: eventThread{inThread: true},
+			},
+		}...)
+
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				actions, err := consumer.evaluatePushRules(ctx, mustCreateEvent(t, tc.eventContent), &localMembership{
 					UserID:    "@test:localhost",
 					Localpart: "test",
 					Domain:    "localhost",
-				}, 10)
+				}, 10, tc.thread)
 				if err != nil {
 					t.Fatalf("failed to evaluate push rules: %v", err)
 				}

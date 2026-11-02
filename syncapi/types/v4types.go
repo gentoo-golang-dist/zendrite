@@ -352,6 +352,8 @@ type ExtensionRequest struct {
 	StickyEvents *StickyEventsRequest `json:"org.matrix.msc4354.sticky_events,omitempty"`
 	// Profiles is the MSC4262 profile updates extension.
 	Profiles *ProfilesRequest `json:"org.matrix.msc4262.profiles,omitempty"`
+	// ThreadSubscriptions is the MSC4308 thread subscriptions extension.
+	ThreadSubscriptions *ThreadSubscriptionsRequest `json:"io.element.msc4308.thread_subscriptions,omitempty"`
 }
 
 // ToDeviceRequest configures to-device message extension.
@@ -434,6 +436,8 @@ type ExtensionResponse struct {
 	StickyEvents *StickyEventsResponse `json:"org.matrix.msc4354.sticky_events,omitempty"`
 	// Profiles is omitted when there are no profile updates to deliver.
 	Profiles *ProfilesResponse `json:"org.matrix.msc4262.profiles,omitempty"`
+	// ThreadSubscriptions is omitted when no thread subscription changed.
+	ThreadSubscriptions *ThreadSubscriptionsResponse `json:"io.element.msc4308.thread_subscriptions,omitempty"`
 }
 
 // StickyEventsResponse carries unexpired MSC4354 sticky events per room,

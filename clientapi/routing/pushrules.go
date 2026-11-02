@@ -115,6 +115,11 @@ func PutPushRuleByRuleID(ctx context.Context, scope, kind, ruleID, afterRuleID, 
 	}
 	newRule.RuleID = ruleID
 
+	if pushrules.Kind(kind) == pushrules.PostContentKind {
+		// MSC4306: postcontent only holds server-default rules for now.
+		return errorResponse(ctx, spec.InvalidParam(pushrules.ErrPostContentRule.Error()), "rejected a postcontent rule")
+	}
+
 	errs := pushrules.ValidateRule(pushrules.Kind(kind), &newRule)
 	if len(errs) > 0 {
 		return errorResponse(ctx, spec.InvalidParam(errs[0].Error()), "rule sanity check failed: %v", errs)
@@ -292,6 +297,8 @@ func pushRuleSetKindPointer(ruleSet *pushrules.RuleSet, kind pushrules.Kind) *[]
 		return &ruleSet.Override
 	case pushrules.ContentKind:
 		return &ruleSet.Content
+	case pushrules.PostContentKind:
+		return &ruleSet.PostContent
 	case pushrules.RoomKind:
 		return &ruleSet.Room
 	case pushrules.SenderKind:

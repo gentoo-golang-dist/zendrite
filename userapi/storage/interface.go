@@ -204,6 +204,16 @@ type DehydratedDevice interface {
 	DeleteDehydratedDevice(ctx context.Context, userID string) (deviceID string, err error)
 }
 
+// ThreadSubscriptions stores MSC4306 thread subscriptions.
+type ThreadSubscriptions interface {
+	SubscribeThread(ctx context.Context, localpart string, serverName spec.ServerName, roomID, threadRootID string, automatic bool, causeStreamPos int64) (streamID int64, conflict bool, err error)
+	UnsubscribeThread(ctx context.Context, localpart string, serverName spec.ServerName, roomID, threadRootID string, roomStreamPos int64) (int64, error)
+	GetThreadSubscription(ctx context.Context, localpart string, serverName spec.ServerName, roomID, threadRootID string) (*api.ThreadSubscription, error)
+	GetThreadSubscriptionUpdates(ctx context.Context, localpart string, serverName spec.ServerName, from, to int64, limit int) ([]api.ThreadSubscriptionUpdate, error)
+	GetThreadSubscribers(ctx context.Context, roomID, threadRootID string) ([]string, error)
+	MaxThreadSubscriptionStreamID(ctx context.Context) (int64, error)
+}
+
 type UserDatabase interface {
 	Account
 	AccountData
@@ -219,6 +229,7 @@ type UserDatabase interface {
 	Pusher
 	Statistics
 	ThreePID
+	ThreadSubscriptions
 	RegistrationTokens
 }
 

@@ -49,12 +49,20 @@ func ValidateRule(kind Kind, rule *Rule) []error {
 	case RoomKind, SenderKind:
 		// Do nothing.
 
+	case PostContentKind:
+		// MSC4306: clients cannot create rules of this kind for now.
+		errs = append(errs, ErrPostContentRule)
+
 	default:
 		errs = append(errs, fmt.Errorf("invalid rule kind: %s", kind))
 	}
 
 	return errs
 }
+
+// ErrPostContentRule is returned for client rules of the postcontent kind,
+// which MSC4306 reserves for server-default rules.
+var ErrPostContentRule = fmt.Errorf("user-defined rules using `postcontent` are not accepted")
 
 // validRuleIDRE is a regexp for valid IDs.
 //
@@ -92,6 +100,10 @@ func validateCondition(cond *Condition) []error {
 		}
 	case EventMatchCondition, ContainsDisplayNameCondition, RoomMemberCountCondition, SenderNotificationPermissionCondition:
 		// Do nothing.
+	case ThreadSubscriptionCondition:
+		if cond.Subscribed == nil {
+			errs = append(errs, fmt.Errorf("missing condition subscribed"))
+		}
 
 	default:
 		errs = append(errs, fmt.Errorf("invalid rule condition kind: %s", cond.Kind))

@@ -1659,6 +1659,28 @@ func TestPushRules(t *testing.T) {
 				},
 			},
 			{
+				// MSC4306: the postcontent kind only holds server-default rules.
+				name:           "can not create postcontent push rule",
+				request:        httptest.NewRequest(http.MethodPut, "/_matrix/client/v3/pushrules/global/postcontent/myrule", strings.NewReader(`{"actions":["notify"],"conditions":[]}`)),
+				wantStatusCode: http.StatusBadRequest,
+				validateFunc: func(t *testing.T, respBody *bytes.Buffer) {
+					assert.Equal(t, "M_INVALID_PARAM", gjson.GetBytes(respBody.Bytes(), "errcode").Str, respBody.String())
+				},
+			},
+			{
+				name:           "can disable a default postcontent push rule",
+				request:        httptest.NewRequest(http.MethodPut, "/_matrix/client/v3/pushrules/global/postcontent/.io.element.msc4306.rule.unsubscribed_thread/enabled", strings.NewReader(`{"enabled":false}`)),
+				wantStatusCode: http.StatusOK,
+				validateFunc: func(t *testing.T, respBody *bytes.Buffer) {
+					rec := httptest.NewRecorder()
+					req := httptest.NewRequest(http.MethodGet, "/_matrix/client/v3/pushrules/global/postcontent/.io.element.msc4306.rule.unsubscribed_thread", strings.NewReader(""))
+					req.Header.Set("Authorization", "Bearer "+accessTokens[alice].accessToken)
+					routers.Client.ServeHTTP(rec, req)
+					assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					assert.False(t, gjson.GetBytes(rec.Body.Bytes(), "enabled").Bool(), rec.Body.String())
+				},
+			},
+			{
 				name:           "can not create new push starting with a dot",
 				request:        httptest.NewRequest(http.MethodPut, "/_matrix/client/v3/pushrules/global/content/.myrule", strings.NewReader(`{"actions":["notify"],"pattern":"world"}`)),
 				wantStatusCode: http.StatusBadRequest,

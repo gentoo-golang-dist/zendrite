@@ -153,6 +153,18 @@ func (n *Notifier) OnNewAccountData(
 	n._wakeupUsers([]string{userID}, nil, posUpdate)
 }
 
+// OnNewThreadSubscription wakes the user after a change to their MSC4306
+// thread subscriptions.
+func (n *Notifier) OnNewThreadSubscription(
+	userID string, posUpdate types.StreamingToken,
+) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	n.currPos.ApplyUpdates(posUpdate)
+	n._wakeupUsers([]string{userID}, nil, n.currPos)
+}
+
 func (n *Notifier) OnNewPeek(
 	roomID, userID, deviceID string,
 	posUpdate types.StreamingToken,

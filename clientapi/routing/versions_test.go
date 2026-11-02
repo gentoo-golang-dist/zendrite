@@ -44,6 +44,7 @@ func TestVersions(t *testing.T) {
 		"com.beeper.msc4169":                             true,
 		"org.matrix.msc4380":                             true,
 		"org.matrix.msc4380.stable":                      true,
+		"org.matrix.msc4306":                             true,
 		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,
 	}
 	tests := []struct {

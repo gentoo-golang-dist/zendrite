@@ -55,6 +55,7 @@ type Database struct {
 	Pushers               tables.PusherTable
 	Stats                 tables.StatsTable
 	DehydratedDevices     tables.DehydratedDevicesTable
+	ThreadSubscriptions   tables.ThreadSubscriptionsTable
 	LoginTokenLifetime    time.Duration
 	ServerName            spec.ServerName
 	BcryptCost            int

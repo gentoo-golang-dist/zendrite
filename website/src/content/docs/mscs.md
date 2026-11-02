@@ -97,6 +97,8 @@ Zendrite advertises `org.matrix.msc4222` in `unstable_features` for clients that
 | [MSC3440](https://github.com/matrix-org/matrix-spec-proposals/pull/3440) | Threading via `m.thread` | 1.4 | Implemented: `m.thread` aggregations, `GET /v1/rooms/{roomId}/threads`, and 400 `M_UNKNOWN` for a thread rooted at an event that is itself a relation |
 | [MSC3771](https://github.com/matrix-org/matrix-spec-proposals/pull/3771) | Threaded read receipts | 1.4 | Implemented: receipts carry `thread_id` and clear only their thread's notifications |
 | [MSC3773](https://github.com/matrix-org/matrix-spec-proposals/pull/3773) | Notifications for threads | 1.4 | Implemented: with `unread_thread_notifications` in the timeline filter, `/sync` reports `unread_thread_notifications` per thread root and `unread_notifications` for the main timeline only |
+| [MSC4306](https://github.com/matrix-org/matrix-spec-proposals/pull/4306) | Thread subscriptions | N/A | Implemented (unstable prefix): see [thread subscriptions](#thread-subscriptions) |
+| [MSC4308](https://github.com/matrix-org/matrix-spec-proposals/pull/4308) | Sliding sync extension: thread subscriptions | N/A | Implemented (unstable prefix): the `io.element.msc4308.thread_subscriptions` extension and `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions` |
 | [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) | Threading (generic relationships) | N/A | Opt-in (`msc2836`) |
 | [MSC2285](https://github.com/matrix-org/matrix-spec-proposals/pull/2285) | Private read receipts | 1.4 | Implemented |
 | [MSC2174](https://github.com/matrix-org/matrix-spec-proposals/pull/2174) | Move the `redacts` property to `content` | 1.8 | Implemented: from room version 11, redactions are applied from `content.redacts` and the top-level key is ignored. Clients receive `redacts` both at the top level and in `content` in every room version |
@@ -109,6 +111,32 @@ An unlimited timeline already carries every child event the client has not seen,
 Each bundle holds the thread summary (`m.thread`), the most recent valid edit (`m.replace`) and the referencing events (`m.reference`).
 Only child events the requesting user may see are aggregated, and events from ignored users are left out.
 State events, and aggregations that arrive with events over federation, are never served with bundles.
+
+### Thread subscriptions
+
+Zendrite implements MSC4306 with Synapse's unstable names and advertises `org.matrix.msc4306` in `unstable_features`.
+`PUT`, `GET` and `DELETE /_matrix/client/unstable/io.element.msc4306/rooms/{roomId}/thread/{eventId}/subscription` subscribe to, read and remove the user's subscription to a thread.
+The thread root must be an event of the room that the user may see under history visibility; otherwise, and for unknown events, the answer is 404 `M_NOT_FOUND`.
+`GET` also answers 404 when the user is not subscribed, and `DELETE` succeeds when there is nothing to remove.
+
+A `PUT` body without `automatic` is a manual subscription, which replaces an automatic one and is never replaced by one.
+With `"automatic": "$eventId"`, the event must be a visible `m.thread` reply to the root, or the answer is 400 `IO.ELEMENT.MSC4306.M_NOT_IN_THREAD`.
+Unsubscribing records the sync stream position of the room's latest event.
+An automatic subscription whose cause event is at or before that position, that is an event the server had already received when the user unsubscribed, is refused with 409 `IO.ELEMENT.MSC4306.M_CONFLICTING_UNSUBSCRIPTION`, so a device that missed the unsubscription cannot undo it.
+Subscriptions live in the userapi database; concurrent changes are serialized, and each change gets a position in the thread subscriptions stream.
+
+Push rules gain the `postcontent` kind, evaluated after `content` and before `room`, with two default rules that use the `io.element.msc4306.thread_subscription` condition:
+`.io.element.msc4306.rule.unsubscribed_thread` keeps replies in threads the user is not subscribed to from notifying or counting as unread, and `.io.element.msc4306.rule.subscribed_thread` notifies with the default sound for threads the user is subscribed to, even in a room set to mentions only.
+Mentions and keyword rules still run first.
+Existing accounts receive both rules when their push rules are next read; a rule the user disabled stays disabled.
+Clients cannot create `postcontent` rules: `PUT /pushrules/global/postcontent/{ruleId}` answers 400 `M_INVALID_PARAM`.
+The condition can be used in user-defined `override` and `underride` rules.
+
+Sliding sync reports changes through the `io.element.msc4308.thread_subscriptions` extension (`enabled`, `limit`, 100 by default and at most 512).
+Its `subscribed` and `unsubscribed` maps hold the latest state of each changed thread since the request's `pos`, with the stream position as `bump_stamp`.
+An initial request returns the latest changes of all time.
+When older changes were left out, `prev_batch` is a token for `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions?dir=b&from=...&to=...`, which pages backwards with the same limits and returns `end` while there may be more; `to` takes a thread subscriptions token or a sliding sync `pos`.
+A change wakes the user's waiting sliding sync requests, and the `/sync` token carries the stream's position without returning its changes.
 
 ## Rooms & Spaces
 

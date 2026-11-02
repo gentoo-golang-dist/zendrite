@@ -274,3 +274,29 @@ type DehydratedDevicesTable interface {
 	SelectDehydratedDevice(ctx context.Context, userID string) (deviceID string, deviceData json.RawMessage, err error)
 	DeleteDehydratedDevice(ctx context.Context, txn *sql.Tx, userID string) (deviceID string, err error)
 }
+
+// ThreadSubscriptionsTable stores MSC4306 thread subscriptions, one row per
+// user and thread, with the stream position of its latest change.
+type ThreadSubscriptionsTable interface {
+	// LockForWrite serializes writers until txn ends, so that stream
+	// positions become visible in order.
+	LockForWrite(ctx context.Context, txn *sql.Tx) error
+	SelectMaxStreamID(ctx context.Context, txn *sql.Tx) (int64, error)
+	// SelectThreadSubscription returns the row for a user and thread, or
+	// sql.ErrNoRows.
+	SelectThreadSubscription(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName, roomID, threadRootID string) (*ThreadSubscriptionRow, error)
+	UpsertThreadSubscription(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName, roomID, threadRootID string, row *ThreadSubscriptionRow) error
+	SelectThreadSubscriptionUpdates(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName, from, to int64, limit int) ([]api.ThreadSubscriptionUpdate, error)
+	// SelectThreadSubscribers returns the local users subscribed to a thread.
+	SelectThreadSubscribers(ctx context.Context, txn *sql.Tx, roomID, threadRootID string) ([]string, error)
+}
+
+// ThreadSubscriptionRow is the state of a user's subscription to a thread.
+type ThreadSubscriptionRow struct {
+	Subscribed bool
+	Automatic  bool
+	StreamID   int64
+	// UnsubscribedAt is the sync stream position of the room's latest event
+	// when the user unsubscribed, or 0 while subscribed.
+	UnsubscribedAt int64
+}

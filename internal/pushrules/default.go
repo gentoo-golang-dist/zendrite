@@ -18,8 +18,9 @@ func DefaultAccountRuleSets(localpart string, serverName spec.ServerName) *Accou
 // qualified) MXID.
 func DefaultGlobalRuleSet(localpart string, serverName spec.ServerName) *RuleSet {
 	return &RuleSet{
-		Override:  defaultOverrideRules("@" + localpart + ":" + string(serverName)),
-		Underride: defaultUnderrideRules,
+		Override:    defaultOverrideRules("@" + localpart + ":" + string(serverName)),
+		PostContent: defaultPostContentRules(),
+		Underride:   defaultUnderrideRules,
 	}
 }
 
@@ -37,6 +38,7 @@ func UpgradeDefaultRules(rules *RuleSet, localpart string, serverName spec.Serve
 		rules.Override = append(rules.Override, mRuleSuppressEditsDefinition())
 	}
 	RemoveLegacyMentionRules(rules)
+	addPostContentRules(rules)
 }
 
 // Legacy mention rules, removed from the predefined rules by MSC4210 (spec

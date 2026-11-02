@@ -528,6 +528,10 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 						)
 					},
 				),
+				// Only sliding sync returns thread subscriptions (MSC4308);
+				// /sync carries the position, so that changes do not keep
+				// waking it.
+				ThreadSubscriptionPosition: rp.Notifier.CurrentPosition().ThreadSubscriptionPosition,
 			}
 		} else {
 			// Incremental sync
@@ -632,6 +636,7 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 						)
 					},
 				),
+				ThreadSubscriptionPosition: rp.Notifier.CurrentPosition().ThreadSubscriptionPosition,
 			}
 			// it's possible for there to be no updates for this user even though since < current pos,
 			// e.g busy servers with a quiet user. In this scenario, we don't want to return a no-op
@@ -777,4 +782,11 @@ func (rp *RequestPool) shouldReturnImmediately(syncReq *types.SyncRequest, curre
 		return true
 	}
 	return false
+}
+
+// OnThreadSubscriptionChanged advances the MSC4306 thread subscriptions
+// stream to pos and wakes the user's sync requests.
+func (rp *RequestPool) OnThreadSubscriptionChanged(userID string, pos int64) {
+	rp.streams.ThreadSubscriptionsStreamProvider.Advance(types.StreamPosition(pos))
+	rp.Notifier.OnNewThreadSubscription(userID, types.StreamingToken{ThreadSubscriptionPosition: types.StreamPosition(pos)})
 }

@@ -32,12 +32,12 @@ func (f *FakeRoomserverAPI) QuerySenderIDForUser(ctx context.Context, roomID spe
 func TestSyncTokens(t *testing.T) {
 	t.Parallel()
 	shouldPass := map[string]string{
-		"s4_0_0_0_0_0_0_0_3_0_0": StreamingToken{4, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0}.String(),
-		"s3_1_0_0_0_0_2_0_5_0_0": StreamingToken{3, 1, 0, 0, 0, 0, 2, 0, 5, 0, 0}.String(),
-		"s3_1_2_3_5_0_0_0_6_7_8": StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 7, 8}.String(),
-		"t3_1":                   TopologyToken{3, 1}.String(),
-		"t9223372036854775807_9223372036854775807": TopologyToken{Depth: math.MaxInt64, PDUPosition: math.MaxInt64}.String(),
-		"s9223372036854775807_1_2_3_5_0_0_0_6_0_0": StreamingToken{math.MaxInt64, 1, 2, 3, 5, 0, 0, 0, 6, 0, 0}.String(),
+		"s4_0_0_0_0_0_0_0_3_0_0_0":                   StreamingToken{4, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0}.String(),
+		"s3_1_0_0_0_0_2_0_5_0_0_0":                   StreamingToken{3, 1, 0, 0, 0, 0, 2, 0, 5, 0, 0, 0}.String(),
+		"s3_1_2_3_5_0_0_0_6_7_8_9":                   StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 7, 8, 9}.String(),
+		"t3_1":                                       TopologyToken{3, 1}.String(),
+		"t9223372036854775807_9223372036854775807":   TopologyToken{Depth: math.MaxInt64, PDUPosition: math.MaxInt64}.String(),
+		"s9223372036854775807_1_2_3_5_0_0_0_6_0_0_0": StreamingToken{math.MaxInt64, 1, 2, 3, 5, 0, 0, 0, 6, 0, 0, 0}.String(),
 	}
 
 	for a, b := range shouldPass {
@@ -92,10 +92,10 @@ func TestSyncTokenStickyPosition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 0, 0}); old != want {
+	if want := (StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 0, 0, 0}); old != want {
 		t.Fatalf("old token parsed as %+v, want %+v", old, want)
 	}
-	if got := old.String(); got != "s3_1_2_3_5_0_0_0_6_0_0" {
+	if got := old.String(); got != "s3_1_2_3_5_0_0_0_6_0_0_0" {
 		t.Fatalf("old token re-encoded as %q", got)
 	}
 
@@ -127,10 +127,10 @@ func TestSyncTokenProfilePosition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 9, 0}); old != want {
+	if want := (StreamingToken{3, 1, 2, 3, 5, 0, 0, 0, 6, 9, 0, 0}); old != want {
 		t.Fatalf("old token parsed as %+v, want %+v", old, want)
 	}
-	if got := old.String(); got != "s3_1_2_3_5_0_0_0_6_9_0" {
+	if got := old.String(); got != "s3_1_2_3_5_0_0_0_6_9_0_0" {
 		t.Fatalf("old token re-encoded as %q", got)
 	}
 
@@ -150,6 +150,50 @@ func TestSyncTokenProfilePosition(t *testing.T) {
 	old.ApplyUpdates(StreamingToken{ProfilePosition: 5})
 	if old.ProfilePosition != 5 {
 		t.Fatalf("ApplyUpdates left the profile position at %d", old.ProfilePosition)
+	}
+}
+
+// Tokens issued before the MSC4306 thread subscriptions stream existed have
+// eleven or fewer positions. They must keep parsing, with that position at zero, and the
+// position must take part in comparisons and updates.
+func TestSyncTokenThreadSubscriptionPosition(t *testing.T) {
+	t.Parallel()
+	old, err := NewStreamTokenFromString("s3_1_2_3_5_0_0_0_6_7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.ThreadSubscriptionPosition != 0 || old.StickyPosition != 7 {
+		t.Fatalf("old token parsed as %+v", old)
+	}
+	subs, err := NewStreamTokenFromString("s3_1_2_3_5_0_0_0_6_7_2_8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subs.ThreadSubscriptionPosition != 8 {
+		t.Fatalf("thread subscription position parsed as %d, want 8", subs.ThreadSubscriptionPosition)
+	}
+	if !subs.IsAfter(old) || old.IsAfter(subs) {
+		t.Fatal("a token ahead only in the thread subscriptions stream must compare as after")
+	}
+	if (&StreamingToken{ThreadSubscriptionPosition: 1}).IsEmpty() {
+		t.Fatal("a token with only a thread subscription position is not empty")
+	}
+	old.ApplyUpdates(StreamingToken{ThreadSubscriptionPosition: 4})
+	if old.ThreadSubscriptionPosition != 4 {
+		t.Fatalf("ApplyUpdates left the thread subscription position at %d", old.ThreadSubscriptionPosition)
+	}
+}
+
+func TestThreadSubscriptionsToken(t *testing.T) {
+	t.Parallel()
+	pos, err := ParseThreadSubscriptionsToken(ThreadSubscriptionsToken(42))
+	if err != nil || pos != 42 {
+		t.Fatalf("round trip gave %d, %v", pos, err)
+	}
+	for _, bad := range []string{"", "42", "ts", "ts-1", "tsx", "s1_2"} {
+		if _, err := ParseThreadSubscriptionsToken(bad); err == nil {
+			t.Errorf("%q parsed", bad)
+		}
 	}
 }
 

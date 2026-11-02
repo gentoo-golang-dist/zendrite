@@ -57,6 +57,28 @@ func Setup(
 		return srp.OnIncomingSyncRequestV4(req, device)
 	}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests())).Methods(http.MethodPost, http.MethodOptions)
 
+	// MSC4306 thread subscriptions and the MSC4308 companion endpoint, with
+	// Synapse's unstable paths.
+	unstableMux := csMux.PathPrefix("/unstable/").Subrouter()
+	var notifyThreadSubscription ThreadSubscriptionNotifier
+	if srp != nil {
+		notifyThreadSubscription = srp.OnThreadSubscriptionChanged
+	}
+	unstableMux.Handle("/io.element.msc4306/rooms/{roomID}/thread/{eventID}/subscription",
+		httputil.MakeAuthAPI("thread_subscription", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+			if err != nil {
+				return util.ErrorResponse(err)
+			}
+			return ThreadSubscription(req, device, vars["roomID"], vars["eventID"], syncDB, rsAPI, userAPI, notifyThreadSubscription)
+		}),
+	).Methods(http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodOptions)
+	unstableMux.Handle("/io.element.msc4308/thread_subscriptions",
+		httputil.MakeAuthAPI("thread_subscriptions", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			return ThreadSubscriptions(req, device, userAPI)
+		}),
+	).Methods(http.MethodGet, http.MethodOptions)
+
 	// TODO: Add AS support for all handlers below.
 	v3mux.Handle("/sync", httputil.MakeAuthAPI("sync", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 		return srp.OnIncomingSyncRequest(req, device)

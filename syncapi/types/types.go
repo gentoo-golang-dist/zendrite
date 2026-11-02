@@ -121,6 +121,10 @@ type StreamingToken struct {
 	// the MSC4262 sliding sync extension reads. Tokens issued before the
 	// stream existed omit it, which reads as zero.
 	ProfilePosition StreamPosition
+	// ThreadSubscriptionPosition is the position in the MSC4306 thread
+	// subscriptions stream, which the userapi stores. Tokens issued before
+	// the stream existed omit it, which reads as zero.
+	ThreadSubscriptionPosition StreamPosition
 }
 
 // This will be used as a fallback by json.Marshal.
@@ -136,13 +140,14 @@ func (s *StreamingToken) UnmarshalText(text []byte) (err error) {
 
 func (t StreamingToken) String() string {
 	posStr := fmt.Sprintf(
-		"s%d_%d_%d_%d_%d_%d_%d_%d_%d_%d_%d",
+		"s%d_%d_%d_%d_%d_%d_%d_%d_%d_%d_%d_%d",
 		t.PDUPosition, t.TypingPosition,
 		t.ReceiptPosition, t.SendToDevicePosition,
 		t.InvitePosition, t.AccountDataPosition,
 		t.DeviceListPosition, t.NotificationDataPosition,
 		t.PresencePosition, t.StickyPosition,
 		t.ProfilePosition,
+		t.ThreadSubscriptionPosition,
 	)
 	return posStr
 }
@@ -172,12 +177,14 @@ func (t *StreamingToken) IsAfter(other StreamingToken) bool {
 		return true
 	case t.ProfilePosition > other.ProfilePosition:
 		return true
+	case t.ThreadSubscriptionPosition > other.ThreadSubscriptionPosition:
+		return true
 	}
 	return false
 }
 
 func (t *StreamingToken) IsEmpty() bool {
-	return t == nil || t.PDUPosition+t.TypingPosition+t.ReceiptPosition+t.SendToDevicePosition+t.InvitePosition+t.AccountDataPosition+t.DeviceListPosition+t.NotificationDataPosition+t.PresencePosition+t.StickyPosition+t.ProfilePosition == 0
+	return t == nil || t.PDUPosition+t.TypingPosition+t.ReceiptPosition+t.SendToDevicePosition+t.InvitePosition+t.AccountDataPosition+t.DeviceListPosition+t.NotificationDataPosition+t.PresencePosition+t.StickyPosition+t.ProfilePosition+t.ThreadSubscriptionPosition == 0
 }
 
 // WithUpdates returns a copy of the StreamingToken with updates applied from another StreamingToken.
@@ -226,6 +233,9 @@ func (t *StreamingToken) ApplyUpdates(other StreamingToken) {
 	}
 	if other.ProfilePosition > t.ProfilePosition {
 		t.ProfilePosition = other.ProfilePosition
+	}
+	if other.ThreadSubscriptionPosition > t.ThreadSubscriptionPosition {
+		t.ThreadSubscriptionPosition = other.ThreadSubscriptionPosition
 	}
 }
 
@@ -318,7 +328,7 @@ func NewStreamTokenFromString(tok string) (token StreamingToken, err error) {
 	// s478_0_0_0_0_13.dl-0-2 but we have now removed partitioned stream positions
 	tok = strings.Split(tok, ".")[0]
 	parts := strings.Split(tok[1:], "_")
-	var positions [11]StreamPosition
+	var positions [12]StreamPosition
 	for i, p := range parts {
 		if i >= len(positions) {
 			break
@@ -332,17 +342,18 @@ func NewStreamTokenFromString(tok string) (token StreamingToken, err error) {
 		positions[i] = StreamPosition(pos)
 	}
 	token = StreamingToken{
-		PDUPosition:              positions[0],
-		TypingPosition:           positions[1],
-		ReceiptPosition:          positions[2],
-		SendToDevicePosition:     positions[3],
-		InvitePosition:           positions[4],
-		AccountDataPosition:      positions[5],
-		DeviceListPosition:       positions[6],
-		NotificationDataPosition: positions[7],
-		PresencePosition:         positions[8],
-		StickyPosition:           positions[9],
-		ProfilePosition:          positions[10],
+		PDUPosition:                positions[0],
+		TypingPosition:             positions[1],
+		ReceiptPosition:            positions[2],
+		SendToDevicePosition:       positions[3],
+		InvitePosition:             positions[4],
+		AccountDataPosition:        positions[5],
+		DeviceListPosition:         positions[6],
+		NotificationDataPosition:   positions[7],
+		PresencePosition:           positions[8],
+		StickyPosition:             positions[9],
+		ProfilePosition:            positions[10],
+		ThreadSubscriptionPosition: positions[11],
 	}
 	return token, nil
 }

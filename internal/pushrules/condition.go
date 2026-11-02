@@ -25,6 +25,10 @@ type Condition struct {
 	// Is indicates the condition that must be fulfilled. Required for
 	// RoomMemberCountCondition.
 	Is string `json:"is,omitempty"`
+
+	// Subscribed is whether the user must be subscribed to the event's
+	// thread. Required for ThreadSubscriptionCondition.
+	Subscribed *bool `json:"subscribed,omitempty"`
 }
 
 // ConditionKind represents a kind of condition.
@@ -56,4 +60,9 @@ const (
 	// SenderNotificationPermissionCondition compares power level for
 	// the sender in the event's room.
 	SenderNotificationPermissionCondition ConditionKind = "sender_notification_permission"
+
+	// ThreadSubscriptionCondition matches events in a thread that the user
+	// is (or, with subscribed false, is not) subscribed to (MSC4306,
+	// unstable name).
+	ThreadSubscriptionCondition ConditionKind = "io.element.msc4306.thread_subscription"
 )

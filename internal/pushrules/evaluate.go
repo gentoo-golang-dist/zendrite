@@ -29,6 +29,10 @@ type EvaluationContext interface {
 	// HasPowerLevel returns whether the user has at least the given
 	// power in the room of the current event.
 	HasPowerLevel(senderID spec.SenderID, levelKey string) (bool, error)
+
+	// ThreadSubscription reports whether the current event is in a thread
+	// and, if so, whether the user is subscribed to it (MSC4306).
+	ThreadSubscription() (inThread, subscribed bool, err error)
 }
 
 // A kindAndRules is just here to simplify iteration of the (ordered)
@@ -45,6 +49,7 @@ func NewRuleSetEvaluator(ec EvaluationContext, ruleSet *RuleSet) *RuleSetEvaluat
 		ruleSet: []kindAndRules{
 			{OverrideKind, ruleSet.Override},
 			{ContentKind, ruleSet.Content},
+			{PostContentKind, ruleSet.PostContent},
 			{RoomKind, ruleSet.Room},
 			{SenderKind, ruleSet.Sender},
 			{UnderrideKind, ruleSet.Underride},
@@ -90,7 +95,7 @@ func ruleMatches(rule *Rule, kind Kind, event gomatrixserverlib.PDU, ec Evaluati
 	}
 
 	switch kind {
-	case OverrideKind, UnderrideKind:
+	case OverrideKind, PostContentKind, UnderrideKind:
 		for _, cond := range rule.Conditions {
 			ok, err := conditionMatches(cond, event, ec)
 			if err != nil {
@@ -177,6 +182,16 @@ func conditionMatches(cond *Condition, event gomatrixserverlib.PDU, ec Evaluatio
 
 	case SenderNotificationPermissionCondition:
 		return ec.HasPowerLevel(event.SenderID(), cond.Key)
+
+	case ThreadSubscriptionCondition:
+		if cond.Subscribed == nil {
+			return false, nil
+		}
+		inThread, subscribed, err := ec.ThreadSubscription()
+		if err != nil {
+			return false, fmt.Errorf("ThreadSubscription failed: %w", err)
+		}
+		return inThread && subscribed == *cond.Subscribed, nil
 
 	default:
 		return false, nil

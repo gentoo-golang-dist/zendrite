@@ -498,6 +498,14 @@ column userapi_registration_tokens | expiry_time | bigint | YES |
 column userapi_registration_tokens | pending | bigint | YES |
 column userapi_registration_tokens | token | text | NO |
 column userapi_registration_tokens | uses_allowed | bigint | YES |
+column userapi_thread_subscriptions | automatic | boolean | NO |
+column userapi_thread_subscriptions | localpart | text | NO |
+column userapi_thread_subscriptions | room_id | text | NO |
+column userapi_thread_subscriptions | server_name | text | NO |
+column userapi_thread_subscriptions | stream_id | bigint | NO |
+column userapi_thread_subscriptions | subscribed | boolean | NO |
+column userapi_thread_subscriptions | thread_root_id | text | NO |
+column userapi_thread_subscriptions | unsubscribed_at | bigint | NO | 0
 column userapi_threepids | localpart | text | NO |
 column userapi_threepids | medium | text | NO | 'email'::text
 column userapi_threepids | server_name | text | NO |
@@ -711,6 +719,9 @@ index userapi_pushers | userapi_pusher_app_id_pushkey_localpart_idx | CREATE UNI
 index userapi_pushers | userapi_pusher_localpart_idx | CREATE INDEX userapi_pusher_localpart_idx ON public.userapi_pushers USING btree (localpart, server_name)
 index userapi_pushers | userapi_pushers_pkey | CREATE UNIQUE INDEX userapi_pushers_pkey ON public.userapi_pushers USING btree (id)
 index userapi_registration_tokens | userapi_registration_tokens_pkey | CREATE UNIQUE INDEX userapi_registration_tokens_pkey ON public.userapi_registration_tokens USING btree (token)
+index userapi_thread_subscriptions | userapi_thread_subscriptions_pkey | CREATE UNIQUE INDEX userapi_thread_subscriptions_pkey ON public.userapi_thread_subscriptions USING btree (localpart, server_name, room_id, thread_root_id)
+index userapi_thread_subscriptions | userapi_thread_subscriptions_stream_idx | CREATE INDEX userapi_thread_subscriptions_stream_idx ON public.userapi_thread_subscriptions USING btree (localpart, server_name, stream_id)
+index userapi_thread_subscriptions | userapi_thread_subscriptions_thread_idx | CREATE INDEX userapi_thread_subscriptions_thread_idx ON public.userapi_thread_subscriptions USING btree (room_id, thread_root_id) WHERE subscribed
 index userapi_threepids | userapi_threepid_idx | CREATE INDEX userapi_threepid_idx ON public.userapi_threepids USING btree (localpart, server_name)
 index userapi_threepids | userapi_threepids_pkey | CREATE UNIQUE INDEX userapi_threepids_pkey ON public.userapi_threepids USING btree (threepid, medium)
 index zendrite_ha_compatibility | zendrite_ha_compatibility_pkey | CREATE UNIQUE INDEX zendrite_ha_compatibility_pkey ON public.zendrite_ha_compatibility USING btree (id)
@@ -1270,6 +1281,15 @@ constraint userapi_pushers | userapi_pushers_pushkey_ts_ms_not_null | NOT NULL p
 constraint userapi_pushers | userapi_pushers_server_name_not_null | NOT NULL server_name
 constraint userapi_registration_tokens | userapi_registration_tokens_pkey | PRIMARY KEY (token)
 constraint userapi_registration_tokens | userapi_registration_tokens_token_not_null | NOT NULL token
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_automatic_not_null | NOT NULL automatic
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_localpart_not_null | NOT NULL localpart
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_pkey | PRIMARY KEY (localpart, server_name, room_id, thread_root_id)
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_room_id_not_null | NOT NULL room_id
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_server_name_not_null | NOT NULL server_name
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_stream_id_not_null | NOT NULL stream_id
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_subscribed_not_null | NOT NULL subscribed
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_thread_root_id_not_null | NOT NULL thread_root_id
+constraint userapi_thread_subscriptions | userapi_thread_subscriptions_unsubscribed_at_not_null | NOT NULL unsubscribed_at
 constraint userapi_threepids | userapi_threepids_localpart_not_null | NOT NULL localpart
 constraint userapi_threepids | userapi_threepids_medium_not_null | NOT NULL medium
 constraint userapi_threepids | userapi_threepids_pkey | PRIMARY KEY (threepid, medium)

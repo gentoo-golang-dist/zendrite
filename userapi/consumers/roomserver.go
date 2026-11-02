@@ -437,6 +437,20 @@ func (s *OutputRoomEventConsumer) processMessage(ctx context.Context, event *rst
 		"room_size":   roomSize,
 	}).Tracef("Notifying members")
 
+	// The thread decides the MSC4306 thread subscription push rules, and
+	// whose notification counts the event joins.
+	threadID, threadErr := receipts.EventThreadID(ctx, s.rsAPI, event)
+	var thread eventThread
+	if threadErr == nil && threadID != "main" {
+		thread.inThread = true
+		if thread.subscribers, err = s.threadSubscribers(ctx, event.RoomID().String(), threadID); err != nil {
+			// Without the subscriptions the event is treated as if it was
+			// not in a thread, rather than dropping its notifications.
+			log.WithField("event_id", event.EventID()).WithError(err).Error("Unable to load thread subscriptions")
+			thread = eventThread{}
+		}
+	}
+
 	// Notification.UserIsTarget is a per-member field, so we
 	// cannot group all users in a single request.
 	//
@@ -445,7 +459,7 @@ func (s *OutputRoomEventConsumer) processMessage(ctx context.Context, event *rst
 	// e.g. Element's Push gateway in one go.
 	var notified []string
 	for _, mem := range members {
-		inserted, err := s.notifyLocal(ctx, event, mem, roomSize, roomName, streamPos)
+		inserted, err := s.notifyLocal(ctx, event, mem, roomSize, roomName, streamPos, thread)
 		if inserted {
 			notified = append(notified, mem.UserID)
 		}
@@ -458,7 +472,7 @@ func (s *OutputRoomEventConsumer) processMessage(ctx context.Context, event *rst
 	}
 
 	var users []string
-	threadID, err := receipts.EventThreadID(ctx, s.rsAPI, event)
+	err = threadErr
 	if err == nil {
 		users, err = s.db.StoreNotificationEvent(ctx, event.RoomID().String(), event.EventID(), threadID, streamPos)
 	}
@@ -651,8 +665,8 @@ func unmarshalCanonicalAlias(event *rstypes.HeaderedEvent) (string, error) {
 
 // notifyLocal finds the right push actions for a local user, given an event.
 // It reports whether it stored a notification, even when a later step fails.
-func (s *OutputRoomEventConsumer) notifyLocal(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int, roomName string, streamPos uint64) (bool, error) {
-	actions, err := s.evaluatePushRules(ctx, event, mem, roomSize)
+func (s *OutputRoomEventConsumer) notifyLocal(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int, roomName string, streamPos uint64, thread eventThread) (bool, error) {
+	actions, err := s.evaluatePushRules(ctx, event, mem, roomSize, thread)
 	if err != nil {
 		return false, fmt.Errorf("s.evaluatePushRules: %w", err)
 	}
@@ -773,7 +787,7 @@ func (s *OutputRoomEventConsumer) notifyLocal(ctx context.Context, event *rstype
 
 // evaluatePushRules fetches and evaluates the push rules of a local
 // user. Returns actions (including dont_notify).
-func (s *OutputRoomEventConsumer) evaluatePushRules(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int) ([]*pushrules.Action, error) {
+func (s *OutputRoomEventConsumer) evaluatePushRules(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int, thread eventThread) ([]*pushrules.Action, error) {
 	user := ""
 	sender, err := s.rsAPI.QueryUserIDForSender(ctx, event.RoomID(), event.SenderID())
 	if err == nil {
@@ -811,6 +825,7 @@ func (s *OutputRoomEventConsumer) evaluatePushRules(ctx context.Context, event *
 		mem:      mem,
 		roomID:   event.RoomID().String(),
 		roomSize: roomSize,
+		thread:   thread,
 	}
 	eval := pushrules.NewRuleSetEvaluator(ec, &ruleSets.Global)
 	rule, err := eval.MatchEvent(event.PDU, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
@@ -835,12 +850,38 @@ func (s *OutputRoomEventConsumer) evaluatePushRules(ctx context.Context, event *
 	return rule.Actions, nil
 }
 
+// eventThread is the thread of an event, for the MSC4306 thread
+// subscription push rules.
+type eventThread struct {
+	inThread bool
+	// subscribers are the local users subscribed to the thread.
+	subscribers map[string]bool
+}
+
+// threadSubscribers returns the local users subscribed to a thread.
+func (s *OutputRoomEventConsumer) threadSubscribers(ctx context.Context, roomID, threadRootID string) (map[string]bool, error) {
+	userIDs, err := s.db.GetThreadSubscribers(ctx, roomID, threadRootID)
+	if err != nil {
+		return nil, err
+	}
+	subscribers := make(map[string]bool, len(userIDs))
+	for _, userID := range userIDs {
+		subscribers[userID] = true
+	}
+	return subscribers, nil
+}
+
 type ruleSetEvalContext struct {
 	ctx      context.Context
 	rsAPI    rsapi.UserRoomserverAPI
 	mem      *localMembership
 	roomID   string
 	roomSize int
+	thread   eventThread
+}
+
+func (rse *ruleSetEvalContext) ThreadSubscription() (inThread, subscribed bool, err error) {
+	return rse.thread.inThread, rse.thread.subscribers[rse.mem.UserID], nil
 }
 
 func (rse *ruleSetEvalContext) UserDisplayName() string { return rse.mem.DisplayName }

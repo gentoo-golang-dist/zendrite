@@ -13,17 +13,18 @@ import (
 )
 
 type Streams struct {
-	PDUStreamProvider              StreamProvider
-	TypingStreamProvider           StreamProvider
-	ReceiptStreamProvider          StreamProvider
-	InviteStreamProvider           StreamProvider
-	SendToDeviceStreamProvider     StreamProvider
-	AccountDataStreamProvider      StreamProvider
-	DeviceListStreamProvider       StreamProvider
-	NotificationDataStreamProvider StreamProvider
-	PresenceStreamProvider         StreamProvider
-	StickyEventsStreamProvider     StreamProvider
-	ProfileUpdatesStreamProvider   StreamProvider
+	PDUStreamProvider                 StreamProvider
+	TypingStreamProvider              StreamProvider
+	ReceiptStreamProvider             StreamProvider
+	InviteStreamProvider              StreamProvider
+	SendToDeviceStreamProvider        StreamProvider
+	AccountDataStreamProvider         StreamProvider
+	DeviceListStreamProvider          StreamProvider
+	NotificationDataStreamProvider    StreamProvider
+	PresenceStreamProvider            StreamProvider
+	StickyEventsStreamProvider        StreamProvider
+	ProfileUpdatesStreamProvider      StreamProvider
+	ThreadSubscriptionsStreamProvider StreamProvider
 }
 
 func NewSyncStreamProviders(
@@ -77,6 +78,10 @@ func NewSyncStreamProviders(
 		ProfileUpdatesStreamProvider: &ProfileUpdatesStreamProvider{
 			DefaultStreamProvider: DefaultStreamProvider{DB: d},
 		},
+		ThreadSubscriptionsStreamProvider: &ThreadSubscriptionsStreamProvider{
+			DefaultStreamProvider: DefaultStreamProvider{DB: d},
+			userAPI:               userAPI,
+		},
 	}
 
 	snapshot, err := d.NewDatabaseSnapshot(ctx)
@@ -97,6 +102,7 @@ func NewSyncStreamProviders(
 	streams.PresenceStreamProvider.Setup(ctx, snapshot)
 	streams.StickyEventsStreamProvider.Setup(ctx, snapshot)
 	streams.ProfileUpdatesStreamProvider.Setup(ctx, snapshot)
+	streams.ThreadSubscriptionsStreamProvider.Setup(ctx, snapshot)
 
 	succeeded = true
 	return streams
@@ -104,16 +110,17 @@ func NewSyncStreamProviders(
 
 func (s *Streams) Latest(ctx context.Context) types.StreamingToken {
 	return types.StreamingToken{
-		PDUPosition:              s.PDUStreamProvider.LatestPosition(ctx),
-		TypingPosition:           s.TypingStreamProvider.LatestPosition(ctx),
-		ReceiptPosition:          s.ReceiptStreamProvider.LatestPosition(ctx),
-		InvitePosition:           s.InviteStreamProvider.LatestPosition(ctx),
-		SendToDevicePosition:     s.SendToDeviceStreamProvider.LatestPosition(ctx),
-		AccountDataPosition:      s.AccountDataStreamProvider.LatestPosition(ctx),
-		NotificationDataPosition: s.NotificationDataStreamProvider.LatestPosition(ctx),
-		DeviceListPosition:       s.DeviceListStreamProvider.LatestPosition(ctx),
-		PresencePosition:         s.PresenceStreamProvider.LatestPosition(ctx),
-		StickyPosition:           s.StickyEventsStreamProvider.LatestPosition(ctx),
-		ProfilePosition:          s.ProfileUpdatesStreamProvider.LatestPosition(ctx),
+		PDUPosition:                s.PDUStreamProvider.LatestPosition(ctx),
+		TypingPosition:             s.TypingStreamProvider.LatestPosition(ctx),
+		ReceiptPosition:            s.ReceiptStreamProvider.LatestPosition(ctx),
+		InvitePosition:             s.InviteStreamProvider.LatestPosition(ctx),
+		SendToDevicePosition:       s.SendToDeviceStreamProvider.LatestPosition(ctx),
+		AccountDataPosition:        s.AccountDataStreamProvider.LatestPosition(ctx),
+		NotificationDataPosition:   s.NotificationDataStreamProvider.LatestPosition(ctx),
+		DeviceListPosition:         s.DeviceListStreamProvider.LatestPosition(ctx),
+		PresencePosition:           s.PresenceStreamProvider.LatestPosition(ctx),
+		StickyPosition:             s.StickyEventsStreamProvider.LatestPosition(ctx),
+		ProfilePosition:            s.ProfileUpdatesStreamProvider.LatestPosition(ctx),
+		ThreadSubscriptionPosition: s.ThreadSubscriptionsStreamProvider.LatestPosition(ctx),
 	}
 }

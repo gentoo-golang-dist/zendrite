@@ -111,6 +111,11 @@ func NewUserDatabase(ctx context.Context, conMan *sqlutil.Connections, dbPropert
 		return nil, fmt.Errorf("NewSQLiteDehydratedDevicesTable: %w", err)
 	}
 
+	threadSubscriptionsTable, err := NewSQLiteThreadSubscriptionsTable(db)
+	if err != nil {
+		return nil, fmt.Errorf("NewSQLiteThreadSubscriptionsTable: %w", err)
+	}
+
 	m = sqlutil.NewMigrator(db)
 	m.AddMigrations(sqlutil.Migration{
 		Version: "userapi: server names populate",
@@ -139,6 +144,7 @@ func NewUserDatabase(ctx context.Context, conMan *sqlutil.Connections, dbPropert
 		Notifications:         notificationsTable,
 		Stats:                 statsTable,
 		DehydratedDevices:     dehydratedDevicesTable,
+		ThreadSubscriptions:   threadSubscriptionsTable,
 		ServerName:            serverName,
 		DB:                    db,
 		Writer:                writer,

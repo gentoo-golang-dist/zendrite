@@ -421,17 +421,17 @@ func TestStreamTokenParsing(t *testing.T) {
 	}{
 		{
 			name:      "valid token",
-			input:     "s100_50_25_10_5_3_1_0_8_2_7",
+			input:     "s100_50_25_10_5_3_1_0_8_2_7_6",
 			wantError: false,
 		},
 		{
 			name:      "zero positions",
-			input:     "s0_0_0_0_0_0_0_0_0_0_0",
+			input:     "s0_0_0_0_0_0_0_0_0_0_0_0",
 			wantError: false,
 		},
 		{
 			name:      "large positions",
-			input:     "s999999_888888_777777_666666_555555_444444_333333_222222_111111_99999_88888",
+			input:     "s999999_888888_777777_666666_555555_444444_333333_222222_111111_99999_88888_77777",
 			wantError: false,
 		},
 		{

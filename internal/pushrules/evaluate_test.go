@@ -170,6 +170,10 @@ func (fakeEvaluationContext) HasPowerLevel(senderID spec.SenderID, levelKey stri
 	return senderID == "@poweruser:example.com" && levelKey == "powerlevel", nil
 }
 
+func (fakeEvaluationContext) ThreadSubscription() (inThread, subscribed bool, err error) {
+	return false, false, nil
+}
+
 func TestPatternMatches(t *testing.T) {
 	t.Parallel()
 	tsts := []struct {

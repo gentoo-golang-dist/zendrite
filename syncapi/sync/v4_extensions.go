@@ -339,7 +339,59 @@ func (rp *RequestPool) ProcessExtensions(
 		}
 	}
 
+	// Process thread subscriptions extension (MSC4308).
+	if req.Extensions.ThreadSubscriptions != nil && req.Extensions.ThreadSubscriptions.Enabled {
+		threadSubsResp, err := rp.processThreadSubscriptionsExtension(ctx, userID, req.Extensions.ThreadSubscriptions, fromPos, toPos)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, toPos, nil, ctx.Err()
+			}
+			logrus.WithError(err).Error("Failed to process thread subscriptions extension")
+		} else {
+			resp.ThreadSubscriptions = threadSubsResp
+		}
+	}
+
 	return resp, updatedPos, deliveredReceipts, nil
+}
+
+// processThreadSubscriptionsExtension handles the MSC4308 thread subscriptions
+// extension, as Synapse does: it returns the latest changes to the user's
+// thread subscriptions since the connection position, at most limit of them,
+// with a prev_batch token for the /thread_subscriptions endpoint when older
+// changes were left out, and nil when nothing changed. An initial sync
+// returns the latest changes of all time, unsubscriptions included.
+func (rp *RequestPool) processThreadSubscriptionsExtension(
+	ctx context.Context,
+	userID string,
+	req *types.ThreadSubscriptionsRequest,
+	fromPos *types.StreamingToken,
+	toPos types.StreamingToken,
+) (*types.ThreadSubscriptionsResponse, error) {
+	limit := types.DefaultThreadSubscriptionsLimit
+	if req.Limit != nil {
+		limit = *req.Limit
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	limit = min(limit, types.MaxThreadSubscriptionsLimit)
+
+	var from types.StreamPosition
+	if fromPos != nil {
+		from = fromPos.ThreadSubscriptionPosition
+	}
+	to := toPos.ThreadSubscriptionPosition
+	if to <= from {
+		return nil, nil
+	}
+	updates, err := rp.userAPI.QueryThreadSubscriptionUpdates(ctx, userID, int64(from), int64(to), limit)
+	if err != nil || len(updates) == 0 {
+		return nil, err
+	}
+	resp, prevBatch := types.NewThreadSubscriptionsResponse(updates, limit)
+	resp.PrevBatch = prevBatch
+	return &resp, nil
 }
 
 // processToDeviceExtension handles to-device message extension

@@ -75,6 +75,7 @@ type SyncUserAPI interface {
 	// QueryProfile returns a local user's profile, for the MSC4262 sliding
 	// sync extension.
 	QueryProfile(ctx context.Context, userID string) (*authtypes.Profile, error)
+	ThreadSubscriptionsAPI
 }
 
 // DehydratedDeviceAPI is the API for managing dehydrated devices (MSC3814).

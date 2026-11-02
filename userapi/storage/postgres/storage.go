@@ -114,6 +114,11 @@ func NewDatabase(ctx context.Context, conMan *sqlutil.Connections, dbProperties 
 		return nil, fmt.Errorf("NewPostgresDehydratedDevicesTable: %w", err)
 	}
 
+	threadSubscriptionsTable, err := NewPostgresThreadSubscriptionsTable(db)
+	if err != nil {
+		return nil, fmt.Errorf("NewPostgresThreadSubscriptionsTable: %w", err)
+	}
+
 	m = sqlutil.NewMigrator(db)
 	m.AddMigrations(sqlutil.Migration{
 		Version: "userapi: server names populate",
@@ -143,6 +148,7 @@ func NewDatabase(ctx context.Context, conMan *sqlutil.Connections, dbProperties 
 		RegistrationTokens:    registationTokensTable,
 		Stats:                 statsTable,
 		DehydratedDevices:     dehydratedDevicesTable,
+		ThreadSubscriptions:   threadSubscriptionsTable,
 		ServerName:            serverName,
 		DB:                    db,
 		Writer:                writer,

@@ -98,6 +98,34 @@ type syncUserAPI struct {
 	accounts []userapi.Device
 	// globalAccountData maps user ID and type to content.
 	globalAccountData map[string]map[string]json.RawMessage
+	// threadSubscriptions serves the MSC4306 methods when set.
+	threadSubscriptions userapi.ThreadSubscriptionsAPI
+}
+
+func (s *syncUserAPI) PerformThreadSubscribe(ctx context.Context, req *userapi.PerformThreadSubscribeRequest) (*userapi.PerformThreadSubscribeResponse, error) {
+	return s.threadSubscriptions.PerformThreadSubscribe(ctx, req)
+}
+
+func (s *syncUserAPI) PerformThreadUnsubscribe(ctx context.Context, req *userapi.PerformThreadUnsubscribeRequest) (int64, error) {
+	return s.threadSubscriptions.PerformThreadUnsubscribe(ctx, req)
+}
+
+func (s *syncUserAPI) QueryThreadSubscription(ctx context.Context, userID, roomID, threadRootID string) (*userapi.ThreadSubscription, error) {
+	return s.threadSubscriptions.QueryThreadSubscription(ctx, userID, roomID, threadRootID)
+}
+
+func (s *syncUserAPI) QueryThreadSubscriptionUpdates(ctx context.Context, userID string, from, to int64, limit int) ([]userapi.ThreadSubscriptionUpdate, error) {
+	if s.threadSubscriptions == nil {
+		return nil, nil
+	}
+	return s.threadSubscriptions.QueryThreadSubscriptionUpdates(ctx, userID, from, to, limit)
+}
+
+func (s *syncUserAPI) QueryMaxThreadSubscriptionStreamID(ctx context.Context) (int64, error) {
+	if s.threadSubscriptions == nil {
+		return 0, nil
+	}
+	return s.threadSubscriptions.QueryMaxThreadSubscriptionStreamID(ctx)
 }
 
 func (s *syncUserAPI) QueryAccountData(ctx context.Context, req *userapi.QueryAccountDataRequest, res *userapi.QueryAccountDataResponse) error {

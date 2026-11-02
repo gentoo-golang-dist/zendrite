@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/require"
@@ -79,7 +80,17 @@ func TestThreadReplyCountedInThread(t *testing.T) {
 			cfg: cfg, db: db, rsAPI: &threadRoomserver{member: member},
 			syncProducer: producers.NewSyncAPI(db, publisher, "client", "notifications"),
 		}
-		for i, event := range []*types.HeaderedEvent{root, reply} {
+		// Alice follows the thread (MSC4306); replies in threads she does not
+		// follow neither notify nor count.
+		localpart, domain, err := gomatrixserverlib.SplitID('@', alice.ID)
+		require.NoError(t, err)
+		_, _, err = db.SubscribeThread(t.Context(), localpart, domain, room.ID, root.EventID(), false, 0)
+		require.NoError(t, err)
+		unfollowed := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"msgtype": "m.text", "body": "other root"})
+		unfollowedReply := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{
+			"msgtype": "m.text", "body": "reply", "m.relates_to": map[string]any{"rel_type": "m.thread", "event_id": unfollowed.EventID()},
+		})
+		for i, event := range []*types.HeaderedEvent{root, reply, unfollowed, unfollowedReply} {
 			require.NoError(t, consumer.processMessage(t.Context(), event, uint64(i+1)))
 		}
 
@@ -89,9 +100,9 @@ func TestThreadReplyCountedInThread(t *testing.T) {
 				require.NoError(t, json.Unmarshal(msg.Data, &last))
 			}
 		}
-		require.Equal(t, 2, last.UnreadNotificationCount)
+		require.Equal(t, 3, last.UnreadNotificationCount)
 		main, threads := last.SplitByThread()
-		require.Equal(t, 1, main.UnreadNotificationCount, "the root is in the main timeline")
+		require.Equal(t, 2, main.UnreadNotificationCount, "the roots are in the main timeline")
 		require.Equal(t, map[string]eventutil.ThreadNotificationCounts{root.EventID(): {UnreadNotificationCount: 1}}, threads)
 
 		// When the event's thread cannot be resolved, its stored notification
@@ -101,9 +112,9 @@ func TestThreadReplyCountedInThread(t *testing.T) {
 			"msgtype": "m.text", "body": "see above", "m.relates_to": map[string]any{"rel_type": "m.reference", "event_id": root.EventID()},
 		})
 		publisher.msgs = nil
-		require.Error(t, consumer.processMessage(t.Context(), reference, 3))
+		require.Error(t, consumer.processMessage(t.Context(), reference, 5))
 		require.NotEmpty(t, publisher.msgs)
 		require.NoError(t, json.Unmarshal(publisher.msgs[len(publisher.msgs)-1].Data, &last))
-		require.Equal(t, 3, last.UnreadNotificationCount)
+		require.Equal(t, 4, last.UnreadNotificationCount)
 	})
 }

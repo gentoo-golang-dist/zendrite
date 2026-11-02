@@ -114,6 +114,7 @@ func Setup(
 		"com.beeper.msc4169":            true, // MSC4169: redactions through /send in every room version
 		"org.matrix.msc4380":            true, // MSC4380: invite blocking, unstable account data type
 		"org.matrix.msc4380.stable":     true, // MSC4380: invite blocking, m.invite_permission_config
+		"org.matrix.msc4306":            true, // MSC4306: thread subscriptions
 		// MSC2666: GET /v1/mutual_rooms, for clients that look for the flag
 		// rather than spec v1.19.
 		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,

@@ -1560,6 +1560,11 @@ func v4ResponseHasUpdates(response types.SlidingSyncResponse) bool {
 		if response.Extensions.Profiles != nil && len(response.Extensions.Profiles.Users) > 0 {
 			return true
 		}
+
+		// Thread subscriptions (MSC4308)
+		if response.Extensions.ThreadSubscriptions != nil {
+			return true
+		}
 	}
 
 	return false

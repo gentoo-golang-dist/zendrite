@@ -47,6 +47,18 @@ type stickyEnv struct {
 
 func newStickyEnv(t *testing.T, dbType test.DBType, users ...*test.User) *stickyEnv {
 	t.Helper()
+	return newSyncTestEnv(t, dbType, nil, users...)
+}
+
+// newSyncTestEnv starts a sync API for the users. If set, the
+// threadSubscriptions function creates the userapi's MSC4306 thread
+// subscriptions API.
+func newSyncTestEnv(
+	t *testing.T, dbType test.DBType,
+	threadSubscriptions func(context.Context, *sqlutil.Connections, *config.Zendrite) userapi.ThreadSubscriptionsAPI,
+	users ...*test.User,
+) *stickyEnv {
+	t.Helper()
 	cfg, processCtx, closeRig := testrig.CreateConfig(t, dbType)
 	t.Cleanup(closeRig)
 	cfg.ClientAPI.RateLimiting = config.RateLimiting{Enabled: false}
@@ -71,7 +83,11 @@ func newStickyEnv(t *testing.T, dbType test.DBType, users ...*test.User) *sticky
 	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
 	rsAPI.SetFederationAPI(nil, nil)
 	env.rsAPI = rsAPI
-	AddPublicRoutes(processCtx, env.routers, cfg, cm, &natsInstance, accountDataUserAPI{&syncUserAPI{accounts: accounts}}, rsAPI, caches, caching.DisableMetrics, nil, nil)
+	userAPI := &syncUserAPI{accounts: accounts}
+	if threadSubscriptions != nil {
+		userAPI.threadSubscriptions = threadSubscriptions(processCtx.Context(), cm, cfg)
+	}
+	AddPublicRoutes(processCtx, env.routers, cfg, cm, &natsInstance, accountDataUserAPI{userAPI}, rsAPI, caches, caching.DisableMetrics, nil, nil)
 
 	db, err := storage.NewSyncServerDatasource(processCtx.Context(), cm, &cfg.SyncAPI.Database)
 	require.NoError(t, err)
