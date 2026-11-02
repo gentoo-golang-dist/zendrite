@@ -8,6 +8,7 @@ package input
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -394,11 +395,12 @@ func (r *Inputer) recheckRejectedMemberships(
 	relevant := maps.Clone(repaired)
 	var accepted []types.StateEntry
 	for _, ev := range events {
-		atEvent, serr := updater.StateAtEventIDs(ctx, []string{ev.EventID()})
-		if serr != nil {
-			return nil, fmt.Errorf("updater.StateAtEventIDs: %w", serr)
+		// Outliers have no state of their own to check them against.
+		_, hasState, herr := stateAtEvents(ctx, updater, []string{ev.EventID()})
+		if herr != nil {
+			return nil, herr
 		}
-		if len(atEvent) != 1 || atEvent[0].BeforeStateSnapshotNID == 0 {
+		if !hasState {
 			continue
 		}
 		authEvents, aerr := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)
@@ -485,17 +487,9 @@ func stateBeforeForAuth(
 	if len(prevIDs) == 0 {
 		return nil, false, nil
 	}
-	prevStates, err := updater.StateAtEventIDs(ctx, prevIDs)
-	if err != nil {
-		return nil, false, fmt.Errorf("updater.StateAtEventIDs: %w", err)
-	}
-	if len(prevStates) != len(prevIDs) {
-		return nil, false, nil
-	}
-	for _, prevState := range prevStates {
-		if prevState.BeforeStateSnapshotNID == 0 {
-			return nil, false, nil
-		}
+	prevStates, known, err := stateAtEvents(ctx, updater, prevIDs)
+	if err != nil || !known {
+		return nil, false, err
 	}
 	tuples := gomatrixserverlib.StateNeededForAuth([]gomatrixserverlib.PDU{event}).Tuples()
 	tuples = append(tuples, gomatrixserverlib.StateKeyTuple{EventType: spec.MRoomHistoryVisibility, StateKey: ""})
@@ -504,6 +498,33 @@ func stateBeforeForAuth(
 		return nil, false, fmt.Errorf("roomState.LoadStateAfterEventsForStringTuples: %w", err)
 	}
 	return entries, true, nil
+}
+
+// stateAtEvents returns the state at the given events as stored in this
+// transaction, and false if any of them is not stored or has no state of its
+// own, as an outlier. The store reports an event without state as an error,
+// and many rejected events are outliers.
+func stateAtEvents(
+	ctx context.Context, updater *shared.RoomUpdater, eventIDs []string,
+) ([]types.StateAtEvent, bool, error) {
+	states, err := updater.StateAtEventIDs(ctx, eventIDs)
+	var missingState types.MissingStateError
+	var missingEvent types.MissingEventError
+	if errors.As(err, &missingState) || errors.As(err, &missingEvent) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("updater.StateAtEventIDs: %w", err)
+	}
+	if len(states) != len(eventIDs) {
+		return nil, false, nil
+	}
+	for _, st := range states {
+		if st.BeforeStateSnapshotNID == 0 {
+			return nil, false, nil
+		}
+	}
+	return states, true, nil
 }
 
 // allowedByState reports whether an event passes auth against the given state.
@@ -840,11 +861,12 @@ func (r *Inputer) recheckRejectedTimelineEvents(
 		if len(cited) == 0 {
 			continue
 		}
-		atEvent, serr := updater.StateAtEventIDs(ctx, []string{ev.EventID()})
-		if serr != nil {
-			return nil, fmt.Errorf("updater.StateAtEventIDs: %w", serr)
+		// Outliers have no state of their own to check them against.
+		_, hasState, herr := stateAtEvents(ctx, updater, []string{ev.EventID()})
+		if herr != nil {
+			return nil, herr
 		}
-		if len(atEvent) != 1 || atEvent[0].BeforeStateSnapshotNID == 0 {
+		if !hasState {
 			continue
 		}
 		authEvents, aerr := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)

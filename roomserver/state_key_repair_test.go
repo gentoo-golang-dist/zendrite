@@ -40,9 +40,10 @@ import (
 // membership table says she left. Bob's latest join is stored under no state
 // key too, and the current state still holds his leave before it: under his
 // key, the join shares it with the leave, and state resolution must pick the
-// join. Charlie's and Eve's joins, and the message Charlie sent after his, rejected because the join rules were
-// missing, must be accepted, but Eve was banned after joining and must stay
-// banned.
+// join. Charlie's and Eve's joins, and the message Charlie sent after his,
+// rejected because the join rules were missing, must be accepted, but Eve was
+// banned after joining and must stay banned. Rejected outliers, which have no
+// state to check them against, must stay rejected without stopping the repair.
 func TestRepairStateKeys(t *testing.T) {
 	alice := test.NewUser(t)
 	bob := test.NewUser(t)
@@ -50,6 +51,7 @@ func TestRepairStateKeys(t *testing.T) {
 	dave := test.NewUser(t)
 	carol := test.NewUser(t)
 	eve := test.NewUser(t)
+	frank := test.NewUser(t)
 	ctx := context.Background()
 
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
@@ -195,9 +197,24 @@ func TestRepairStateKeys(t *testing.T) {
 		eveJoin := room.CreateAndInsert(t, eve, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(eve.ID))
 		_ = api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{eveJoin}, "test", "test", "test", nil, false)
 		requireRejected(eveJoin, true)
+		// Frank's join and another of charlie's messages are rejected the
+		// same way, but stored as outliers, with no state of their own, as
+		// most rejected events on the production server are.
+		frankJoin := room.CreateAndInsert(t, frank, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(frank.ID))
+		_ = api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{frankJoin}, "test", "test", "test", nil, false)
+		requireRejected(frankJoin, true)
+		charlieOutlier := room.CreateAndInsert(t, charlie, "m.room.message", map[string]any{"body": "lost"})
+		_ = api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{charlieOutlier}, "test", "test", "test", nil, false)
+		requireRejected(charlieOutlier, true)
 		eveBan := room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Ban}, test.WithStateKey(eve.ID))
 		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{eveBan}, "test", "test", "test", nil, false))
 		requireRejected(eveBan, false)
+		outlierNIDs, err := db.EventNIDs(ctx, []string{frankJoin.EventID(), charlieOutlier.EventID()})
+		require.NoError(t, err)
+		for _, nid := range outlierNIDs {
+			_, err = sqlDB.ExecContext(ctx, "UPDATE roomserver_events SET state_snapshot_nid = 0 WHERE event_nid = $1", nid.EventNID)
+			require.NoError(t, err)
+		}
 		requireMembership(bob, spec.Leave)
 		requireCarolRow(1)
 		before, err := db.GetStateEvent(ctx, room.ID, spec.MRoomMember, bob.ID)
@@ -225,6 +242,8 @@ func TestRepairStateKeys(t *testing.T) {
 				switch output.OldRoomEvent.Event.EventID() {
 				case charlieEarlyMessage.EventID():
 					announcedEarlyMessage = true
+				case charlieOutlier.EventID():
+					t.Fatal("charlie's outlier message must not be announced")
 				case charlieSecret.EventID():
 					// The redaction that arrived while it was rejected applies.
 					announcedSecret = true
@@ -243,6 +262,8 @@ func TestRepairStateKeys(t *testing.T) {
 				require.Equal(t, string(api.DoNotSendToOtherServers), output.NewRoomEvent.SendAsServer)
 			case eveJoin.EventID():
 				t.Fatal("eve's join must not be announced, since the ban stays her membership")
+			case frankJoin.EventID():
+				t.Fatal("frank's join must not be announced, since it is an outlier")
 			}
 		}
 		require.True(t, announcedCharlie, "charlie's accepted join must be announced")
@@ -303,6 +324,10 @@ func TestRepairStateKeys(t *testing.T) {
 		require.Equal(t, charlieJoin.EventID(), current.EventID())
 		requireRejected(eveJoin, false)
 		requireMembership(eve, spec.Ban)
+		// Outliers have no state to check them against, so they stay
+		// rejected.
+		requireRejected(frankJoin, true)
+		requireRejected(charlieOutlier, true)
 		current, err = db.GetStateEvent(ctx, room.ID, spec.MRoomMember, eve.ID)
 		require.NoError(t, err)
 		require.NotNil(t, current)
