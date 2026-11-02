@@ -8,7 +8,8 @@ This page tracks the implementation status of notable MSCs in Zendrite.
 
 Many MSCs listed here have since been merged into the [Matrix specification](https://spec.matrix.org/) proper.
 They are listed by their original MSC number and the first spec version which includes them.
-Feature support does not imply support for an entire specification version; see the [client API conformance audit](/development/client-api-conformance/) for discovery policy and remaining blockers.
+Zendrite advertises spec versions up to v1.19; see the [client API conformance audit](/development/client-api-conformance/) for the evidence and the discovery policy.
+Open MSCs that clients use and Zendrite does not implement yet are tracked in [issue #558](https://codefloe.com/pat-s/zendrite/issues/558).
 
 ## Sync
 
@@ -100,6 +101,9 @@ State events, and aggregations that arrive with events over federation, are neve
 | [MSC3765](https://github.com/matrix-org/matrix-spec-proposals/pull/3765) | Rich text in room topics | 1.15 | Implemented: `createRoom` with `topic` adds a `text/plain` representation in `m.topic`. `/publicRooms`, `/hierarchy`, room summaries and `/search` use the first `text/plain` representation in `m.topic` (a missing `mimetype` counts as `text/plain`) and fall back to the `topic` key |
 | [MSC4267](https://github.com/matrix-org/matrix-spec-proposals/pull/4267) | Forget room on leave ([`m.forget_forced_upon_leave` capability](https://spec.matrix.org/v1.18/client-server-api/#mforget_forced_upon_leave-capability)) | 1.18 | Implemented (opt-in via [`auto_forget_on_leave`](/administration/auto-forget-on-leave/)) |
 | [MSC4380](https://github.com/matrix-org/matrix-spec-proposals/pull/4380) | Invite blocking | 1.18 | Implemented: see [invite blocking](#invite-blocking) |
+| [MSC2666](https://github.com/matrix-org/matrix-spec-proposals/pull/2666) | Mutual rooms | 1.19 | Implemented: `GET /_matrix/client/v1/mutual_rooms` lists the rooms the caller shares with a user, with signed pagination tokens. Also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable` |
+| [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
+| [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
 
 ### Invite blocking
 
@@ -317,6 +321,8 @@ An `as_token` without `user_id` then acts as the sender, as it does without dele
 | [MSC3882](https://github.com/matrix-org/matrix-spec-proposals/pull/3882) | Sign in a new session from an existing one | 1.7 | Implemented: `POST /_matrix/client/v1/login/get_token` asks for the password every time and returns a single-use `m.login.token` that expires after two minutes. `/login` lists the `m.login.token` flow with `get_login_token: true`, and `/capabilities` reports `m.get_login_token`. Redeeming a token deletes it first, so concurrent logins cannot share one. With [MSC3861](#msc3861-oidc-delegated-authentication), the endpoint returns 403 and the capability is disabled |
 | [MSC4178](https://github.com/matrix-org/matrix-spec-proposals/pull/4178) | Error codes for `requestToken` | 1.13 | Implemented: `/account/3pid/email/requestToken` (and `/register/email/requestToken`) return 400 `M_THREEPID_MEDIUM_NOT_SUPPORTED` without an email validation server and `M_INVALID_PARAM` for an invalid address; the `msisdn/requestToken` endpoints always return `M_THREEPID_MEDIUM_NOT_SUPPORTED` |
 | [MSC3861](https://github.com/matrix-org/matrix-spec-proposals/pull/3861) | Next-gen auth (OIDC) | 1.15 | Opt-in (`msc3861`) |
+| [MSC4312](https://github.com/matrix-org/matrix-spec-proposals/pull/4312) | `m.oauth` user-interactive authentication | 1.17 | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): replacing cross-signing keys asks for confirmation through the provider's account management page |
+| [MSC4191](https://github.com/matrix-org/matrix-spec-proposals/pull/4191), [MSC3824](https://github.com/matrix-org/matrix-spec-proposals/pull/3824), [MSC4341](https://github.com/matrix-org/matrix-spec-proposals/pull/4341) | OAuth 2.0 account management, OAuth-aware clients, device authorization grant | 1.18 | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): `/auth_metadata` passes on the provider's account management URL, actions and grant types, and `GET /login` marks SSO as `oauth_aware_preferred` |
 
 ## VoIP
 
@@ -372,6 +378,17 @@ In HA deployments, that is the active process: a successor picks up the schedule
 The resend uses the same roomserver transaction, keyed by the delay ID, so an event that did reach the room is not sent twice.
 
 `/versions` advertises `org.matrix.msc4140` and `org.matrix.msc4140.stable` while delayed events are enabled, and `/capabilities` reports the limits as both `m.delayed_events` and `org.matrix.msc4140.delayed_events`, where a `max_delay_ms` of 0 means disabled.
+
+## Client-only MSCs
+
+Some spec MSCs need no server support beyond storing events, account data, media or to-device messages, so they work with Zendrite as they are:
+[MSC4142](https://github.com/matrix-org/matrix-spec-proposals/pull/4142) (no intentional mentions from replies, 1.16),
+[MSC4313](https://github.com/matrix-org/matrix-spec-proposals/pull/4313) and [MSC4230](https://github.com/matrix-org/matrix-spec-proposals/pull/4230) (rendering, 1.18),
+[MSC4153](https://github.com/matrix-org/matrix-spec-proposals/pull/4153) (excluding devices that are not cross-signed, 1.18),
+[MSC4356](https://github.com/matrix-org/matrix-spec-proposals/pull/4356) (recent emoji, 1.18),
+[MSC2545](https://github.com/matrix-org/matrix-spec-proposals/pull/2545) (image packs, 1.19),
+[MSC4287](https://github.com/matrix-org/matrix-spec-proposals/pull/4287) (key backup preference, 1.19)
+and [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268) (encrypted history sharing, 1.19).
 
 ## Opt-in MSCs
 

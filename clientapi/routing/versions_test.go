@@ -29,20 +29,21 @@ func TestVersions(t *testing.T) {
 	t.Parallel()
 
 	baseFeatures := map[string]bool{
-		"org.matrix.e2e_cross_signing":  true,
-		"org.matrix.msc2285.stable":     true,
-		"org.matrix.msc3916.stable":     true,
-		"org.matrix.simplified_msc3575": true,
-		"org.matrix.msc4140":            false,
-		"org.matrix.msc4140.stable":     false,
-		"org.matrix.msc4143":            false,
-		"org.matrix.msc4354":            true,
-		"org.matrix.msc4222":            true,
-		"uk.tcpip.msc4133":              true,
-		"uk.tcpip.msc4133.stable":       true,
-		"com.beeper.msc4169":            true,
-		"org.matrix.msc4380":            true,
-		"org.matrix.msc4380.stable":     true,
+		"org.matrix.e2e_cross_signing":                   true,
+		"org.matrix.msc2285.stable":                      true,
+		"org.matrix.msc3916.stable":                      true,
+		"org.matrix.simplified_msc3575":                  true,
+		"org.matrix.msc4140":                             false,
+		"org.matrix.msc4140.stable":                      false,
+		"org.matrix.msc4143":                             false,
+		"org.matrix.msc4354":                             true,
+		"org.matrix.msc4222":                             true,
+		"uk.tcpip.msc4133":                               true,
+		"uk.tcpip.msc4133.stable":                        true,
+		"com.beeper.msc4169":                             true,
+		"org.matrix.msc4380":                             true,
+		"org.matrix.msc4380.stable":                      true,
+		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,
 	}
 	tests := []struct {
 		name     string
@@ -124,7 +125,7 @@ func TestVersions(t *testing.T) {
 				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 					t.Fatal(err)
 				}
-				wantVersions := []string{"r0.0.1", "r0.1.0", "r0.2.0", "r0.3.0", "r0.4.0", "r0.5.0", "r0.6.1", "v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "v1.6", "v1.7", "v1.8", "v1.9", "v1.10", "v1.11", "v1.12", "v1.13", "v1.14", "v1.15"}
+				wantVersions := []string{"r0.0.1", "r0.1.0", "r0.2.0", "r0.3.0", "r0.4.0", "r0.5.0", "r0.6.1", "v1.0", "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "v1.6", "v1.7", "v1.8", "v1.9", "v1.10", "v1.11", "v1.12", "v1.13", "v1.14", "v1.15", "v1.16", "v1.17", "v1.18", "v1.19"}
 				if !reflect.DeepEqual(response.Versions, wantVersions) {
 					t.Errorf("versions = %v, want %v", response.Versions, wantVersions)
 				}

@@ -15,12 +15,13 @@ It was forked from Dendrite to add [significant features](/mscs), optimisations 
 
 ## Is Zendrite stable?
 
-Mostly, although there are still missing features (newer spec versions aren't advertised yet) it's much more stable than Dendrite used to be.
+Mostly. It advertises Matrix spec versions up to v1.19, and it's much more stable than Dendrite used to be.
 If you are a confident power user then please try out Zendrite.
 
 ## Is Zendrite feature-complete?
 
-No, although a good portion of the Matrix specification has been implemented.
+For the Matrix specification, mostly: Zendrite advertises spec versions up to v1.19, and the [client API conformance audit](/development/client-api-conformance/) records the evidence.
+Some proposals (MSCs) that clients use but that are not in a spec release yet are still missing; [issue #558](https://codefloe.com/pat-s/zendrite/issues/558) tracks them, and [MSC support](/mscs) lists what is implemented.
 
 ## Is there a migration path from Dendrite to Zendrite?
 

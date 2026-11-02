@@ -5,10 +5,10 @@ description: Version discovery policy, audited implementation gaps, and experime
 
 ## Advertisement decision
 
-`GET /_matrix/client/versions` advertises `r0.0.1`, `r0.1.0`, `r0.2.0`, `r0.3.0`, `r0.4.0`, `r0.5.0`, `r0.6.1`, and `v1.0` to `v1.15`.
+`GET /_matrix/client/versions` advertises `r0.0.1`, `r0.1.0`, `r0.2.0`, `r0.3.0`, `r0.4.0`, `r0.5.0`, `r0.6.1`, and `v1.0` to `v1.19`.
 The versions up to `v1.2` are a compatibility baseline, not a new certification of every historical requirement.
-`v1.3` to `v1.15` are advertised because the audit of every MSC merged into the specification since v1.1 ([issue #478](https://codefloe.com/pat-s/zendrite/issues/478)) leaves no unresolved requirement in those releases; the sections below record the evidence.
-`v1.16` and later are not advertised while #478 lists open gaps in them.
+`v1.3` to `v1.19` are advertised because the audit of every MSC merged into the specification since v1.1 ([issue #478](https://codefloe.com/pat-s/zendrite/issues/478)) leaves no unresolved requirement in those releases; the sections below record the evidence.
+Open MSCs that clients use but that are not part of a spec release are tracked in [issue #558](https://codefloe.com/pat-s/zendrite/issues/558); the ones Zendrite implements are listed under [experimental feature discovery](#experimental-feature-discovery).
 
 The [version discovery contract](https://spec.matrix.org/v1.19/client-server-api/#api-versions) distinguishes specification versions from individual experimental features.
 Authenticated media, room summaries, and selected other newer features are implemented, but their presence does not establish support for the other requirements introduced in the same release.
@@ -16,9 +16,9 @@ Room versions returned by `/capabilities` are a separate namespace and must not 
 
 ## Scope and evidence
 
-This is a source-level audit of the next candidate versions, v1.3 through v1.15, with targeted checks of later features that could otherwise motivate raising the ceiling.
+This is a source-level audit of v1.3 through v1.19, the versions advertised beyond the compatibility baseline.
 It compares the release requirements with routing, handler behavior, storage, and existing tests in this repository.
-It does not claim an exhaustive behavioral certification through v1.19 or a fresh Sytest/Complement pass.
+It does not claim an exhaustive behavioral certification or a fresh Sytest/Complement pass.
 A registered route establishes reachability only; authorization, pagination, response shape, and configuration dependence require separate evidence.
 An unresolved mandatory requirement is sufficient to withhold a version advertisement.
 Optional features and client-only presentation changes are not automatically blockers.
@@ -182,23 +182,74 @@ The [v1.15 changes](https://spec.matrix.org/v1.15/changelog/) add room summaries
 | Device keys in Olm events (MSC4147) | Olm payloads are opaque to the server. | Client-only. |
 | "Public" rooms clarified for profiles and the user directory | Profile lookups are not restricted; the user directory searches all local users and the users who share a room with the requester, which the spec allows. | Compliant; the matching clarifications for presence, calls and policy lists add no server requirement. |
 
-### v1.16 and later candidates
+### v1.16
 
-| Candidate | Evidence and remaining blockers | Decision |
+The [v1.16 changes](https://spec.matrix.org/v1.16/changelog/) add custom profile fields, `state_after` in `/sync`, room version 12, the time zone profile field, the create event in invite and knock state, and the `format` parameter on state lookups.
+
+| Requirement | Implementation evidence | Assessment |
 | --- | --- | --- |
-| [v1.19](https://spec.matrix.org/v1.19/client-server-api/) | Earlier mandatory behavior remains unresolved; no full audit of intervening releases has established conformance. | Do not advertise the latest version based on route counts. |
+| Custom profile fields (MSC4133) and `m.tz` (MSC4175) | `clientapi/routing/profile.go` serves every profile field at the v3 and unstable paths, with the `m.profile_fields` capability. | Implemented; the deprecated `m.set_displayname` and `m.set_avatar_url` capabilities are still reported. |
+| `state_after` (MSC4222) | `syncapi/sync/request.go` reads `use_state_after`, and joined and left rooms then carry `state_after`. | Implemented. |
+| `format` on `GET /rooms/{roomId}/state/{eventType}/{stateKey}` | `clientapi/routing/routing.go` returns the whole event when `format=event`, and the content otherwise. | Implemented. |
+| Room version 12 (MSC4289, MSC4291, MSC4297, MSC4304, MSC4307) | gomatrixserverlib implements the version, including create event room IDs, privileged creators, the new state resolution and auth events from the same room. `clientapi/routing/createroom.go` merges `trusted_private_chat` invitees into `additional_creators`, `upgrade_room.go` accepts `additional_creators`, and `internal/eventutil/eventcontent.go` raises `m.room.tombstone` to 150 in rooms with privileged creators. | Implemented; room version 12 is the default. |
+| Create event in stripped state (MSC4311) | Invites and knocks carry full PDUs including `m.room.create`, validated from room version 12. | Implemented. |
+| No intentional mentions from replies (MSC4142) | A client concern. | Client-only. |
+
+### v1.17
+
+The [v1.17 changes](https://spec.matrix.org/v1.17/changelog/) remove legacy mentions, add device masquerading and device management for application services, and add the `m.oauth` UIA type.
+
+| Requirement | Implementation evidence | Assessment |
+| --- | --- | --- |
+| Legacy mentions removed (MSC4210) | `internal/pushrules` no longer installs `.m.rule.contains_display_name`, `.m.rule.contains_user_name` and `.m.rule.roomnotif`, and drops them from stored rule sets; `mentions_test.go` covers the upgrade. | Implemented. |
+| Device masquerading (MSC4326) | `clientapi/auth/auth.go` reads `device_id` and `org.matrix.msc3202.device_id`; `userapi/internal/user_api.go` resolves the device and answers `M_UNKNOWN_DEVICE`. | Implemented. |
+| Device management for application services (MSC4190) | `clientapi/routing/device.go` creates devices with 201 and deletes them without UIA; with MSC3861, `M_APPSERVICE_LOGIN_UNSUPPORTED` refuses logins. `clientapi/spec_v117_test.go` and `msc3861_test.go` cover them. | Implemented. |
+| `m.oauth` UIA (MSC4312) | `clientapi/routing/key_crosssigning.go` offers `m.oauth` when replacing cross-signing keys with MSC3861. | Implemented; only relevant with the OAuth API. |
+| `device_one_time_keys_count` | `/sync` always includes it (empty when no keys are left), and the sliding sync E2EE extension reports `signed_curve25519` as zero then. | Compliant. |
+| `room_id` required when peeking with `/events` | `GET /v3/events` is a deprecated legacy endpoint that Zendrite answers with an empty chunk, as before v1.17. | Not a change in behavior; see [related findings](#related-route-audit-findings). |
+
+### v1.18
+
+The [v1.18 changes](https://spec.matrix.org/v1.18/changelog/) add administrator lock and suspend endpoints, OAuth 2.0 account management and device authorization, auto-forget on leave, redactions through `/send`, invite blocking, and policy servers.
+
+| Requirement | Implementation evidence | Assessment |
+| --- | --- | --- |
+| Admin lock and suspend (MSC4323) | `clientapi/routing/admin_moderation.go` serves `GET` and `PUT /v1/admin/lock/{userId}` and `/suspend/{userId}`, with the `m.account_moderation` capability. | Implemented. |
+| OAuth 2.0 account management (MSC4191), OAuth-aware clients (MSC3824), device authorization grant (MSC4341) | With MSC3861, `/v1/auth_metadata` serves the provider's `account_management_uri`, `account_management_actions_supported` and grant types, and `GET /login` marks `m.login.sso` as `oauth_aware_preferred`. | Implemented; the grant itself is the provider's. |
+| Forget on leave (MSC4267) | `room_server.auto_forget_on_leave` sets the `m.forget_forced_upon_leave` capability. | Implemented; optional. |
+| Redactions through `/send` (MSC4169) | `clientapi/routing/sendevent.go` copies `content.redacts` to the top level. | Implemented. |
+| Invite blocking (MSC4380) | `m.invite_permission_config` refuses invites with 403 `M_INVITE_BLOCKED` and hides them from `/sync`; `clientapi/spec_v118_test.go` covers every endpoint. | Implemented. |
+| Policy servers (MSC4284) | `roomserver/internal/input/policy_server.go` checks every new event with the room's policy server and fails closed; `roomserver/policy_server_test.go` covers it. | Implemented. |
+| `M_USER_LIMIT_EXCEEDED` (MSC4335) and `submitToken` error codes (MSC4183) | Zendrite has no per-user quotas and never returns a `submit_url`. | Not applicable. |
+| Report `score` removed (MSC4277); reports may answer 200 for unknown subjects | `ReportEvent` no longer requires `score` and stores it when older clients send it; answering 404 for unknown subjects stays allowed. | Compliant. |
+| `/v1/send_join` and `/v1/send_leave` removed (MSC4376) | Both are still served for older servers, next to the v2 endpoints. | Compliant. |
+| Recent emoji (MSC4356), animated images (MSC4230), `ol` start (MSC4313), cross-signed devices (MSC4153) | Account data and client rendering. | Client-only. |
+
+### v1.19
+
+The [v1.19 changes](https://spec.matrix.org/v1.19/changelog/) add mutual rooms, `unsigned.replaces_state`, server-defined directory order, image packs, key backup account data, encrypted history sharing, and case-insensitive server ACLs.
+
+| Requirement | Implementation evidence | Assessment |
+| --- | --- | --- |
+| Mutual rooms (MSC2666) | `clientapi/routing/mutual_rooms.go` serves `GET /v1/mutual_rooms` with signed pagination tokens and 400 `M_INVALID_PARAM` for the caller's own or an invalid user ID; `clientapi/mutual_rooms_test.go` covers it. | Implemented; also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable`. |
+| `unsigned.replaces_state` | `syncapi/consumers/roomserver.go` records the event a state event replaces, which `syncapi/synctypes/clientevent.go` serves. | Implemented. |
+| Server-defined directory order (MSC4423) | The directory lists rooms by room ID, which the spec now allows. | Compliant. |
+| Case-insensitive server ACLs (MSC4436) | `roomserver/acls/acls.go` compiles `allow` and `deny` globs case-insensitively. | Implemented. |
+| Policy server signatures from an event's own origin | `addPolicyServerSignature` adds the policy server's key to the server's existing signatures instead of replacing them. | Compliant. |
+| Image packs (MSC2545), key backup account data (MSC4287), encrypted history sharing (MSC4268) | State events, account data, media and to-device messages that the server stores without interpreting. | Client-only. |
 
 ### Related route-audit findings
 
 - **3PID management:** `clientapi/routing/routing.go` provides listing, legacy association, deletion, and email token requests, but lacks the distinct `/account/3pid/add`, `/bind`, `/unbind`, and MSISDN token routes.
   Password reset by email (`/account/password/email/requestToken` and `/account/password` without an access token) works when `client_api.email_validation_server` is set; MSISDN password reset returns `M_THREEPID_MEDIUM_NOT_SUPPORTED`.
   MSC3861 intentionally disables local account mutation and delegates account management; that configuration is not evidence for native 3PID support.
-- **Mutual rooms:** No mutual-rooms handler is registered in client or sync routing.
-  Treat this as a feature gap, not as proof that an unspecified stable release requires an experimental endpoint.
+- **Mutual rooms:** `clientapi/routing/mutual_rooms.go` serves the stable `GET /v1/mutual_rooms` from v1.19.
+- **Legacy `/events` and `/initialSync`:** both are deprecated and answered with empty responses, kept for Sytest.
+  Clients use `/sync` instead.
 - **Notifications ([#312](https://codefloe.com/pat-s/zendrite/issues/312)):** `GetNotifications` now validates query parameters and calls `QueryNotifications`; `notification_test.go` covers response behavior.
   This is not a stub on the audited branch and is not listed as an unresolved blocker here.
 - **Room summaries ([#314](https://codefloe.com/pat-s/zendrite/issues/314)):** Stable and compatibility routes are present, backed by `GetRoomSummary` and focused tests.
-  This resolves the route gap without establishing full v1.15 support.
+  `room_version` and `encryption` in `/hierarchy` complete MSC3266 (see v1.15).
 
 ## Experimental feature discovery
 
@@ -213,6 +264,9 @@ The explicit configurable list mirrors the implemented cases in `setup/mscs/mscs
 | `org.matrix.msc3916.stable` | Always, existing compatibility flag. | Authenticated download, thumbnail, and configuration handlers in `mediaapi/routing/routing.go`. |
 | `org.matrix.simplified_msc3575` | Always, existing compatibility flag. | Native sliding-sync handler and compatibility route in `syncapi/routing/routing.go`. |
 | `org.matrix.msc4143` | True only with nonempty `global.rtc_foci`; false otherwise. | RTC transport endpoint and well-known focus discovery share that configuration. |
+| `org.matrix.msc4354` | Always. | Sticky events: `org.matrix.msc4354.sticky_duration_ms` on `/send` and the `msc4354_sticky` section of `/sync`. |
+| `com.beeper.msc4169` | Always. | Redactions through `PUT /send/m.room.redaction` in every room version. |
+| `uk.half-shot.msc2666.query_mutual_rooms.stable` | Always. | The stable `GET /v1/mutual_rooms`, for clients that check the flag rather than v1.19. |
 | `org.matrix.msc4222` | Always. | The `use_state_after` and `org.matrix.msc4222.use_state_after` `/sync` parameters in `syncapi/sync/request.go`, for clients that check the flag before opting in. |
 | `org.matrix.msc4140` | True only with a positive `client_api.delayed_events.max_event_delay_duration` and `max_delayed_events_per_user`; false otherwise. | Delayed event scheduling, management and scheduler in `clientapi/routing/delayed_events.go`, with the `org.matrix.msc4140.delayed_events` capability. |
 | `org.matrix.msc4140.stable` | Same as `org.matrix.msc4140`. | The stable `/v3/rooms/{roomId}/delayed_event` and `/v1/delayed_events/{delayId}` endpoints, with the `m.delayed_events` capability. |
