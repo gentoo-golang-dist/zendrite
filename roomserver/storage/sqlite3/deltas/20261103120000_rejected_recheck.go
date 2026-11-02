@@ -24,3 +24,15 @@ func UpRejectedRecheck(ctx context.Context, tx *sql.Tx) error {
 	}
 	return nil
 }
+
+// UpRejectedRecheckRedactions schedules the recheck of rejected events once
+// more, unless it is still pending. The first recheck left redactions
+// rejected, so messages their senders had deleted while their membership was
+// rejected were accepted without their redaction.
+func UpRejectedRecheckRedactions(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO roomserver_rejected_recheck (after_room_nid)
+		SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM roomserver_rejected_recheck);`); err != nil {
+		return fmt.Errorf("failed to schedule the rejected redaction recheck: %w", err)
+	}
+	return nil
+}

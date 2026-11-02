@@ -1391,6 +1391,7 @@ migration roomserver: flag resynced rooms for extremity repair
 migration roomserver: published appservice
 migration roomserver: published appservice pkey
 migration roomserver: recheck rejected events against repaired state
+migration roomserver: recheck rejected redactions
 migration roomserver: repair state events stored under the wrong state key
 migration roomserver: state blocks refactor
 migration syncapi: add connection receipts table for sliding sync

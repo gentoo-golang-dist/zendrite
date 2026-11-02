@@ -852,11 +852,13 @@ func latestEventStates(ctx context.Context, updater *shared.RoomUpdater) ([]type
 // while their sender's membership may have been rejected, so they are checked
 // against it with the memberships among their accepted auth events added,
 // their sender's own included, and where the state holds another membership
-// for the sender, state resolution decides between them. Outliers, state
-// events and redactions are left alone. Accepted events are announced as old
-// events, which adds them to the room history without changing the current
-// state, as for backfilled events, once the transaction is committed and
-// redactions are applied to them. In a room with a policy server, an event
+// for the sender, state resolution decides between them. Outliers and state
+// events are left alone. Redactions are checked too, in storage order after
+// the events they redact, since a sender who deleted their own message while
+// their membership was rejected would otherwise see it restored. Accepted
+// events are announced as old events, which adds them to the room history
+// without changing the current state, as for backfilled events, once the
+// transaction is committed and redactions are applied to them. In a room with a policy server, an event
 // must also be signed by it, as new events must; one it refuses, or that
 // cannot be checked, stays rejected. It returns the accepted events.
 func (r *Inputer) recheckRejectedTimelineEvents(
@@ -878,7 +880,7 @@ func (r *Inputer) recheckRejectedTimelineEvents(
 
 	var accepted []acceptedTimelineEvent
 	for _, ev := range rejected {
-		if ev.StateKey() != nil || ev.Type() == spec.MRoomRedaction {
+		if ev.StateKey() != nil {
 			continue
 		}
 		// Outliers have no state of their own to check them against.
@@ -958,7 +960,7 @@ func (r *Inputer) announceAcceptedTimelineEvents(
 	outputs := make([]api.OutputEvent, 0, len(accepted))
 	for _, a := range accepted {
 		event := a.event.PDU
-		_, redacted, rerr := r.DB.MaybeRedactEvent(ctx, roomInfo, a.event.EventNID, event, &resolver, r.Queryer)
+		redaction, redacted, rerr := r.DB.MaybeRedactEvent(ctx, roomInfo, a.event.EventNID, event, &resolver, r.Queryer)
 		if rerr != nil {
 			logrus.WithError(rerr).WithField("event_id", event.EventID()).Warn("Not announcing an accepted event whose redactions could not be applied")
 			continue
@@ -973,6 +975,17 @@ func (r *Inputer) announceAcceptedTimelineEvents(
 				HistoryVisibility: a.historyVisibility,
 			},
 		})
+		// An accepted redaction redacts an event the sync API already has,
+		// as for a redaction that arrives after its target.
+		if redaction != nil && redacted != nil && redaction.EventID() == event.EventID() {
+			outputs = append(outputs, api.OutputEvent{
+				Type: api.OutputTypeRedactedEvent,
+				RedactedEvent: &api.OutputRedactedEvent{
+					RedactedEventID: redacted.EventID(),
+					RedactedBecause: &types.HeaderedEvent{PDU: redaction},
+				},
+			})
+		}
 	}
 	if len(outputs) == 0 {
 		return nil

@@ -14,6 +14,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
@@ -41,7 +42,9 @@ import (
 // messages. Amy joins, and Xan joins with Amy's authorisation. The test stores
 // the state before Wolf's messages and Xan's join as it was calculated while
 // Wolf's and Amy's joins were rejected, and marks the events rejected. Yuki
-// is banned, and her message after the ban cites her earlier join.
+// is banned, and her message after the ban cites her earlier join. Wolf
+// deleted his first message while his membership was rejected, and the
+// redaction must apply once both are accepted.
 func TestRecheckRejectedEvents(t *testing.T) {
 	alice := test.NewUser(t)
 	wolf := test.NewUser(t)
@@ -177,15 +180,30 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		requireRejected(wolfSecond, true)
 		requireRejected(xanJoin, true)
 
-		// Schedule the recheck, as its migration does.
+		// Wolf deleted his first message while his membership was rejected,
+		// so the redaction, which follows his second message, was rejected
+		// too.
+		wolfRedaction := room.CreateEvent(t, wolf, spec.MRoomRedaction, map[string]any{},
+			test.WithRedacts(wolfFirst.EventID()), test.WithPrevEvents(wolfSecond.EventID()), test.WithTimestamp(start.Add(5*time.Minute)))
+		room.InsertEvent(t, wolfRedaction)
+		send(wolfRedaction)
+		requireRejected(wolfRedaction, true)
+
+		// Schedule the recheck, as its migration does. The second migration
+		// leaves a pending recheck as it is.
 		tx, err := sqlDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		if dbType == test.DBTypePostgres {
 			require.NoError(t, pgdeltas.UpRejectedRecheck(ctx, tx))
+			require.NoError(t, pgdeltas.UpRejectedRecheckRedactions(ctx, tx))
 		} else {
 			require.NoError(t, sqlitedeltas.UpRejectedRecheck(ctx, tx))
+			require.NoError(t, sqlitedeltas.UpRejectedRecheckRedactions(ctx, tx))
 		}
 		require.NoError(t, tx.Commit())
+		var cursors int
+		require.NoError(t, sqlDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM roomserver_rejected_recheck").Scan(&cursors))
+		require.Equal(t, 1, cursors)
 
 		outputs, err := nc.SubscribeSync(cfg.Global.JetStream.Prefixed(jetstream.OutputRoomEvent))
 		require.NoError(t, err)
@@ -203,6 +221,7 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		requireRejected(yukiMessage, true)
 
 		announced := map[string]bool{}
+		redactedOutput := map[string]bool{}
 		for {
 			msg, nextErr := outputs.NextMsg(2 * time.Second)
 			if nextErr != nil {
@@ -210,10 +229,22 @@ func TestRecheckRejectedEvents(t *testing.T) {
 			}
 			var output api.OutputEvent
 			require.NoError(t, json.Unmarshal(msg.Data, &output))
-			if output.Type == api.OutputTypeOldRoomEvent {
+			switch output.Type {
+			case api.OutputTypeOldRoomEvent:
 				announced[output.OldRoomEvent.Event.EventID()] = true
+			case api.OutputTypeRedactedEvent:
+				require.True(t, announced[output.RedactedEvent.RedactedEventID], "a redacted event must be announced before its redaction")
+				require.Equal(t, wolfRedaction.EventID(), output.RedactedEvent.RedactedBecause.EventID())
+				redactedOutput[output.RedactedEvent.RedactedEventID] = true
 			}
 		}
+		requireRejected(wolfRedaction, false)
+		require.True(t, announced[wolfRedaction.EventID()], "wolf's redaction must be announced")
+		require.True(t, redactedOutput[wolfFirst.EventID()], "the sync API must be told to redact wolf's first message")
+		stored, err := db.EventsFromIDs(ctx, roomInfo, []string{wolfFirst.EventID()})
+		require.NoError(t, err)
+		require.Len(t, stored, 1)
+		require.False(t, gjson.GetBytes(stored[0].Content(), "body").Exists(), "wolf's first message must be stored redacted")
 		require.True(t, announced[wolfFirst.EventID()], "wolf's first message must be announced")
 		require.True(t, announced[wolfSecond.EventID()], "wolf's second message must be announced")
 		require.False(t, announced[yukiMessage.EventID()], "yuki's message must not be announced")
