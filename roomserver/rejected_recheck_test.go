@@ -45,12 +45,21 @@ import (
 // is banned, and her message after the ban cites her earlier join. Wolf
 // deleted his first message while his membership was rejected, and the
 // redaction must apply once both are accepted.
+//
+// Nox leaves and rejoins too, but the state before her second message holds
+// her leave and neither her rejoin nor the profile change after it, which her
+// messages cite, as for a rejoin stored as an outlier. Bot joined with Nox's
+// authorisation between the two, so the state cites her rejoin through Bot's
+// join, and state resolution checks her profile change against the leave
+// alone unless the recheck adds the rejoin.
 func TestRecheckRejectedEvents(t *testing.T) {
 	alice := test.NewUser(t)
 	wolf := test.NewUser(t)
 	amy := test.NewUser(t)
 	xan := test.NewUser(t)
 	yuki := test.NewUser(t)
+	nox := test.NewUser(t)
+	bot := test.NewUser(t)
 	ctx := context.Background()
 
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
@@ -112,6 +121,16 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		wolfRejoin := room.CreateAndInsert(t, wolf, spec.MRoomMember, via(alice), test.WithStateKey(wolf.ID), test.WithTimestamp(start.Add(2*time.Minute)))
 		wolfFirst := room.CreateAndInsert(t, wolf, "m.room.message", map[string]any{"body": "first"}, test.WithTimestamp(start.Add(3*time.Minute)))
 		wolfSecond := room.CreateAndInsert(t, wolf, "m.room.message", map[string]any{"body": "second"}, test.WithTimestamp(start.Add(4*time.Minute)))
+		room.CreateAndInsert(t, nox, spec.MRoomMember, via(alice), test.WithStateKey(nox.ID), test.WithTimestamp(start.Add(10*time.Minute)))
+		noxLeave := room.CreateAndInsert(t, nox, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(nox.ID), test.WithTimestamp(start.Add(11*time.Minute)))
+		noxRejoin := room.CreateAndInsert(t, nox, spec.MRoomMember, via(alice), test.WithStateKey(nox.ID), test.WithTimestamp(start.Add(12*time.Minute)))
+		botJoin := room.CreateAndInsert(t, bot, spec.MRoomMember, via(nox), test.WithStateKey(bot.ID), test.WithTimestamp(start.Add(13*time.Minute)))
+		noxProfile := room.CreateAndInsert(t, nox, spec.MRoomMember, map[string]any{"membership": spec.Join, "displayname": "Nox"}, test.WithStateKey(nox.ID), test.WithTimestamp(start.Add(14*time.Minute)))
+		noxFirst := room.CreateAndInsert(t, nox, "m.room.message", map[string]any{"body": "nox first"}, test.WithTimestamp(start.Add(15*time.Minute)))
+		noxSecond := room.CreateAndInsert(t, nox, "m.room.message", map[string]any{"body": "nox second"}, test.WithTimestamp(start.Add(16*time.Minute)))
+		require.Contains(t, botJoin.AuthEventIDs(), noxRejoin.EventID())
+		require.Contains(t, noxProfile.AuthEventIDs(), noxRejoin.EventID())
+		require.Contains(t, noxSecond.AuthEventIDs(), noxProfile.EventID())
 		amyJoin := room.CreateAndInsert(t, amy, spec.MRoomMember, via(alice), test.WithStateKey(amy.ID))
 		room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "welcome"})
 		xanJoin := room.CreateAndInsert(t, xan, spec.MRoomMember, via(amy), test.WithStateKey(xan.ID))
@@ -143,6 +162,8 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		require.NoError(t, err)
 		amyEntries, err := db.StateEntriesForEventIDs(ctx, []string{amyJoin.EventID()}, false)
 		require.NoError(t, err)
+		noxLeaveEntries, err := db.StateEntriesForEventIDs(ctx, []string{noxLeave.EventID()}, false)
+		require.NoError(t, err)
 		rewrite := func(ev *types.HeaderedEvent, change func(types.StateEntry) (types.StateEntry, bool)) {
 			t.Helper()
 			at, aerr := db.StateAtEventIDs(ctx, []string{ev.EventID()})
@@ -172,6 +193,14 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		}
 		rewrite(wolfFirst, withLeave)
 		rewrite(wolfSecond, withLeave)
+		withNoxLeave := func(entry types.StateEntry) (types.StateEntry, bool) {
+			if entry.StateKeyTuple == noxLeaveEntries[0].StateKeyTuple {
+				return noxLeaveEntries[0], true
+			}
+			return entry, true
+		}
+		rewrite(noxFirst, withNoxLeave)
+		rewrite(noxSecond, withNoxLeave)
 		rewrite(xanJoin, func(entry types.StateEntry) (types.StateEntry, bool) {
 			return entry, entry.StateKeyTuple != amyEntries[0].StateKeyTuple
 		})
@@ -179,6 +208,7 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		requireRejected(wolfFirst, true)
 		requireRejected(wolfSecond, true)
 		requireRejected(xanJoin, true)
+		requireRejected(noxSecond, true)
 
 		// Wolf deleted his first message while his membership was rejected,
 		// so the redaction, which follows his second message, was rejected
@@ -189,16 +219,18 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		send(wolfRedaction)
 		requireRejected(wolfRedaction, true)
 
-		// Schedule the recheck, as its migration does. The second migration
-		// leaves a pending recheck as it is.
+		// Schedule the recheck, as its migration does. The later migrations
+		// leave a pending recheck as it is.
 		tx, err := sqlDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		if dbType == test.DBTypePostgres {
 			require.NoError(t, pgdeltas.UpRejectedRecheck(ctx, tx))
 			require.NoError(t, pgdeltas.UpRejectedRecheckRedactions(ctx, tx))
+			require.NoError(t, pgdeltas.UpRejectedRecheckRejoins(ctx, tx))
 		} else {
 			require.NoError(t, sqlitedeltas.UpRejectedRecheck(ctx, tx))
 			require.NoError(t, sqlitedeltas.UpRejectedRecheckRedactions(ctx, tx))
+			require.NoError(t, sqlitedeltas.UpRejectedRecheckRejoins(ctx, tx))
 		}
 		require.NoError(t, tx.Commit())
 		var cursors int
@@ -219,6 +251,7 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		requireRejected(wolfSecond, false)
 		requireRejected(xanJoin, false)
 		requireRejected(yukiMessage, true)
+		requireRejected(noxSecond, false)
 
 		announced := map[string]bool{}
 		redactedOutput := map[string]bool{}
@@ -247,6 +280,7 @@ func TestRecheckRejectedEvents(t *testing.T) {
 		require.False(t, gjson.GetBytes(stored[0].Content(), "body").Exists(), "wolf's first message must be stored redacted")
 		require.True(t, announced[wolfFirst.EventID()], "wolf's first message must be announced")
 		require.True(t, announced[wolfSecond.EventID()], "wolf's second message must be announced")
+		require.True(t, announced[noxSecond.EventID()], "nox's second message must be announced")
 		require.False(t, announced[yukiMessage.EventID()], "yuki's message must not be announced")
 	})
 }

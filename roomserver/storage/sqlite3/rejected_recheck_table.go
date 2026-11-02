@@ -59,6 +59,9 @@ func CreateRejectedRecheckTable(db *sql.DB) error {
 	}, sqlutil.Migration{
 		Version: "roomserver: recheck rejected redactions",
 		Up:      deltas.UpRejectedRecheckRedactions,
+	}, sqlutil.Migration{
+		Version: "roomserver: recheck rejected events after rejoins",
+		Up:      deltas.UpRejectedRecheckRejoins,
 	})
 	return m.Up(context.Background())
 }

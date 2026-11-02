@@ -425,7 +425,7 @@ func (r *Inputer) recheckRejectedMemberships(
 		if aerr != nil {
 			return nil, aerr
 		}
-		stateBefore, known, serr := stateBeforeForAuth(ctx, updater, roomState, ev.PDU, authEvents)
+		stateBefore, known, serr := stateBeforeForAuth(ctx, updater, roomState, roomInfo, ev.PDU, authEvents)
 		if serr != nil {
 			return nil, serr
 		}
@@ -507,9 +507,19 @@ func acceptedAuthEvents(
 // holds another membership for the same user, state resolution over the full
 // state decides between them, so a later leave or ban stays. It returns false
 // if the state at any prev event is unknown.
+//
+// A join cited by the event can be a profile change, a join to join that is
+// only allowed after the join that started the run. When the state holds an
+// earlier leave and that first join is not in it either, as for a rejoin
+// stored as an outlier, state resolution can drop the cited join: it checks
+// the conflicting events and the auth events only one side cites, and the
+// first join of the run is often cited by the state too, through a
+// restricted join the user authorized. The cited join is then checked
+// against the leave alone and fails. When a cited join loses, the first join
+// of its run is resolved against the state in its place.
 func stateBeforeForAuth(
 	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
-	event gomatrixserverlib.PDU, authEvents []types.Event,
+	roomInfo *types.RoomInfo, event gomatrixserverlib.PDU, authEvents []types.Event,
 ) ([]types.StateEntry, bool, error) {
 	prevIDs := event.PrevEventIDs()
 	if len(prevIDs) == 0 {
@@ -527,25 +537,106 @@ func stateBeforeForAuth(
 			cited[via.String()] = true
 		}
 	}
-	var memberNIDs []types.EventNID
+	var members []types.Event
 	for _, authEvent := range authEvents {
 		if authEvent.Type() == spec.MRoomMember && authEvent.StateKey() != nil && cited[*authEvent.StateKey()] {
-			memberNIDs = append(memberNIDs, authEvent.EventNID)
-		}
-	}
-	var added []types.StateEntry
-	if len(memberNIDs) > 0 {
-		if added, err = updater.StateEntriesForEventNIDs(ctx, memberNIDs); err != nil {
-			return nil, false, fmt.Errorf("updater.StateEntriesForEventNIDs: %w", err)
+			members = append(members, authEvent)
 		}
 	}
 	tuples := gomatrixserverlib.StateNeededForAuth([]gomatrixserverlib.PDU{event}).Tuples()
 	tuples = append(tuples, gomatrixserverlib.StateKeyTuple{EventType: spec.MRoomHistoryVisibility, StateKey: ""})
-	entries, err := roomState.StateAfterEventsWith(ctx, prevStates, added, tuples)
+	entries, err := stateAfterEventsWithMembers(ctx, updater, roomState, prevStates, members, tuples)
 	if err != nil {
-		return nil, false, fmt.Errorf("roomState.StateAfterEventsWith: %w", err)
+		return nil, false, err
+	}
+	retry := false
+	for i, member := range members {
+		if !isJoin(member) || resolvedTo(entries, member.EventNID) {
+			continue
+		}
+		first, ferr := firstJoinOfRun(ctx, updater, roomInfo, member)
+		if ferr != nil {
+			return nil, false, ferr
+		}
+		if first.EventNID != member.EventNID {
+			members[i] = first
+			retry = true
+		}
+	}
+	if retry {
+		if entries, err = stateAfterEventsWithMembers(ctx, updater, roomState, prevStates, members, tuples); err != nil {
+			return nil, false, err
+		}
 	}
 	return entries, true, nil
+}
+
+// stateAfterEventsWithMembers returns the entries for the given tuples of the
+// state after the given events with the given memberships added.
+func stateAfterEventsWithMembers(
+	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
+	prevStates []types.StateAtEvent, members []types.Event, tuples []gomatrixserverlib.StateKeyTuple,
+) ([]types.StateEntry, error) {
+	var added []types.StateEntry
+	if len(members) > 0 {
+		nids := make([]types.EventNID, len(members))
+		for i, member := range members {
+			nids[i] = member.EventNID
+		}
+		var err error
+		if added, err = updater.StateEntriesForEventNIDs(ctx, nids); err != nil {
+			return nil, fmt.Errorf("updater.StateEntriesForEventNIDs: %w", err)
+		}
+	}
+	entries, err := roomState.StateAfterEventsWith(ctx, prevStates, added, tuples)
+	if err != nil {
+		return nil, fmt.Errorf("roomState.StateAfterEventsWith: %w", err)
+	}
+	return entries, nil
+}
+
+// maxJoinRun bounds the walk back through a run of joins, which are profile
+// changes after the first.
+const maxJoinRun = 1000
+
+// firstJoinOfRun returns the join that started the run of joins the given
+// join belongs to. A join cites the membership its sender had before it, so
+// the walk follows those memberships back while they are accepted joins.
+func firstJoinOfRun(
+	ctx context.Context, updater *shared.RoomUpdater, roomInfo *types.RoomInfo, join types.Event,
+) (types.Event, error) {
+	first := join
+	for range maxJoinRun {
+		authEvents, err := updater.EventsFromIDs(ctx, roomInfo, first.AuthEventIDs())
+		if err != nil {
+			return types.Event{}, fmt.Errorf("updater.EventsFromIDs: %w", err)
+		}
+		idx := slices.IndexFunc(authEvents, func(e types.Event) bool {
+			return e.Type() == spec.MRoomMember && e.StateKey() != nil && *e.StateKey() == *first.StateKey()
+		})
+		if idx < 0 || !isJoin(authEvents[idx]) {
+			return first, nil
+		}
+		rejected, err := updater.IsEventRejected(ctx, roomInfo.RoomNID, authEvents[idx].EventID())
+		if err != nil {
+			return types.Event{}, fmt.Errorf("updater.IsEventRejected: %w", err)
+		}
+		if rejected {
+			return first, nil
+		}
+		first = authEvents[idx]
+	}
+	return first, nil
+}
+
+func isJoin(event types.Event) bool {
+	return event.Type() == spec.MRoomMember && event.StateKey() != nil &&
+		gjson.GetBytes(event.Content(), "membership").Str == spec.Join
+}
+
+// resolvedTo reports whether the given entries hold the given event.
+func resolvedTo(entries []types.StateEntry, eventNID types.EventNID) bool {
+	return slices.ContainsFunc(entries, func(entry types.StateEntry) bool { return entry.EventNID == eventNID })
 }
 
 // stateAtEvents returns the state at the given events as stored in this
@@ -902,7 +993,7 @@ func (r *Inputer) recheckRejectedTimelineEvents(
 		if !allowed {
 			continue
 		}
-		entries, known, serr := stateBeforeForAuth(ctx, updater, roomState, ev.PDU, authEvents)
+		entries, known, serr := stateBeforeForAuth(ctx, updater, roomState, roomInfo, ev.PDU, authEvents)
 		if serr != nil {
 			return nil, serr
 		}

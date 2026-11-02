@@ -1390,6 +1390,7 @@ migration roomserver: drop column reference_sha from roomserver_prev_events
 migration roomserver: flag resynced rooms for extremity repair
 migration roomserver: published appservice
 migration roomserver: published appservice pkey
+migration roomserver: recheck rejected events after rejoins
 migration roomserver: recheck rejected events against repaired state
 migration roomserver: recheck rejected redactions
 migration roomserver: repair state events stored under the wrong state key
