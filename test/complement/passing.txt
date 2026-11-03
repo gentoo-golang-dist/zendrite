@@ -18,6 +18,7 @@ tests/TestContentMediaV1
 tests/TestEventAuth
 tests/TestFederatedClientSpaces
 tests/TestFederationKeyUploadQuery
+tests/TestFederationRedactSendsWithoutEvent
 tests/TestFederationRejectInvite
 tests/TestGetMissingEventsGapFilling
 tests/TestInboundCanReturnMissingEvents

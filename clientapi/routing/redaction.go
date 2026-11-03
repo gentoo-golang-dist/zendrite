@@ -168,6 +168,16 @@ func checkRedactionAllowed(
 ) *util.JSONResponse {
 	ev := roomserverAPI.GetEvent(ctx, rsAPI, roomID, eventID)
 	if ev == nil {
+		// The server may not have the event, for example when it was sent
+		// before this server joined. Users who may redact any event can
+		// still redact it, as Synapse allows, and the redaction applies if
+		// the event arrives later.
+		if !suspended && isPrivilegedCreator(ctx, rsAPI, roomID, senderID) {
+			return nil
+		}
+		if !suspended && hasRedactPowerLevel(ctx, rsAPI, roomID, senderID) == nil {
+			return nil
+		}
 		return &util.JSONResponse{
 			Code: 400,                               //nolint:mnd
 			JSON: spec.NotFound("unknown event ID"), // TODO: is it ok to leak existence?
@@ -186,35 +196,38 @@ func checkRedactionAllowed(
 		return &res
 	}
 
-	privileged := isPrivilegedCreator(ctx, rsAPI, roomID, senderID)
-
 	// "Users may redact their own events, and any user with a power level greater than or equal
 	// to the redact power level of the room may redact events there"
 	// https://matrix.org/docs/spec/client_server/r0.6.1#put-matrix-client-r0-rooms-roomid-redact-eventid-txnid
-	allowedToRedact := ev.SenderID() == senderID || privileged
-	if !allowedToRedact {
-		plEvent := roomserverAPI.GetStateEvent(ctx, rsAPI, roomID, gomatrixserverlib.StateKeyTuple{
-			EventType: spec.MRoomPowerLevels,
-			StateKey:  "",
-		})
-		if plEvent == nil {
-			return &util.JSONResponse{
-				Code: 403, //nolint:mnd
-				JSON: spec.Forbidden("You don't have permission to redact this event, no power_levels event in this room."),
-			}
-		}
-		pl, plErr := plEvent.PowerLevels()
-		if plErr != nil {
-			return &util.JSONResponse{
-				Code: 403, //nolint:mnd
-				JSON: spec.Forbidden(
-					"You don't have permission to redact this event, the power_levels event for this room is malformed so auth checks cannot be performed.",
-				),
-			}
-		}
-		allowedToRedact = pl.UserLevel(senderID) >= pl.Redact
+	if ev.SenderID() == senderID || isPrivilegedCreator(ctx, rsAPI, roomID, senderID) {
+		return nil
 	}
-	if !allowedToRedact {
+	return hasRedactPowerLevel(ctx, rsAPI, roomID, senderID)
+}
+
+// hasRedactPowerLevel answers 403 unless senderID has at least the room's
+// redact power level.
+func hasRedactPowerLevel(ctx context.Context, rsAPI roomserverAPI.ClientRoomserverAPI, roomID string, senderID spec.SenderID) *util.JSONResponse {
+	plEvent := roomserverAPI.GetStateEvent(ctx, rsAPI, roomID, gomatrixserverlib.StateKeyTuple{
+		EventType: spec.MRoomPowerLevels,
+		StateKey:  "",
+	})
+	if plEvent == nil {
+		return &util.JSONResponse{
+			Code: 403, //nolint:mnd
+			JSON: spec.Forbidden("You don't have permission to redact this event, no power_levels event in this room."),
+		}
+	}
+	pl, plErr := plEvent.PowerLevels()
+	if plErr != nil {
+		return &util.JSONResponse{
+			Code: 403, //nolint:mnd
+			JSON: spec.Forbidden(
+				"You don't have permission to redact this event, the power_levels event for this room is malformed so auth checks cannot be performed.",
+			),
+		}
+	}
+	if pl.UserLevel(senderID) < pl.Redact {
 		return &util.JSONResponse{
 			Code: 403, //nolint:mnd
 			JSON: spec.Forbidden("You don't have permission to redact this event, power level too low."),

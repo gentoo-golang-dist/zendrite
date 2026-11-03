@@ -93,6 +93,15 @@ func TestSendRedaction(t *testing.T) {
 				message = api.GetEvent(ctx, rsAPI, room.ID, messageID)
 				require.NotNil(t, message)
 				assert.False(t, gjson.GetBytes(message.Content(), "body").Exists(), "message was not redacted: %s", message.JSON())
+
+				// The server may lack the event, e.g. one sent before it joined.
+				// Only users who may redact any event can redact it.
+				unknownID := "$unknown-" + string(ver)
+				send(bob, "m.room.redaction", "txn-bob-unknown", map[string]any{"redacts": unknownID}, http.StatusBadRequest)
+				unknownRedactionID := send(alice, "m.room.redaction", "txn-unknown", map[string]any{"redacts": unknownID}, http.StatusOK)
+				unknownRedaction := api.GetEvent(ctx, rsAPI, room.ID, unknownRedactionID)
+				require.NotNil(t, unknownRedaction)
+				assert.Equal(t, unknownID, unknownRedaction.Redacts())
 			})
 		}
 	})
