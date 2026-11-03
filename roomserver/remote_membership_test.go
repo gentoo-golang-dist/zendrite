@@ -15,6 +15,8 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/require"
 
 	fsAPI "codefloe.com/pat-s/zendrite/federationapi/api"
@@ -63,7 +65,8 @@ func (f remoteStateFederationAPI) LookupStateIDs(
 // the servers disagree, so he stays banned. Kim's too, but both servers
 // report her join from before the ban, which does not follow it, so she stays
 // banned. Gina's leave and a profile change both follow her join; both
-// servers hold the leave.
+// servers hold the leave. Frank's and Kim's memberships are logged with the
+// event each server holds.
 func TestRepairMembershipsFromRemoteState(t *testing.T) {
 	alice := test.NewUser(t)
 	helen := test.NewUser(t)
@@ -199,12 +202,14 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		tx, err := sqlDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		if dbType == test.DBTypePostgres {
-			require.NoError(t, pgdeltas.UpRejectedRecheckRemoteMemberships(ctx, tx))
+			require.NoError(t, pgdeltas.UpRejectedRecheckMembershipVotes(ctx, tx))
 		} else {
-			require.NoError(t, sqlitedeltas.UpRejectedRecheckRemoteMemberships(ctx, tx))
+			require.NoError(t, sqlitedeltas.UpRejectedRecheckMembershipVotes(ctx, tx))
 		}
 		require.NoError(t, tx.Commit())
 
+		hook := logtest.NewGlobal()
+		defer hook.Reset()
 		internalAPI.RecheckRejectedEvents(ctx)
 
 		helenNow, err := db.GetStateEvent(ctx, room.ID, spec.MRoomMember, helen.ID)
@@ -220,5 +225,24 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		_, askedC := asked.Load(spec.ServerName("c.test"))
 		require.True(t, askedA && askedB, "the moderators' servers must be asked")
 		require.False(t, askedC, "a server without a moderator must not be asked")
+
+		// The memberships the repair leaves alone are logged with the event
+		// each server holds.
+		votes := func(msg, user string) logrus.Fields {
+			t.Helper()
+			for _, entry := range hook.AllEntries() {
+				if entry.Message == msg && entry.Data["user"] == user {
+					return entry.Data
+				}
+			}
+			t.Fatalf("no %q log for %s", msg, user)
+			return nil
+		}
+		frankVotes := votes("The servers asked do not agree on a membership", frank.ID)
+		require.Equal(t, rejoins[frank.ID].EventID(), frankVotes["server a.test"])
+		require.Equal(t, bans[frank.ID].EventID(), frankVotes["server b.test"])
+		kimVotes := votes("The servers asked agree on a membership that does not follow the current one", kim.ID)
+		require.Equal(t, joins[kim.ID].EventID(), kimVotes["server a.test"])
+		require.Equal(t, joins[kim.ID].EventID(), kimVotes["server b.test"])
 	})
 }

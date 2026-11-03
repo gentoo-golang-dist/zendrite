@@ -70,7 +70,7 @@ func (r *Inputer) repairMembershipsFromRemoteState(
 	}
 
 	// The membership event each server holds for each of the users.
-	var views []map[types.EventStateKeyNID]types.EventNID
+	var views []serverMembershipView
 	for _, server := range servers {
 		if ctx.Err() != nil {
 			break
@@ -86,20 +86,87 @@ func (r *Inputer) repairMembershipsFromRemoteState(
 		views = append(views, view)
 	}
 	if len(views) < remoteStateServers {
+		logrus.WithFields(logrus.Fields{
+			"room_id":    roomID,
+			"servers":    len(servers),
+			"answered":   len(views),
+			"unresolved": len(keys),
+		}).Info("Too few servers answered for the membership repair")
 		return 0, nil
 	}
 	agreed := map[types.EventStateKeyNID]types.EventNID{}
-	for key, eventNID := range views[0] {
-		if slices.IndexFunc(views[1:], func(view map[types.EventStateKeyNID]types.EventNID) bool {
-			return view[key] != eventNID
-		}) < 0 {
+	for key := range keys {
+		eventNID := views[0].memberships[key]
+		if eventNID != 0 && !slices.ContainsFunc(views[1:], func(view serverMembershipView) bool {
+			return view.memberships[key] != eventNID
+		}) {
 			agreed[key] = eventNID
+			continue
 		}
+		r.logMembershipVotes(ctx, roomID, key, views, "The servers asked do not agree on a membership")
 	}
 	if len(agreed) == 0 {
 		return 0, nil
 	}
-	return r.addAgreedMemberships(ctx, roomNID, roomID, agreed)
+	added, notFollowing, err := r.addAgreedMemberships(ctx, roomNID, roomID, agreed)
+	for _, key := range notFollowing {
+		r.logMembershipVotes(ctx, roomID, key, views,
+			"The servers asked agree on a membership that does not follow the current one")
+	}
+	return added, err
+}
+
+// serverMembershipView is the membership event a server holds in the room's
+// state for each of the users the repair asks about.
+type serverMembershipView struct {
+	server spec.ServerName
+	// Memberships holds the accepted membership events this server stores.
+	memberships map[types.EventStateKeyNID]types.EventNID
+	// Rejected holds the membership events this server stores but rejected.
+	rejected map[types.EventStateKeyNID]types.EventNID
+	// Unknown counts the state events this server does not store.
+	unknown int
+}
+
+// logMembershipVotes logs the membership event each server holds for the
+// user with the given state key NID, so that a membership the repair leaves
+// alone can be traced.
+func (r *Inputer) logMembershipVotes(
+	ctx context.Context, roomID string, key types.EventStateKeyNID, views []serverMembershipView, msg string,
+) {
+	var nids []types.EventNID
+	for _, view := range views {
+		for _, nid := range []types.EventNID{view.memberships[key], view.rejected[key]} {
+			if nid != 0 && !slices.Contains(nids, nid) {
+				nids = append(nids, nid)
+			}
+		}
+	}
+	eventIDs, err := r.DB.EventIDs(ctx, nids)
+	if err != nil {
+		logrus.WithError(err).Warn("Could not look up the event IDs of the membership votes")
+	}
+	stateKeys, err := r.DB.EventStateKeys(ctx, []types.EventStateKeyNID{key})
+	if err != nil {
+		logrus.WithError(err).Warn("Could not look up the user of the membership votes")
+	}
+	fields := logrus.Fields{"room_id": roomID, "user": stateKeys[key]}
+	if current, cerr := r.DB.GetStateEvent(ctx, roomID, spec.MRoomMember, stateKeys[key]); cerr == nil && current != nil {
+		fields["current"] = current.EventID()
+	}
+	for _, view := range views {
+		vote := "none"
+		switch {
+		case view.memberships[key] != 0:
+			vote = eventIDs[view.memberships[key]]
+		case view.rejected[key] != 0:
+			vote = "rejected " + eventIDs[view.rejected[key]]
+		case view.unknown > 0:
+			vote = fmt.Sprintf("none stored (%d state events unknown here)", view.unknown)
+		}
+		fields["server "+string(view.server)] = vote
+	}
+	logrus.WithFields(fields).Info(msg)
 }
 
 // moderatorServers returns the servers, other than this one, of the users
@@ -159,7 +226,7 @@ func (r *Inputer) moderatorServers(ctx context.Context, roomID string) ([]spec.S
 func (r *Inputer) remoteMembershipView(
 	ctx context.Context, server spec.ServerName, roomID string, latestIDs []string,
 	keys map[types.EventStateKeyNID]struct{},
-) (map[types.EventStateKeyNID]types.EventNID, error) {
+) (serverMembershipView, error) {
 	var lastErr error
 	for _, eventID := range latestIDs {
 		reqCtx, cancel := context.WithTimeout(ctx, remoteStateTimeout)
@@ -169,19 +236,35 @@ func (r *Inputer) remoteMembershipView(
 			lastErr = err
 			continue
 		}
-		entries, err := r.DB.StateEntriesForEventIDs(ctx, res.GetStateEventIDs(), true)
+		stateIDs := res.GetStateEventIDs()
+		all, err := r.DB.StateEntriesForEventIDs(ctx, stateIDs, false)
 		if err != nil {
-			return nil, fmt.Errorf("r.DB.StateEntriesForEventIDs: %w", err)
+			return serverMembershipView{}, fmt.Errorf("r.DB.StateEntriesForEventIDs: %w", err)
 		}
-		view := map[types.EventStateKeyNID]types.EventNID{}
-		for _, entry := range entries {
+		accepted, err := r.DB.StateEntriesForEventIDs(ctx, stateIDs, true)
+		if err != nil {
+			return serverMembershipView{}, fmt.Errorf("r.DB.StateEntriesForEventIDs: %w", err)
+		}
+		view := serverMembershipView{
+			server:      server,
+			memberships: map[types.EventStateKeyNID]types.EventNID{},
+			rejected:    map[types.EventStateKeyNID]types.EventNID{},
+			unknown:     len(stateIDs) - len(all),
+		}
+		for _, entry := range accepted {
 			if _, ok := keys[entry.EventStateKeyNID]; ok && entry.EventTypeNID == types.MRoomMemberNID {
-				view[entry.EventStateKeyNID] = entry.EventNID
+				view.memberships[entry.EventStateKeyNID] = entry.EventNID
+			}
+		}
+		for _, entry := range all {
+			if _, ok := keys[entry.EventStateKeyNID]; ok && entry.EventTypeNID == types.MRoomMemberNID &&
+				view.memberships[entry.EventStateKeyNID] != entry.EventNID {
+				view.rejected[entry.EventStateKeyNID] = entry.EventNID
 			}
 		}
 		return view, nil
 	}
-	return nil, fmt.Errorf("r.FSAPI.LookupStateIDs: %w", lastErr)
+	return serverMembershipView{}, fmt.Errorf("r.FSAPI.LookupStateIDs: %w", lastErr)
 }
 
 // addAgreedMemberships replaces the memberships the current state holds for
@@ -189,25 +272,25 @@ func (r *Inputer) remoteMembershipView(
 // transaction, and announces the changes.
 func (r *Inputer) addAgreedMemberships(
 	ctx context.Context, roomNID types.RoomNID, roomID string, agreed map[types.EventStateKeyNID]types.EventNID,
-) (added int, err error) {
+) (added int, notFollowing []types.EventStateKeyNID, err error) {
 	roomInfo, err := r.DB.RoomInfoByNID(ctx, roomNID)
 	if err != nil {
-		return 0, fmt.Errorf("r.DB.RoomInfoByNID: %w", err)
+		return 0, nil, fmt.Errorf("r.DB.RoomInfoByNID: %w", err)
 	}
 	if roomInfo == nil || roomInfo.IsStub() {
-		return 0, nil
+		return 0, notFollowing, nil
 	}
 	var succeeded bool
 	updater, err := r.DB.GetRoomUpdater(ctx, roomInfo)
 	if err != nil {
-		return 0, fmt.Errorf("r.DB.GetRoomUpdater: %w", err)
+		return 0, nil, fmt.Errorf("r.DB.GetRoomUpdater: %w", err)
 	}
 	defer sqlutil.EndTransactionWithCheck(updater, &succeeded, &err)
 
 	roomState := state.NewStateResolution(updater, roomInfo, r.Queryer)
 	current, err := roomState.LoadStateAtSnapshot(ctx, updater.CurrentStateSnapshotNID())
 	if err != nil {
-		return 0, fmt.Errorf("roomState.LoadStateAtSnapshot: %w", err)
+		return 0, nil, fmt.Errorf("roomState.LoadStateAtSnapshot: %w", err)
 	}
 	currentByKey := map[types.EventStateKeyNID]types.EventNID{}
 	for _, entry := range current {
@@ -226,9 +309,10 @@ func (r *Inputer) addAgreedMemberships(
 		}
 		follows, ferr := followsMembership(ctx, updater, roomInfo, eventNID, currentNID)
 		if ferr != nil {
-			return 0, ferr
+			return 0, nil, ferr
 		}
 		if !follows {
+			notFollowing = append(notFollowing, key)
 			continue
 		}
 		head := types.StateEntry{
@@ -241,24 +325,24 @@ func (r *Inputer) addAgreedMemberships(
 	}
 	if len(heads) == 0 {
 		succeeded = true
-		return 0, nil
+		return 0, notFollowing, nil
 	}
 	stateBefore := updater.CurrentStateSnapshotNID()
 	if err = replaceMemberships(ctx, updater, &roomState, roomNID, replace); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	updates, err := acceptedMembershipOutputs(ctx, updater, &roomState, roomInfo, stateBefore, heads)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	membershipUpdates, err := r.updateRepairedMemberships(ctx, updater, &roomState, roomInfo, memberKeys)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	updates = append(updates, membershipUpdates...)
 	if len(updates) > 0 {
 		if err = r.OutputProducer.ProduceRoomEvents(roomID, updates); err != nil {
-			return 0, fmt.Errorf("r.OutputProducer.ProduceRoomEvents: %w", err)
+			return 0, nil, fmt.Errorf("r.OutputProducer.ProduceRoomEvents: %w", err)
 		}
 	}
 	succeeded = true
@@ -266,7 +350,7 @@ func (r *Inputer) addAgreedMemberships(
 		"room_id":     roomID,
 		"memberships": len(heads),
 	}).Warn("Added memberships the room's state on other servers holds")
-	return len(heads), nil
+	return len(heads), notFollowing, nil
 }
 
 // followsMembership reports whether the membership event with the given NID
