@@ -286,42 +286,42 @@ func TestJoinResponse_MarshalJSON(t *testing.T) {
 			fields: fields{
 				State: &ClientEvents{},
 			},
-			want: []byte("{}"),
+			want: []byte(`{"ephemeral":{"events":[]}}`),
 		},
 		{
 			name: "empty accountdata is removed",
 			fields: fields{
 				AccountData: &ClientEvents{},
 			},
-			want: []byte("{}"),
+			want: []byte(`{"ephemeral":{"events":[]}}`),
 		},
 		{
-			name: "empty ephemeral is removed",
+			name: "empty ephemeral keeps an empty events array",
 			fields: fields{
 				Ephemeral: &ClientEvents{},
 			},
-			want: []byte("{}"),
+			want: []byte(`{"ephemeral":{"events":[]}}`),
 		},
 		{
 			name: "empty timeline is removed",
 			fields: fields{
 				Timeline: &Timeline{},
 			},
-			want: []byte("{}"),
+			want: []byte(`{"ephemeral":{"events":[]}}`),
 		},
 		{
 			name: "empty summary is removed",
 			fields: fields{
 				Summary: &Summary{},
 			},
-			want: []byte("{}"),
+			want: []byte(`{"ephemeral":{"events":[]}}`),
 		},
 		{
 			name: "unread notifications are removed, if everything else is empty",
 			fields: fields{
 				UnreadNotifications: &UnreadNotifications{},
 			},
-			want: []byte("{}"),
+			want: []byte(`{"ephemeral":{"events":[]}}`),
 		},
 		{
 			name: "unread notifications are NOT removed, if state is set",
@@ -329,7 +329,7 @@ func TestJoinResponse_MarshalJSON(t *testing.T) {
 				State:               &ClientEvents{Events: []synctypes.ClientEvent{{Content: []byte("{}")}}},
 				UnreadNotifications: &UnreadNotifications{NotificationCount: 1},
 			},
-			want: []byte(`{"state":{"events":[{"content":{},"type":""}]},"unread_notifications":{"highlight_count":0,"notification_count":1}}`),
+			want: []byte(`{"state":{"events":[{"content":{},"type":""}]},"unread_notifications":{"highlight_count":0,"notification_count":1},"ephemeral":{"events":[]}}`),
 		},
 		{
 			name: "roomID is removed from EDUs",
@@ -390,8 +390,8 @@ func TestResponseMoveStateToStateAfter(t *testing.T) {
 
 			for roomID, want := range map[string]string{
 				"!joined:test": `{` + tt.want + `:{"events":[{"content":{},"type":"m.room.topic"}]},` +
-					`"unread_notifications":{"highlight_count":0,"notification_count":0}}`,
-				"!typing:test": `{` + tt.want + `:{"events":[]}}`,
+					`"unread_notifications":{"highlight_count":0,"notification_count":0},"ephemeral":{"events":[]}}`,
+				"!typing:test": `{` + tt.want + `:{"events":[]},"ephemeral":{"events":[]}}`,
 			} {
 				got, err := json.Marshal(res.Rooms.Join[roomID])
 				if err != nil {

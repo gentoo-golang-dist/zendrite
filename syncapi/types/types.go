@@ -553,9 +553,13 @@ func (jr JoinResponse) MarshalJSON() ([]byte, error) {
 	if jr.State != nil && len(jr.State.Events) == 0 {
 		a.State = nil
 	}
-	if jr.Ephemeral != nil && len(jr.Ephemeral.Events) == 0 {
-		a.Ephemeral = nil
+	// Ephemeral is always written below, as Synapse does, so that clients
+	// can tell a room without EDUs from one whose EDUs were omitted.
+	ephemeral := &joinEphemeral{Events: []synctypes.ClientEvent{}}
+	if jr.Ephemeral != nil && len(jr.Ephemeral.Events) > 0 {
+		ephemeral.Events = jr.Ephemeral.Events
 	}
+	a.Ephemeral = nil
 	if jr.Ephemeral != nil {
 		// Remove the room_id from EDUs, as this seems to cause Element Web
 		// to trigger notifications - https://github.com/vector-im/element-web/issues/17263
@@ -580,12 +584,22 @@ func (jr JoinResponse) MarshalJSON() ([]byte, error) {
 	if jr.UnreadNotifications != nil {
 		// if everything else is nil, also remove UnreadNotifications
 		if a.State == nil && a.StateAfter.isEmpty() && a.UnstableStateAfter.isEmpty() &&
-			a.Ephemeral == nil && a.AccountData == nil && a.Timeline == nil && a.Summary == nil && a.MSC4354Sticky == nil {
+			len(ephemeral.Events) == 0 && a.AccountData == nil && a.Timeline == nil && a.Summary == nil && a.MSC4354Sticky == nil {
 			a.UnreadNotifications = nil
 			a.UnreadThreadNotifications = nil
 		}
 	}
-	return json.Marshal(a)
+	// The outer Ephemeral field shadows the alias's, which is nil.
+	return json.Marshal(struct {
+		alias
+		Ephemeral *joinEphemeral `json:"ephemeral"`
+	}{alias: a, Ephemeral: ephemeral})
+}
+
+// joinEphemeral is the ephemeral section of a joined room, whose events
+// array is written even when empty.
+type joinEphemeral struct {
+	Events []synctypes.ClientEvent `json:"events"`
 }
 
 func (jr *JoinResponse) moveStateToStateAfter(key string) {

@@ -4,6 +4,7 @@
 # Add a test once it passes reliably on both backends.
 # A full run (complement.sh <backend> full) lists the unlisted tests that passed.
 tests/TestACLs
+tests/TestACLsForEDUs
 tests/TestBannedUserCannotSendJoin
 tests/TestCannotSendKnockViaSendKnockInMSC3787Room
 tests/TestCannotSendNonJoinViaSendJoinV1
