@@ -67,9 +67,11 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // rejoin is missing from the state, level 23 schedules it again to add the
 // memberships stored as outliers that follow the current state, level 24
 // schedules it again to take the memberships it cannot add itself from the
-// room's state on other servers, and level 25 schedules it again to log the
-// memberships those servers hold for the users it leaves alone.
-const releaseLevel = 25
+// room's state on other servers, level 25 schedules it again to log the
+// memberships those servers hold for the users it leaves alone, and level 26
+// schedules it again to ask them about forked memberships in rooms with
+// nothing else to add.
+const releaseLevel = 26
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades

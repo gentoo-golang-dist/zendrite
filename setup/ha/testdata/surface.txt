@@ -1385,6 +1385,7 @@ migration roomserver: add device_lists_stream_id to partial state rooms
 migration roomserver: add forgotten column
 migration roomserver: add outlier memberships that follow the current state
 migration roomserver: add resync_state_nid to rooms
+migration roomserver: ask other servers about forked memberships
 migration roomserver: backfill annotations
 migration roomserver: drop column reference_sha from roomserver_events
 migration roomserver: drop column reference_sha from roomserver_prev_events

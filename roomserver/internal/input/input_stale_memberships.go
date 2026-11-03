@@ -133,7 +133,7 @@ func (r *Inputer) repairStaleMemberships(
 		})
 	}
 	if len(heads) == 0 {
-		return 0, nil, nil, nil
+		return 0, nil, unresolved, nil
 	}
 	passing, err := r.withoutSoftFailed(ctx, updater, roomState, roomInfo, heads)
 	if err != nil {

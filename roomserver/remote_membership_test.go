@@ -65,7 +65,8 @@ func (f remoteStateFederationAPI) LookupStateIDs(
 // the servers disagree, so he stays banned. Kim's too, but both servers
 // report her join from before the ban, which does not follow it, so she stays
 // banned. Gina's leave and a profile change both follow her join; both
-// servers hold the leave. Frank's and Kim's memberships are logged with the
+// servers hold the leave. Ola's memberships fork the same way in a room where
+// no other user has a later membership. Frank's and Kim's memberships are logged with the
 // event each server holds.
 func TestRepairMembershipsFromRemoteState(t *testing.T) {
 	alice := test.NewUser(t)
@@ -73,6 +74,7 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 	frank := test.NewUser(t)
 	kim := test.NewUser(t)
 	gina := test.NewUser(t)
+	ola := test.NewUser(t)
 	modA := test.NewUser(t, test.WithSigningServer("a.test", "ed25519:a", test.PrivateKeyA))
 	modB := test.NewUser(t, test.WithSigningServer("b.test", "ed25519:b", test.PrivateKeyB))
 	mallory := test.NewUser(t, test.WithSigningServer("c.test", "ed25519:c", test.PrivateKeyA))
@@ -152,6 +154,32 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindOutlier, []*types.HeaderedEvent{ev}, "test", "test", "test", nil, false))
 		}
 
+		// A second room where Ola's leave and profile change both follow her
+		// join, and no other user has a later membership, so the local repair
+		// has nothing it can add itself.
+		room2 := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV10), test.RoomPreset(test.PresetPublicChat))
+		for _, user := range []*test.User{modA, modB} {
+			room2.CreateAndInsert(t, user, spec.MRoomMember, join, test.WithStateKey(user.ID), test.WithTimestamp(tick()))
+		}
+		room2.CreateAndInsert(t, alice, spec.MRoomPowerLevels, powerLevels, test.WithStateKey(""), test.WithTimestamp(tick()))
+		olaJoin := room2.CreateAndInsert(t, ola, spec.MRoomMember, join, test.WithStateKey(ola.ID), test.WithTimestamp(tick()))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room2.Events(), "test", "test", "test", nil, false))
+		prev2 := test.WithPrevEvents(olaJoin.EventID())
+		olaLeave := room2.CreateEvent(t, ola, spec.MRoomMember, leave, test.WithStateKey(ola.ID), prev2, test.WithTimestamp(tick()))
+		olaProfile := room2.CreateEvent(t, ola, spec.MRoomMember, map[string]any{"membership": spec.Join, "displayname": "Ola"},
+			test.WithStateKey(ola.ID), prev2, test.WithTimestamp(tick()))
+		for _, ev := range []*types.HeaderedEvent{olaLeave, olaProfile} {
+			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindOutlier, []*types.HeaderedEvent{ev}, "test", "test", "test", nil, false))
+		}
+		var room2State []string
+		for _, ev := range room2.CurrentState() {
+			if ev.Type() == spec.MRoomMember && *ev.StateKey() == ola.ID {
+				room2State = append(room2State, olaLeave.EventID())
+				continue
+			}
+			room2State = append(room2State, ev.EventID())
+		}
+
 		// Each server's state, with the given membership events in place of
 		// the room's.
 		stateWith := func(members map[string]*types.HeaderedEvent) []string {
@@ -183,7 +211,11 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		}
 		asked := &sync.Map{}
 		rsAPI.SetFederationAPI(remoteStateFederationAPI{
-			state: map[spec.ServerName][]string{"a.test": stateWith(serverA), "b.test": stateWith(serverB), "c.test": stateWith(serverC)},
+			state: map[spec.ServerName][]string{
+				"a.test": append(stateWith(serverA), room2State...),
+				"b.test": append(stateWith(serverB), room2State...),
+				"c.test": append(stateWith(serverC), room2State...),
+			},
 			asked: asked,
 		}, nil)
 
@@ -202,9 +234,9 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		tx, err := sqlDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
 		if dbType == test.DBTypePostgres {
-			require.NoError(t, pgdeltas.UpRejectedRecheckMembershipVotes(ctx, tx))
+			require.NoError(t, pgdeltas.UpRejectedRecheckForkedMemberships(ctx, tx))
 		} else {
-			require.NoError(t, sqlitedeltas.UpRejectedRecheckMembershipVotes(ctx, tx))
+			require.NoError(t, sqlitedeltas.UpRejectedRecheckForkedMemberships(ctx, tx))
 		}
 		require.NoError(t, tx.Commit())
 
@@ -220,6 +252,9 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		ginaNow, err := db.GetStateEvent(ctx, room.ID, spec.MRoomMember, gina.ID)
 		require.NoError(t, err)
 		require.Equal(t, ginaLeave.EventID(), ginaNow.EventID(), "gina's leave, which both servers hold, must enter the state")
+		olaNow, err := db.GetStateEvent(ctx, room2.ID, spec.MRoomMember, ola.ID)
+		require.NoError(t, err)
+		require.Equal(t, olaLeave.EventID(), olaNow.EventID(), "ola's leave, which both servers hold, must enter the state")
 		_, askedA := asked.Load(spec.ServerName("a.test"))
 		_, askedB := asked.Load(spec.ServerName("b.test"))
 		_, askedC := asked.Load(spec.ServerName("c.test"))
