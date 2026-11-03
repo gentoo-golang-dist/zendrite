@@ -108,3 +108,136 @@ func TestFetchedAuthEventKeepsItsStateKey(t *testing.T) {
 		require.Equal(t, keys[bob.ID], entries[0].EventStateKeyNID, "the fetched membership was stored under another state key")
 	})
 }
+
+// gapFederationAPI fails /event_auth, as a server that does not serve it
+// does, and answers /get_missing_events with the given events.
+type gapFederationAPI struct {
+	eventAuthFederationAPI
+	missing []*types.HeaderedEvent
+	// authChain, if set, is served by /event_auth instead of failing.
+	authChain []*types.HeaderedEvent
+}
+
+func (f gapFederationAPI) LookupMissingEvents(
+	context.Context, spec.ServerName, spec.ServerName, string, fclient.MissingEvents, gomatrixserverlib.RoomVersion,
+) (fclient.RespMissingEvents, error) {
+	var res fclient.RespMissingEvents
+	for _, ev := range f.missing {
+		res.Events = append(res.Events, ev.JSON())
+	}
+	return res, nil
+}
+
+func (f gapFederationAPI) GetEventAuth(
+	context.Context, spec.ServerName, spec.ServerName, gomatrixserverlib.RoomVersion, string, string,
+) (fclient.RespEventAuth, error) {
+	if f.authChain == nil {
+		return fclient.RespEventAuth{}, &fsAPI.FederationClientError{Code: 404}
+	}
+	var res fclient.RespEventAuth
+	for _, ev := range f.authChain {
+		res.AuthEvents = append(res.AuthEvents, ev.JSON())
+	}
+	return res, nil
+}
+
+func newAuthTestRoomserver(t *testing.T, dbType test.DBType, federation fsAPI.RoomserverFederationAPI) (api.RoomserverInternalAPI, *rsinternal.RoomserverInternalAPI) {
+	t.Helper()
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+	t.Cleanup(closeDB)
+	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+	caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+	natsInstance := jetstream.NATSInstance{}
+	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+	public, ok := test.PrivateKeyA.Public().(ed25519.PublicKey)
+	require.True(t, ok)
+	keyRing := &gomatrixserverlib.KeyRing{KeyDatabase: remoteKeys{public: public}}
+	if f, ok := federation.(gapFederationAPI); ok {
+		f.keyRing = keyRing
+		federation = f
+	}
+	rsAPI.SetFederationAPI(federation, keyRing)
+	internalAPI, ok := rsAPI.(*rsinternal.RoomserverInternalAPI)
+	require.True(t, ok)
+	return rsAPI, internalAPI
+}
+
+// requireAccepted fails unless the event is stored and was not rejected.
+func requireAccepted(ctx context.Context, t *testing.T, internalAPI *rsinternal.RoomserverInternalAPI, roomID, eventID string) {
+	t.Helper()
+	info, err := internalAPI.DB.RoomInfo(ctx, roomID)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	events, err := internalAPI.DB.EventsFromIDs(ctx, info, []string{eventID})
+	require.NoError(t, err)
+	require.Len(t, events, 1, "the event was not stored")
+	rejected, err := internalAPI.DB.IsEventRejected(ctx, info.RoomNID, eventID)
+	require.NoError(t, err)
+	require.False(t, rejected, "the event was rejected")
+}
+
+// An event whose prev events are missing can cite an auth event that only
+// the missing events bring in. When /event_auth does not provide it, the
+// event used to be dropped before /get_missing_events was even tried.
+func TestAuthEventsAreFetchedAgainAfterMissingPrevEvents(t *testing.T) {
+	alice := test.NewUser(t, test.WithSigningServer(remoteServer, "ed25519:remote", test.PrivateKeyA))
+	bob := test.NewUser(t, test.WithSigningServer(remoteServer, "ed25519:remote", test.PrivateKeyA))
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		room := test.NewRoom(t, alice, test.RoomPreset(test.PresetPublicChat))
+		room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(bob.ID))
+		known := room.Events()
+		// Bob's rename never reached this server; his message follows it
+		// and cites it as an auth event.
+		rename := room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join, "displayname": "Bob"}, test.WithStateKey(bob.ID))
+		message := room.CreateEvent(t, bob, "m.room.message", map[string]any{"body": "hello"})
+		require.Contains(t, message.AuthEventIDs(), rename.EventID())
+		require.Contains(t, message.PrevEventIDs(), rename.EventID())
+
+		rsAPI, internalAPI := newAuthTestRoomserver(t, dbType, gapFederationAPI{missing: []*types.HeaderedEvent{rename}})
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, known, "test", "test", "test", nil, false))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{message}, "test", remoteServer, "test", nil, false))
+
+		requireAccepted(ctx, t, internalAPI, room.ID, rename.EventID())
+		requireAccepted(ctx, t, internalAPI, room.ID, message.EventID())
+	})
+}
+
+// A server may leave an auth event's own auth events out of /event_auth
+// when this server already has them. They used to be looked up only among
+// the auth events of the event being processed, which failed it.
+func TestAuthEventOfFetchedAuthEventIsFoundLocally(t *testing.T) {
+	alice := test.NewUser(t, test.WithSigningServer(remoteServer, "ed25519:remote", test.PrivateKeyA))
+	bob := test.NewUser(t, test.WithSigningServer(remoteServer, "ed25519:remote", test.PrivateKeyA))
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		room := test.NewRoom(t, alice, test.RoomPreset(test.PresetPublicChat))
+		room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(bob.ID))
+		first := room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join, "displayname": "B"}, test.WithStateKey(bob.ID))
+		known := room.Events()
+		second := room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join, "displayname": "Bob"}, test.WithStateKey(bob.ID))
+		require.Contains(t, second.AuthEventIDs(), first.EventID())
+		// The message follows the first rename, which this server has, but
+		// cites the second as Bob's membership.
+		message := room.CreateEvent(t, bob, "m.room.message", map[string]any{"body": "hello"}, test.WithPrevEvents(first.EventID()))
+		require.Contains(t, message.AuthEventIDs(), second.EventID())
+		require.NotContains(t, message.AuthEventIDs(), first.EventID())
+
+		// The auth chain leaves out the first rename.
+		var chain []*types.HeaderedEvent
+		for _, ev := range known {
+			if ev.EventID() != first.EventID() {
+				chain = append(chain, ev)
+			}
+		}
+		chain = append(chain, second)
+		rsAPI, internalAPI := newAuthTestRoomserver(t, dbType, gapFederationAPI{authChain: chain})
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, known, "test", "test", "test", nil, false))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{message}, "test", remoteServer, "test", nil, false))
+
+		requireAccepted(ctx, t, internalAPI, room.ID, second.EventID())
+		requireAccepted(ctx, t, internalAPI, room.ID, message.EventID())
+	})
+}

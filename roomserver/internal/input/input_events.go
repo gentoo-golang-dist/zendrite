@@ -330,24 +330,38 @@ func (r *Inputer) processRoomEvent(
 	knownEvents := map[string]*types.Event{}
 	isRejected := false
 	var rejectionErr error
+	// A new event whose prev events are missing may cite auth events, such
+	// as a newer membership, that the state fetched for the gap below
+	// brings in, as Synapse expects. When its auth events cannot be fetched
+	// on their own, they are fetched again once the gap is filled.
+	canFillGap := missingPrev && input.Kind == api.KindNew && !input.SkipMissingEvents && !hasPartialState
+	deferredAuth := false
 	if hasPartialState && input.Kind == api.KindOutlier {
 		logger.Debugf("Skipping federation auth fetch for outlier %s (partial state active)", event.EventID())
 	} else if err = r.fetchAuthEvents(ctx, logger, roomInfo, virtualHost, headered, authEvents, knownEvents, serverRes.ServerNames); err != nil {
-		if input.Kind != api.KindOutlier {
+		if canFillGap && !unavailableHere(ctx, err) {
+			logger.WithError(err).Debugf("Fetching the auth events of %s again after its missing prev events", event.EventID())
+			deferredAuth = true
+		} else if input.Kind != api.KindOutlier {
 			return fmt.Errorf("r.fetchAuthEvents: %w", err)
 		}
 		// An outlier whose auth events cannot be obtained, e.g. because they
 		// are badly signed, is rejected rather than failing the whole batch
 		// it came with, such as the room state of a join.
-		isRejected = true
-		rejectionErr = fmt.Errorf("r.fetchAuthEvents: %w", err)
-		logger.WithError(err).Warnf("Rejecting outlier %s whose auth events could not be obtained", event.EventID())
+		if !deferredAuth {
+			isRejected = true
+			rejectionErr = fmt.Errorf("r.fetchAuthEvents: %w", err)
+			logger.WithError(err).Warnf("Rejecting outlier %s whose auth events could not be obtained", event.EventID())
+		}
 	}
 
 	// Check if the event is allowed by its auth events. If it isn't then
 	// we consider the event to be "rejected" — it will still be persisted.
 	// Skip this check for admin operations that set SkipEventAuth.
-	if !input.SkipEventAuth && !isRejected {
+	checkAuth := func() {
+		if input.SkipEventAuth || isRejected {
+			return
+		}
 		if err = gomatrixserverlib.Allowed(event, authEvents, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 			return r.Queryer.QueryUserIDForSender(ctx, roomID, senderID)
 		}); err != nil {
@@ -362,6 +376,9 @@ func (r *Inputer) processRoomEvent(
 				logger.WithError(rejectionErr).Warnf("Event %s not allowed by auth events", event.EventID())
 			}
 		}
+	}
+	if !deferredAuth {
+		checkAuth()
 	}
 
 	// At this point we are checking whether we know all of the prev events, and
@@ -496,6 +513,13 @@ func (r *Inputer) processRoomEvent(
 			isRejected = true
 			rejectionErr = fmt.Errorf("missing prev events and no other servers to ask")
 		}
+	}
+
+	if deferredAuth {
+		if err = r.fetchAuthEvents(ctx, logger, roomInfo, virtualHost, headered, authEvents, knownEvents, serverRes.ServerNames); err != nil {
+			return fmt.Errorf("r.fetchAuthEvents: %w", err)
+		}
+		checkAuth()
 	}
 
 	// Accumulate the auth event NIDs.
@@ -1210,7 +1234,15 @@ nextAuthEvent:
 		for _, eventID := range authEvent.AuthEventIDs() {
 			knownEvent, ok := known[eventID]
 			if !ok {
-				return fmt.Errorf("auth event ID %s not known but should be", eventID)
+				// The remote server may leave out auth events it expects
+				// this server to have, such as one it rejected.
+				if knownEvent, err = r.storedAuthEvent(ctx, roomInfo, eventID); err != nil {
+					return err
+				}
+				if knownEvent == nil {
+					return fmt.Errorf("auth event ID %s not known but should be", eventID)
+				}
+				known[eventID] = knownEvent
 			}
 			authEventNIDs = append(authEventNIDs, knownEvent.EventNID)
 		}
@@ -1263,6 +1295,23 @@ nextAuthEvent:
 	}
 
 	return nil
+}
+
+// storedAuthEvent returns the stored event with the given ID and whether it
+// was rejected, or nil if this server does not have it.
+func (r *Inputer) storedAuthEvent(ctx context.Context, roomInfo *types.RoomInfo, eventID string) (*types.Event, error) {
+	events, err := r.DB.EventsFromIDs(ctx, roomInfo, []string{eventID})
+	if err != nil || len(events) == 0 || events[0].PDU == nil {
+		return nil, nil //nolint:nilerr // an event that cannot be loaded is unknown
+	}
+	ev := events[0]
+	if roomInfo != nil {
+		ev.Rejected, err = r.DB.IsEventRejected(ctx, roomInfo.RoomNID, ev.EventID())
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("r.DB.IsEventRejected failed: %w", err)
+		}
+	}
+	return &ev, nil
 }
 
 func (r *Inputer) calculateAndSetState(
