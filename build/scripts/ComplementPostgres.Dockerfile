@@ -7,18 +7,23 @@ WORKDIR /build
 # No password when connecting to Postgres
 RUN sed -i "s%peer%trust%g" /etc/postgresql/17/main/pg_hba.conf && \
     # Bump up max conns for moar concurrency
-    sed -i 's/max_connections = 100/max_connections = 2000/g' /etc/postgresql/17/main/postgresql.conf
+    sed -i 's/max_connections = 100/max_connections = 2000/g' /etc/postgresql/17/main/postgresql.conf && \
+    # Every homeserver container gets a throwaway database, so trade
+    # durability for speed.
+    printf 'fsync = off\nsynchronous_commit = off\nfull_page_writes = off\n' >> /etc/postgresql/17/main/postgresql.conf
 
-# This entry script starts postgres, waits for it to be up then starts zendrite
+# This entry script starts postgres, waits for it to be up then starts zendrite.
+# It calls pg_ctl directly: the pg_ctlcluster wrapper takes about two seconds
+# to return, which Complement pays for every homeserver it starts. pg_ctl finds
+# the data directory through the cluster's configuration directory.
 RUN echo '\
     #!/bin/bash -eu \n\
-    pg_lsclusters \n\
-    pg_ctlcluster 17 main start \n\
+    runuser -u postgres -- /usr/lib/postgresql/17/bin/pg_ctl -D /etc/postgresql/17/main -l /var/log/postgresql/postgresql-17-main.log -w -s start \n\
     \n\
-    until pg_isready \n\
+    until pg_isready -q -U postgres \n\
     do \n\
     echo "Waiting for postgres"; \n\
-    sleep 1; \n\
+    sleep 0.1; \n\
     done \n\
     ' > run_postgres.sh && chmod +x run_postgres.sh
 

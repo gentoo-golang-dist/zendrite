@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/goccy/go-yaml"
@@ -11,6 +12,10 @@ import (
 
 	"codefloe.com/pat-s/zendrite/setup/config"
 )
+
+// ciMaxEventDelay is the longest delayed event (MSC4140) the --ci
+// configuration allows, as in Synapse's Complement configuration.
+const ciMaxEventDelay = 24 * time.Hour
 
 func main() {
 	defaultsForCI := flag.Bool("ci", false, "Populate the configuration with sane defaults for use in CI")
@@ -70,6 +75,9 @@ func main() {
 		if *defaultsForCI {
 			cfg.AppServiceAPI.DisableTLSValidation = true
 			cfg.ClientAPI.RateLimiting.Enabled = false
+			// Delayed events (MSC4140) are off unless a maximum delay is set.
+			cfg.ClientAPI.DelayedEvents.MaxDelay = ciMaxEventDelay
+			cfg.ClientAPI.DelayedEvents.ManagementRateLimiting.Enabled = false
 			cfg.FederationAPI.DisableTLSValidation = false
 			cfg.FederationAPI.DisableHTTPKeepalives = true
 			// Allow allow networks when running in CI, as otherwise connections
