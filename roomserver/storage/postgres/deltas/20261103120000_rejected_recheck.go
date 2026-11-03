@@ -60,3 +60,16 @@ func UpRejectedRecheckStaleMemberships(ctx context.Context, tx *sql.Tx) error {
 	}
 	return nil
 }
+
+// UpRejectedRecheckRemoteMemberships schedules the recheck of rejected
+// events once more, unless it is still pending. The recheck now also takes
+// later memberships it cannot add itself from the room's state on other
+// servers, and picks the latest of equal memberships that follow the current
+// one.
+func UpRejectedRecheckRemoteMemberships(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO roomserver_rejected_recheck (after_room_nid)
+		SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM roomserver_rejected_recheck);`); err != nil {
+		return fmt.Errorf("failed to schedule the remote membership repair: %w", err)
+	}
+	return nil
+}

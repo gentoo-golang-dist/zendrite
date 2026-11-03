@@ -8,8 +8,10 @@ package input
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/state"
@@ -25,8 +27,10 @@ import (
 //
 // A membership event cites the membership its user had before it among its
 // auth events, so the memberships that follow the current one form a chain
-// back to it. For each user the latest membership of that chain is taken; if
-// two of them are equally far from the current one, the user is left alone.
+// back to it. For each user the latest membership of that chain is taken. If
+// several are equally far from the current one, the latest of them by
+// timestamp is taken when they are all the same membership, and the user is
+// left alone otherwise.
 // The membership must also pass auth against the current state, as a new event
 // must before it enters it, and then replaces the current one in the current
 // state and in the state before each forward extremity that holds it. State
@@ -36,21 +40,22 @@ import (
 // with an authorization or state the room no longer holds stays out.
 //
 // It adds the state keys of the memberships it added to memberKeys, and
-// returns how many it added and the output events announcing them.
+// returns how many it added, the output events announcing them, and the state
+// keys of the users with a later membership it could not add.
 func (r *Inputer) repairStaleMemberships(
 	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
 	roomInfo *types.RoomInfo, memberKeys map[types.EventStateKeyNID]struct{},
-) (int, []api.OutputEvent, error) {
+) (int, []api.OutputEvent, map[types.EventStateKeyNID]struct{}, error) {
 	outlierNIDs, err := updater.AcceptedOutlierMembershipNIDs()
 	if err != nil {
-		return 0, nil, fmt.Errorf("updater.AcceptedOutlierMembershipNIDs: %w", err)
+		return 0, nil, nil, fmt.Errorf("updater.AcceptedOutlierMembershipNIDs: %w", err)
 	}
 	if len(outlierNIDs) == 0 {
-		return 0, nil, nil
+		return 0, nil, nil, nil
 	}
 	current, err := roomState.LoadStateAtSnapshot(ctx, updater.CurrentStateSnapshotNID())
 	if err != nil {
-		return 0, nil, fmt.Errorf("roomState.LoadStateAtSnapshot: %w", err)
+		return 0, nil, nil, fmt.Errorf("roomState.LoadStateAtSnapshot: %w", err)
 	}
 	currentByKey := map[types.EventStateKeyNID]types.EventNID{}
 	for _, entry := range current {
@@ -60,7 +65,7 @@ func (r *Inputer) repairStaleMemberships(
 	}
 	outlierEntries, err := updater.StateEntriesForEventNIDs(ctx, outlierNIDs)
 	if err != nil {
-		return 0, nil, fmt.Errorf("updater.StateEntriesForEventNIDs: %w", err)
+		return 0, nil, nil, fmt.Errorf("updater.StateEntriesForEventNIDs: %w", err)
 	}
 	byKey := map[types.EventStateKeyNID][]types.StateEntry{}
 	needed := map[types.EventNID]struct{}{}
@@ -74,7 +79,7 @@ func (r *Inputer) repairStaleMemberships(
 		needed[currentNID] = struct{}{}
 	}
 	if len(byKey) == 0 {
-		return 0, nil, nil
+		return 0, nil, nil, nil
 	}
 	neededNIDs := make([]types.EventNID, 0, len(needed))
 	for nid := range needed {
@@ -82,7 +87,7 @@ func (r *Inputer) repairStaleMemberships(
 	}
 	events, err := updater.Events(ctx, roomInfo.RoomVersion, neededNIDs)
 	if err != nil {
-		return 0, nil, fmt.Errorf("updater.Events: %w", err)
+		return 0, nil, nil, fmt.Errorf("updater.Events: %w", err)
 	}
 	eventsByNID := make(map[types.EventNID]types.Event, len(events))
 	for _, ev := range events {
@@ -90,6 +95,7 @@ func (r *Inputer) repairStaleMemberships(
 	}
 
 	var heads []types.StateEntry
+	unresolved := map[types.EventStateKeyNID]struct{}{}
 	for key, entries := range byKey {
 		currentEvent, ok := eventsByNID[currentByKey[key]]
 		if !ok {
@@ -101,8 +107,8 @@ func (r *Inputer) repairStaleMemberships(
 				chain[ev.EventID()] = ev
 			}
 		}
-		var head types.StateEntry
-		headSteps, tied := 0, false
+		var tied []types.Event
+		headSteps := 0
 		for _, entry := range entries {
 			ev, found := eventsByNID[entry.EventNID]
 			if !found {
@@ -111,23 +117,36 @@ func (r *Inputer) repairStaleMemberships(
 			steps := stepsToMembership(ev, currentEvent.EventID(), chain)
 			switch {
 			case steps > headSteps:
-				head, headSteps, tied = entry, steps, false
+				tied, headSteps = []types.Event{ev}, steps
 			case steps > 0 && steps == headSteps:
-				tied = true
+				tied = append(tied, ev)
 			}
 		}
-		if headSteps > 0 && !tied {
-			heads = append(heads, head)
+		head, ok := latestOfSameMembership(tied)
+		if !ok {
+			unresolved[key] = struct{}{}
+			continue
+		}
+		heads = append(heads, types.StateEntry{
+			StateKeyTuple: types.StateKeyTuple{EventTypeNID: types.MRoomMemberNID, EventStateKeyNID: key},
+			EventNID:      head.EventNID,
+		})
+	}
+	if len(heads) == 0 {
+		return 0, nil, nil, nil
+	}
+	passing, err := r.withoutSoftFailed(ctx, updater, roomState, roomInfo, heads)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	for _, head := range heads {
+		if !slices.Contains(passing, head) {
+			unresolved[head.EventStateKeyNID] = struct{}{}
 		}
 	}
+	heads = passing
 	if len(heads) == 0 {
-		return 0, nil, nil
-	}
-	if heads, err = r.withoutSoftFailed(ctx, updater, roomState, roomInfo, heads); err != nil {
-		return 0, nil, err
-	}
-	if len(heads) == 0 {
-		return 0, nil, nil
+		return 0, nil, unresolved, nil
 	}
 
 	replace := make(map[types.EventNID]types.StateEntry, len(heads))
@@ -136,16 +155,16 @@ func (r *Inputer) repairStaleMemberships(
 	}
 	stateBefore := updater.CurrentStateSnapshotNID()
 	if err = replaceMemberships(ctx, updater, roomState, roomInfo.RoomNID, replace); err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	for _, head := range heads {
 		memberKeys[head.EventStateKeyNID] = struct{}{}
 	}
 	updates, err := acceptedMembershipOutputs(ctx, updater, roomState, roomInfo, stateBefore, heads)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
-	return len(heads), updates, nil
+	return len(heads), updates, unresolved, nil
 }
 
 // replaceMemberships replaces the given membership events by the entries
@@ -210,6 +229,29 @@ func replaceMemberships(
 		}
 	}
 	return nil
+}
+
+// latestOfSameMembership returns the latest of the given membership events
+// by timestamp, and false if there are none or they are not all the same
+// membership. A user can leave twice from the same join, as when the leave is
+// sent again from another device, and either leave stands; a leave and a
+// join from the same membership are a fork for state resolution to decide.
+func latestOfSameMembership(events []types.Event) (types.Event, bool) {
+	if len(events) == 0 {
+		return types.Event{}, false
+	}
+	latest := events[0]
+	membership := gjson.GetBytes(latest.Content(), "membership").Str
+	for _, ev := range events[1:] {
+		if gjson.GetBytes(ev.Content(), "membership").Str != membership {
+			return types.Event{}, false
+		}
+		if ev.OriginServerTS() > latest.OriginServerTS() ||
+			(ev.OriginServerTS() == latest.OriginServerTS() && ev.EventNID > latest.EventNID) {
+			latest = ev
+		}
+	}
+	return latest, true
 }
 
 // stepsToMembership returns how many memberships of the same user lead back

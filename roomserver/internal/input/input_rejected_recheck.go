@@ -56,7 +56,7 @@ func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 			return
 		}
 		for _, roomNID := range roomNIDs {
-			roomID, accepted, repaired, acceptedEvents, rerr := r.recheckRoomRejectedEvents(ctx, roomNID)
+			roomID, accepted, repaired, acceptedEvents, unresolved, rerr := r.recheckRoomRejectedEvents(ctx, roomNID)
 			if rerr != nil {
 				// The room is not recorded, so the next start checks it again.
 				logrus.WithError(rerr).WithField("room_nid", roomNID).Warn("Failed to check rejected events again")
@@ -81,6 +81,15 @@ func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 					"accepted_memberships": accepted,
 					"accepted_events":      len(acceptedEvents),
 				}).Warn("Accepted rejected events that pass against the repaired state")
+			}
+			if len(unresolved) > 0 {
+				// Asking other servers is best effort: a room none of them
+				// answers for keeps its state as the local repair left it.
+				remote, merr := r.repairMembershipsFromRemoteState(ctx, roomNID, roomID, unresolved)
+				if merr != nil {
+					logrus.WithError(merr).WithField("room_id", roomID).Warn("Failed to repair memberships from the room's state on other servers")
+				}
+				repaired += remote
 			}
 			if repaired > 0 {
 				staleRooms++
@@ -118,35 +127,39 @@ func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 // adds the accepted memberships that pass against the current state to it.
 // It then adds the memberships stored as outliers that follow the current
 // state to it. It returns the room ID, how many memberships it accepted and
-// added, and the timeline events it accepted, which are announced once the
-// transaction is committed.
+// added, the timeline events it accepted, which are announced once the
+// transaction is committed, and the state keys of the users with a later
+// membership it could not add.
 func (r *Inputer) recheckRoomRejectedEvents(
 	ctx context.Context, roomNID types.RoomNID,
-) (roomID string, accepted, repaired int, acceptedEvents []acceptedTimelineEvent, err error) {
+) (
+	roomID string, accepted, repaired int, acceptedEvents []acceptedTimelineEvent,
+	unresolved map[types.EventStateKeyNID]struct{}, err error,
+) {
 	roomInfo, err := r.DB.RoomInfoByNID(ctx, roomNID)
 	if err != nil {
-		return "", 0, 0, nil, fmt.Errorf("r.DB.RoomInfoByNID: %w", err)
+		return "", 0, 0, nil, nil, fmt.Errorf("r.DB.RoomInfoByNID: %w", err)
 	}
 	if roomInfo == nil || roomInfo.IsStub() {
-		return "", 0, 0, nil, nil
+		return "", 0, 0, nil, nil, nil
 	}
 	// In a room in partial state the state is partial, and the resync that
 	// completes it replaces it.
 	partial, err := r.DB.IsRoomPartialState(ctx, roomNID)
 	if err != nil {
-		return "", 0, 0, nil, fmt.Errorf("r.DB.IsRoomPartialState: %w", err)
+		return "", 0, 0, nil, nil, fmt.Errorf("r.DB.IsRoomPartialState: %w", err)
 	}
 	if partial {
-		return "", 0, 0, nil, nil
+		return "", 0, 0, nil, nil, nil
 	}
 	if roomID, err = r.DB.RoomIDFromNID(ctx, roomNID); err != nil {
-		return "", 0, 0, nil, fmt.Errorf("r.DB.RoomIDFromNID: %w", err)
+		return "", 0, 0, nil, nil, fmt.Errorf("r.DB.RoomIDFromNID: %w", err)
 	}
 
 	var succeeded bool
 	updater, err := r.DB.GetRoomUpdater(ctx, roomInfo)
 	if err != nil {
-		return "", 0, 0, nil, fmt.Errorf("r.DB.GetRoomUpdater: %w", err)
+		return "", 0, 0, nil, nil, fmt.Errorf("r.DB.GetRoomUpdater: %w", err)
 	}
 	defer sqlutil.EndTransactionWithCheck(updater, &succeeded, &err)
 
@@ -154,25 +167,25 @@ func (r *Inputer) recheckRoomRejectedEvents(
 	memberKeys := map[types.EventStateKeyNID]struct{}{}
 	var updates []api.OutputEvent
 	if accepted, acceptedEvents, updates, err = r.acceptRecheckedEvents(ctx, updater, &roomState, roomInfo, nil, memberKeys); err != nil {
-		return "", 0, 0, nil, err
+		return "", 0, 0, nil, nil, err
 	}
 	var staleUpdates []api.OutputEvent
-	if repaired, staleUpdates, err = r.repairStaleMemberships(ctx, updater, &roomState, roomInfo, memberKeys); err != nil {
-		return "", 0, 0, nil, err
+	if repaired, staleUpdates, unresolved, err = r.repairStaleMemberships(ctx, updater, &roomState, roomInfo, memberKeys); err != nil {
+		return "", 0, 0, nil, nil, err
 	}
 	updates = append(updates, staleUpdates...)
 	if len(memberKeys) > 0 {
 		var membershipUpdates []api.OutputEvent
 		if membershipUpdates, err = r.updateRepairedMemberships(ctx, updater, &roomState, roomInfo, memberKeys); err != nil {
-			return "", 0, 0, nil, err
+			return "", 0, 0, nil, nil, err
 		}
 		updates = append(updates, membershipUpdates...)
 	}
 	if len(updates) > 0 {
 		if err = r.OutputProducer.ProduceRoomEvents(roomID, updates); err != nil {
-			return "", 0, 0, nil, fmt.Errorf("r.OutputProducer.ProduceRoomEvents: %w", err)
+			return "", 0, 0, nil, nil, fmt.Errorf("r.OutputProducer.ProduceRoomEvents: %w", err)
 		}
 	}
 	succeeded = true
-	return roomID, accepted, repaired, acceptedEvents, nil
+	return roomID, accepted, repaired, acceptedEvents, unresolved, nil
 }

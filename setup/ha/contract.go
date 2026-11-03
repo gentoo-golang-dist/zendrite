@@ -64,9 +64,11 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // (MSC4108, MSC4388), level 20 schedules the recheck of rejected events
 // against the repaired state, level 21 schedules it once more for rejected
 // redactions, level 22 schedules it again for the events of members whose
-// rejoin is missing from the state, and level 23 schedules it again to add
-// the memberships stored as outliers that follow the current state.
-const releaseLevel = 23
+// rejoin is missing from the state, level 23 schedules it again to add the
+// memberships stored as outliers that follow the current state, and level 24
+// schedules it again to take the memberships it cannot add itself from the
+// room's state on other servers.
+const releaseLevel = 24
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades

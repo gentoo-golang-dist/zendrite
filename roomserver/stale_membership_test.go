@@ -39,13 +39,15 @@ import (
 // Bob leaves, Carol is banned by Alice, and Dave, who had left, rejoins the
 // public room; their memberships arrive as outliers. Helen was banned in the
 // state, and her unban and rejoin arrive as outliers. Her rejoin does not pass
-// against the current state, which holds her ban, so she stays banned.
+// against the current state, which holds her ban, so she stays banned. Ivan
+// leaves twice from the same join, and the later leave enters the state.
 func TestRepairStaleMemberships(t *testing.T) {
 	alice := test.NewUser(t)
 	bob := test.NewUser(t)
 	carol := test.NewUser(t)
 	dave := test.NewUser(t)
 	helen := test.NewUser(t)
+	ivan := test.NewUser(t)
 	ctx := context.Background()
 
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
@@ -84,6 +86,7 @@ func TestRepairStaleMemberships(t *testing.T) {
 		room.CreateAndInsert(t, dave, spec.MRoomMember, join, test.WithStateKey(dave.ID), test.WithTimestamp(tick()))
 		room.CreateAndInsert(t, dave, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(dave.ID), test.WithTimestamp(tick()))
 		room.CreateAndInsert(t, helen, spec.MRoomMember, join, test.WithStateKey(helen.ID), test.WithTimestamp(tick()))
+		ivanJoin := room.CreateAndInsert(t, ivan, spec.MRoomMember, join, test.WithStateKey(ivan.ID), test.WithTimestamp(tick()))
 		helenBan := room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Ban}, test.WithStateKey(helen.ID), test.WithTimestamp(tick()))
 		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
 
@@ -97,8 +100,13 @@ func TestRepairStaleMemberships(t *testing.T) {
 		daveRejoin := room.CreateAndInsert(t, dave, spec.MRoomMember, map[string]any{"membership": spec.Join, "displayname": "Dave"}, test.WithStateKey(dave.ID), prev, test.WithTimestamp(tick()))
 		helenUnban := room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(helen.ID), prev, test.WithTimestamp(tick()))
 		helenRejoin := room.CreateAndInsert(t, helen, spec.MRoomMember, join, test.WithStateKey(helen.ID), prev, test.WithTimestamp(tick()))
+		ivanLeave := room.CreateEvent(t, ivan, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(ivan.ID), prev, test.WithTimestamp(tick()))
+		ivanLeaveAgain := room.CreateEvent(t, ivan, spec.MRoomMember, map[string]any{"membership": spec.Leave, "reason": "again"}, test.WithStateKey(ivan.ID), prev, test.WithTimestamp(tick()))
+		room.InsertEvent(t, ivanLeave)
+		room.InsertEvent(t, ivanLeaveAgain)
+		require.Contains(t, ivanLeaveAgain.AuthEventIDs(), ivanJoin.EventID())
 		require.Contains(t, daveRejoin.AuthEventIDs(), daveProfile.EventID())
-		outliers := []*types.HeaderedEvent{bobLeave, carolBan, daveProfile, daveRejoin, helenUnban, helenRejoin}
+		outliers := []*types.HeaderedEvent{bobLeave, carolBan, daveProfile, daveRejoin, helenUnban, helenRejoin, ivanLeave, ivanLeaveAgain}
 		for _, ev := range outliers {
 			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindOutlier, []*types.HeaderedEvent{ev}, "test", "test", "test", nil, false))
 		}
@@ -142,6 +150,9 @@ func TestRepairStaleMemberships(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, daveRejoin.EventID(), daveNow.EventID(), "the latest of dave's memberships must enter the state")
 		require.Equal(t, spec.Ban, membership(helen), "helen's rejoin must not pass against her ban")
+		ivanNow, err := db.GetStateEvent(ctx, room.ID, spec.MRoomMember, ivan.ID)
+		require.NoError(t, err)
+		require.Equal(t, ivanLeaveAgain.EventID(), ivanNow.EventID(), "the later of ivan's two leaves must enter the state")
 
 		added := map[string]bool{}
 		for {

@@ -68,6 +68,9 @@ func CreateRejectedRecheckTable(db *sql.DB) error {
 	}, sqlutil.Migration{
 		Version: "roomserver: add outlier memberships that follow the current state",
 		Up:      deltas.UpRejectedRecheckStaleMemberships,
+	}, sqlutil.Migration{
+		Version: "roomserver: take memberships from the room's state on other servers",
+		Up:      deltas.UpRejectedRecheckRemoteMemberships,
 	})
 	return m.Up(context.Background())
 }

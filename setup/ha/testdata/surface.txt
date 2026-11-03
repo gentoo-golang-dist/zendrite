@@ -1396,6 +1396,7 @@ migration roomserver: recheck rejected events against repaired state
 migration roomserver: recheck rejected redactions
 migration roomserver: repair state events stored under the wrong state key
 migration roomserver: state blocks refactor
+migration roomserver: take memberships from the room's state on other servers
 migration syncapi: add connection receipts table for sliding sync
 migration syncapi: add history visibility column (current_room_state)
 migration syncapi: add history visibility column (output_room_events)
