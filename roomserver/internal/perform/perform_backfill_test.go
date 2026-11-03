@@ -6,10 +6,14 @@ package perform
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
+	"codefloe.com/pat-s/gomatrixserverlib/fclient"
+	"codefloe.com/pat-s/gomatrixserverlib/spec"
 
+	federationAPI "codefloe.com/pat-s/zendrite/federationapi/api"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/state"
 	"codefloe.com/pat-s/zendrite/roomserver/storage"
@@ -28,6 +32,10 @@ type fakePurgedRoomDB struct {
 
 func (f *fakePurgedRoomDB) EventNIDs(ctx context.Context, eventIDs []string) (map[string]types.EventMetadata, error) {
 	return map[string]types.EventMetadata{}, nil
+}
+
+func (f *fakePurgedRoomDB) Events(ctx context.Context, roomVersion gomatrixserverlib.RoomVersion, eventNIDs []types.EventNID) ([]types.Event, error) {
+	return nil, nil
 }
 
 func (f *fakePurgedRoomDB) RoomInfo(ctx context.Context, roomID string) (*types.RoomInfo, error) {
@@ -67,7 +75,7 @@ func TestPersistEventsDoesNotRecreatePurgedRoom(t *testing.T) {
 	db := &fakePurgedRoomDB{}
 	pdus := []gomatrixserverlib.PDU{events[len(events)-1].PDU}
 
-	_, stored := persistEvents(context.Background(), db, nil, pdus)
+	_, stored := persistEvents(context.Background(), db, pdus)
 
 	if db.getOrCreateCalled {
 		t.Error("persistEvents called GetOrCreateRoomInfo, which re-creates purged rooms; it must look the room up with RoomInfo instead")
@@ -77,5 +85,85 @@ func TestPersistEventsDoesNotRecreatePurgedRoom(t *testing.T) {
 	}
 	if len(stored) != 0 {
 		t.Errorf("expected no stored events for a purged room, got %d", len(stored))
+	}
+}
+
+// stateServer counts the requests for the state of a room.
+type stateServer struct {
+	federationAPI.RoomserverFederationAPI
+	events []gomatrixserverlib.PDU
+	calls  int
+}
+
+func (s *stateServer) LookupState(
+	_ context.Context, _, _ spec.ServerName, _, _ string, _ gomatrixserverlib.RoomVersion,
+) (gomatrixserverlib.StateResponse, error) {
+	s.calls++
+	var res fclient.RespState
+	for _, ev := range s.events {
+		res.StateEvents = append(res.StateEvents, ev.JSON())
+	}
+	return &res, nil
+}
+
+// A state event that is not stored is fetched with the whole state of the
+// room. The state at the next event holds it too, and the room's whole state
+// must not be requested again for it.
+func TestStateBeforeEventRemembersFetchedEvents(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	events := gomatrixserverlib.ToPDUs(room.Events())
+	eventIDs := make([]string, len(events))
+	for i, ev := range events {
+		eventIDs[i] = ev.EventID()
+	}
+
+	server := &stateServer{events: events}
+	requester := newBackfillRequester(&fakePurgedRoomDB{}, server, nil, "local", func(spec.ServerName) bool { return false },
+		nil, nil, room.Version)
+	requester.servers = []spec.ServerName{"remote"}
+
+	for range 3 {
+		res, err := requester.StateBeforeEvent(context.Background(), room.Version, events[len(events)-1], eventIDs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res) != len(eventIDs) {
+			t.Fatalf("expected %d events, got %d", len(eventIDs), len(res))
+		}
+	}
+	if server.calls != 1 {
+		t.Errorf("the state of the room was requested %d times, want once", server.calls)
+	}
+}
+
+// The state before an event must not change when the state before the event
+// after it is worked out.
+func TestCalculateNewStateIDsKeepsPrevEventState(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	events := room.Events()
+	newName := room.CreateAndInsert(t, alice, "m.room.name", map[string]any{"name": "a"}, test.WithStateKey(""))
+	newerName := room.CreateAndInsert(t, alice, "m.room.name", map[string]any{"name": "b"}, test.WithStateKey(""))
+	next := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "hello"})
+
+	requester := newBackfillRequester(&fakePurgedRoomDB{}, nil, nil, "local", func(spec.ServerName) bool { return false },
+		nil, nil, room.Version)
+	before := make([]string, 0, len(events)+1)
+	for _, ev := range events {
+		requester.eventIDMap[ev.EventID()] = ev.PDU
+		before = append(before, ev.EventID())
+	}
+	requester.eventIDMap[newName.EventID()] = newName.PDU
+	before = append(before, newName.EventID())
+	want := slices.Clone(before)
+	requester.eventIDToBeforeStateIDs[newerName.EventID()] = before
+
+	after := requester.calculateNewStateIDs(next.PDU, newerName.PDU, before)
+	if !slices.Contains(after, newerName.EventID()) || slices.Contains(after, newName.EventID()) {
+		t.Errorf("the state after the new name must hold it in place of the old one: %v", after)
+	}
+	if !slices.Equal(requester.eventIDToBeforeStateIDs[newerName.EventID()], want) {
+		t.Errorf("the state before the new name changed: %v", requester.eventIDToBeforeStateIDs[newerName.EventID()])
 	}
 }

@@ -744,6 +744,17 @@ func backfillEvents(
 		}
 	}
 
+	// A redaction can target an event stored here before this backfill. The
+	// roomserver will not report it again, so a failure is only logged.
+	for _, redaction := range res.Redactions {
+		if err = db.RedactEvent(ctx, redaction.RedactedEventID, redaction.RedactedBecause, rsAPI); err == nil {
+			err = db.RedactRelations(ctx, roomID, redaction.RedactedEventID)
+		}
+		if err != nil {
+			util.GetLogger(ctx).WithError(err).WithField("event_id", redaction.RedactedEventID).Error("Failed to apply a backfilled redaction")
+		}
+	}
+
 	// we may have got more than the requested limit so resize now
 	if len(events) > limit {
 		// last `limit` events

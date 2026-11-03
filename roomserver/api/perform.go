@@ -152,6 +152,9 @@ type PerformBackfillResponse struct {
 	// Missing events, arbritrary order.
 	Events            []*types.HeaderedEvent              `json:"events"`
 	HistoryVisibility gomatrixserverlib.HistoryVisibility `json:"history_visibility"`
+	// Redactions the backfill applied, to events in Events or to events the
+	// caller may already hold.
+	Redactions []OutputRedactedEvent `json:"redactions,omitempty"`
 }
 
 type PerformPublishRequest struct {

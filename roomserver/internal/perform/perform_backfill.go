@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -148,7 +149,7 @@ func (r *Backfiller) backfillViaFederation(ctx context.Context, req *api.Perform
 	}
 
 	// persist these new events - auth checks have already been done
-	roomNID, storedEvents := persistEvents(ctx, r.DB, r.Querier, events)
+	roomNID, storedEvents := persistEvents(ctx, r.DB, events)
 
 	for _, ev := range storedEvents {
 		// now add state for these events
@@ -162,7 +163,7 @@ func (r *Backfiller) backfillViaFederation(ctx context.Context, req *api.Perform
 		var entries []types.StateEntry
 		if entries, err = r.DB.StateEntriesForEventIDs(ctx, stateIDs, true); err != nil {
 			// attempt to fetch the missing events
-			r.fetchAndStoreMissingEvents(ctx, info.RoomVersion, requester, stateIDs, req.VirtualHost)
+			r.fetchAndStoreMissingEvents(ctx, info, requester, stateIDs, req.VirtualHost)
 			// try again
 			entries, err = r.DB.StateEntriesForEventIDs(ctx, stateIDs, true)
 			if err != nil {
@@ -181,6 +182,8 @@ func (r *Backfiller) backfillViaFederation(ctx context.Context, req *api.Perform
 		}
 	}
 
+	res.Redactions = applyBackfilledRedactions(ctx, r.DB, r.Querier, info, storedEvents, events)
+
 	// TODO: update backwards extremities, as that should be moved from syncapi to roomserver at some point.
 
 	res.Events = make([]*types.HeaderedEvent, len(events))
@@ -193,7 +196,7 @@ func (r *Backfiller) backfillViaFederation(ctx context.Context, req *api.Perform
 
 // fetchAndStoreMissingEvents does a best-effort fetch and store of missing events specified in stateIDs. Returns no error as it is just
 // best effort.
-func (r *Backfiller) fetchAndStoreMissingEvents(ctx context.Context, roomVer gomatrixserverlib.RoomVersion,
+func (r *Backfiller) fetchAndStoreMissingEvents(ctx context.Context, info *types.RoomInfo,
 	backfillRequester *backfillRequester, stateIDs []string, virtualHost spec.ServerName,
 ) {
 	servers := backfillRequester.servers
@@ -224,7 +227,7 @@ func (r *Backfiller) fetchAndStoreMissingEvents(ctx context.Context, roomVer gom
 				logger.WithError(err).Warn("failed to get event from server")
 				continue
 			}
-			loader := gomatrixserverlib.NewEventsLoader(roomVer, r.KeyRing, backfillRequester, backfillRequester.ProvideEvents, false)
+			loader := gomatrixserverlib.NewEventsLoader(info.RoomVersion, r.KeyRing, backfillRequester, backfillRequester.ProvideEvents, false)
 			result, err := loader.LoadAndVerify(ctx, res.PDUs, gomatrixserverlib.TopologicalOrderByPrevEvents, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 				return r.Querier.QueryUserIDForSender(ctx, roomID, senderID)
 			})
@@ -262,7 +265,8 @@ func (r *Backfiller) fetchAndStoreMissingEvents(ctx context.Context, roomVer gom
 		}
 	}
 	util.GetLogger(ctx).Infof("Persisting %d new events", len(newEvents))
-	persistEvents(ctx, r.DB, r.Querier, newEvents)
+	_, stored := persistEvents(ctx, r.DB, newEvents)
+	applyBackfilledRedactions(ctx, r.DB, r.Querier, info, stored, newEvents)
 }
 
 // backfillRequester implements gomatrixserverlib.BackfillRequester.
@@ -363,7 +367,8 @@ FederationHit:
 }
 
 func (b *backfillRequester) calculateNewStateIDs(targetEvent, prevEvent gomatrixserverlib.PDU, prevEventStateIDs []string) []string {
-	newStateIDs := prevEventStateIDs
+	// A copy, since the state before the prev event must stay as it is.
+	newStateIDs := slices.Clone(prevEventStateIDs)
 	if prevEvent.StateKey() == nil {
 		// state is the same as the previous event
 		b.eventIDToBeforeStateIDs[targetEvent.EventID()] = newStateIDs
@@ -402,20 +407,35 @@ func (b *backfillRequester) calculateNewStateIDs(targetEvent, prevEvent gomatrix
 func (b *backfillRequester) StateBeforeEvent(ctx context.Context, roomVer gomatrixserverlib.RoomVersion,
 	event gomatrixserverlib.PDU, eventIDs []string,
 ) (map[string]gomatrixserverlib.PDU, error) {
+	// Events an earlier call fetched are not stored, and the state at the next
+	// event usually holds the same ones. Without them the whole state of the
+	// room would be requested again for every event.
+	known := make(map[string]gomatrixserverlib.PDU, len(eventIDs))
+	var unknownIDs []string
+	for _, id := range eventIDs {
+		if ev, ok := b.eventIDMap[id]; ok {
+			known[id] = ev
+		} else {
+			unknownIDs = append(unknownIDs, id)
+		}
+	}
+	if len(unknownIDs) == 0 {
+		return known, nil
+	}
+
 	// try to fetch the events from the database first
-	events, err := b.ProvideEvents(roomVer, eventIDs) //nolint:contextcheck
+	events, err := b.ProvideEvents(roomVer, unknownIDs) //nolint:contextcheck
 	if err != nil {
 		// non-fatal, fallthrough
 		logrus.WithError(err).Info("Failed to fetch events")
 	} else {
-		logrus.Infof("Fetched %d/%d events from the database", len(events), len(eventIDs))
-		if len(events) == len(eventIDs) {
-			result := make(map[string]gomatrixserverlib.PDU)
-			for i := range events {
-				result[events[i].EventID()] = events[i]
-				b.eventIDMap[events[i].EventID()] = events[i]
-			}
-			return result, nil
+		logrus.Infof("Fetched %d/%d events from the database", len(events), len(unknownIDs))
+		for i := range events {
+			known[events[i].EventID()] = events[i]
+			b.eventIDMap[events[i].EventID()] = events[i]
+		}
+		if len(known) == len(eventIDs) {
+			return known, nil
 		}
 	}
 
@@ -434,6 +454,9 @@ func (b *backfillRequester) StateBeforeEvent(ctx context.Context, roomVer gomatr
 		}
 		for eventID, ev := range result {
 			b.eventIDMap[eventID] = ev
+		}
+		for eventID, ev := range known {
+			result[eventID] = ev
 		}
 		return result, nil
 	}
@@ -614,11 +637,11 @@ func joinEventsFromHistoryVisibility(
 	return evs, visibility, err
 }
 
-func persistEvents(ctx context.Context, db storage.Database, querier api.QuerySenderIDAPI, events []gomatrixserverlib.PDU) (types.RoomNID, []types.Event) {
+func persistEvents(ctx context.Context, db storage.Database, events []gomatrixserverlib.PDU) (types.RoomNID, []types.Event) {
 	var roomNID types.RoomNID
 	var eventNID types.EventNID
 	storedEvents := make([]types.Event, 0, len(events))
-	for j, ev := range events {
+	for _, ev := range events {
 		nidMap, err := db.EventNIDs(ctx, ev.AuthEventIDs())
 		if err != nil { // this shouldn't happen as RequestBackfill already found them
 			logrus.WithError(err).WithField("auth_events", ev.AuthEventIDs()).Error("Failed to find one or more auth events")
@@ -665,24 +688,46 @@ func persistEvents(ctx context.Context, db storage.Database, querier api.QuerySe
 			continue
 		}
 
-		resolver := state.NewStateResolution(db, roomInfo, querier)
-
-		_, redactedEvent, err := db.MaybeRedactEvent(ctx, roomInfo, eventNID, ev, &resolver, querier)
-		if err != nil {
-			logrus.WithError(err).WithField("event_id", ev.EventID()).Error("Failed to redact event")
-			continue
-		}
-		// If storing this event results in it being redacted, then do so.
-		// It's also possible for this event to be a redaction which results in another event being
-		// redacted, which we don't care about since we aren't returning it in this backfill.
-		if redactedEvent != nil && redactedEvent.EventID() == ev.EventID() {
-			ev = redactedEvent
-			events[j] = ev
-		}
 		storedEvents = append(storedEvents, types.Event{
 			EventNID: eventNID,
 			PDU:      ev,
 		})
 	}
 	return roomNID, storedEvents
+}
+
+// applyBackfilledRedactions applies the redactions that storing the given
+// events completed, in either direction: a backfilled redaction of an event
+// already stored, or a backfilled event a stored redaction redacts. Whether a
+// redaction is allowed depends on the state at the redaction, so this must run
+// once the stored events have their state. An event in events that is redacted
+// is replaced with its redacted form. It returns the redactions it applied, so
+// the caller can redact the copies it already holds.
+func applyBackfilledRedactions(
+	ctx context.Context, db storage.Database, querier api.QuerySenderIDAPI, roomInfo *types.RoomInfo,
+	stored []types.Event, events []gomatrixserverlib.PDU,
+) []api.OutputRedactedEvent {
+	resolver := state.NewStateResolution(db, roomInfo, querier)
+	var redactions []api.OutputRedactedEvent
+	for _, ev := range stored {
+		redaction, redacted, err := db.MaybeRedactEvent(ctx, roomInfo, ev.EventNID, ev.PDU, &resolver, querier)
+		if err != nil {
+			logrus.WithError(err).WithField("event_id", ev.EventID()).Error("Failed to redact event")
+			continue
+		}
+		if redaction == nil || redacted == nil {
+			continue
+		}
+		for i := range events {
+			if events[i].EventID() == redacted.EventID() {
+				events[i] = redacted
+				break
+			}
+		}
+		redactions = append(redactions, api.OutputRedactedEvent{
+			RedactedEventID: redacted.EventID(),
+			RedactedBecause: &types.HeaderedEvent{PDU: redaction},
+		})
+	}
+	return redactions
 }
