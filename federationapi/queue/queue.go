@@ -38,8 +38,18 @@ type OutgoingQueues struct {
 	client        fclient.FederationClient
 	statistics    *statistics.Statistics
 	signing       map[spec.ServerName]*fclient.SigningIdentity
-	queuesMutex   sync.Mutex // protects the below
-	queues        map[spec.ServerName]*destinationQueue
+	// retryDelays are the waits before resending a transaction that did
+	// not reach the destination, before the destination is backed off.
+	retryDelays []time.Duration
+	queuesMutex sync.Mutex // protects the below
+	queues      map[spec.ServerName]*destinationQueue
+}
+
+// defaultTransactionRetryDelays retry a transaction for about half a minute,
+// which covers a destination that restarts, as Synapse's federation client
+// does, before the backoff of minutes starts.
+var defaultTransactionRetryDelays = []time.Duration{
+	time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second,
 }
 
 func init() { //nolint:gochecknoinits
@@ -84,14 +94,15 @@ func NewOutgoingQueues(
 	signing []*fclient.SigningIdentity,
 ) *OutgoingQueues {
 	queues := &OutgoingQueues{
-		disabled:   disabled,
-		process:    processContext,
-		db:         db,
-		origin:     origin,
-		client:     client,
-		statistics: statistics,
-		signing:    map[spec.ServerName]*fclient.SigningIdentity{},
-		queues:     map[spec.ServerName]*destinationQueue{},
+		disabled:    disabled,
+		process:     processContext,
+		db:          db,
+		origin:      origin,
+		client:      client,
+		statistics:  statistics,
+		signing:     map[spec.ServerName]*fclient.SigningIdentity{},
+		queues:      map[spec.ServerName]*destinationQueue{},
+		retryDelays: defaultTransactionRetryDelays,
 	}
 	for _, identity := range signing {
 		queues.signing[identity.ServerName] = identity

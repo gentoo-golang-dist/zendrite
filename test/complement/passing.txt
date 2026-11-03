@@ -16,6 +16,7 @@ tests/TestClientSpacesSummary
 tests/TestClientSpacesSummaryJoinRules
 tests/TestComplementCanCreateValidV12Rooms
 tests/TestContentMediaV1
+tests/TestDeviceListsUpdateOverFederation
 tests/TestEventAuth
 tests/TestFederatedClientSpaces
 tests/TestFederationKeyUploadQuery
@@ -71,6 +72,7 @@ tests/TestRestrictedRoomsRemoteJoinLocalUser
 tests/TestRestrictedRoomsSpacesSummaryFederation
 tests/TestRestrictedRoomsSpacesSummaryLocal
 tests/TestRoomSummaryAllowedRoomIDs
+tests/TestToDeviceMessagesOverFederation
 tests/TestUnbanViaInvite
 tests/TestUnknownEndpoints
 tests/TestUnrejectRejectedEvents

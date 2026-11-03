@@ -9,6 +9,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -18,7 +19,9 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/matrix-org/gomatrix"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gotest.tools/v3/poll"
 
 	"codefloe.com/pat-s/zendrite/federationapi/statistics"
@@ -120,6 +123,8 @@ func testSetup(failuresUntilBlacklist uint32, failuresUntilAssumedOffline uint32
 		},
 	}
 	queues := NewOutgoingQueues(db, processContext, false, "localhost", fc, &stats, signingInfo)
+	// These tests count every failed transaction as a backoff.
+	queues.retryDelays = nil
 
 	return db, fc, queues, processContext, close
 }
@@ -1022,4 +1027,89 @@ func TestShutdownDoesNotChargeDestination(t *testing.T) {
 	pending, err := db.GetPendingPDUs(context.Background(), destination, 100)
 	assert.NoError(t, err)
 	assert.Len(t, pending, 1, "the undelivered event must stay queued for the successor")
+}
+
+// flakyFederationClient fails the first transactions it is given without an
+// HTTP response, as when the destination is restarting, or with httpErr.
+type flakyFederationClient struct {
+	fclient.FederationClient
+	failures int
+	httpErr  error
+	mu       sync.Mutex
+	attempts int
+}
+
+func (f *flakyFederationClient) SendTransaction(context.Context, gomatrixserverlib.Transaction) (fclient.RespSend, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attempts++
+	if f.httpErr != nil {
+		return fclient.RespSend{}, f.httpErr
+	}
+	if f.attempts <= f.failures {
+		return fclient.RespSend{}, errors.New("dial tcp: connection refused")
+	}
+	return fclient.RespSend{}, nil
+}
+
+func (f *flakyFederationClient) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.attempts
+}
+
+// A destination that is briefly unreachable, as while it restarts, gets the
+// transaction resent before it is backed off for minutes.
+func TestUnreachableDestinationIsRetriedBeforeBackoff(t *testing.T) {
+	t.Parallel()
+	destination := spec.ServerName("remotehost")
+	signing := []*fclient.SigningIdentity{{KeyID: "ed21019:auto", PrivateKey: test.PrivateKeyA, ServerName: "localhost"}}
+	setup := func(t *testing.T, fc *flakyFederationClient) (*OutgoingQueues, *statistics.Statistics) {
+		db := test.NewInMemoryFederationDatabase()
+		pc := process.NewProcessContext()
+		t.Cleanup(pc.ShutdownZendrite)
+		stats := statistics.NewStatistics(db, 16, 17, false)
+		queues := NewOutgoingQueues(db, pc, false, "localhost", fc, &stats, signing)
+		queues.retryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+		return queues, &stats
+	}
+	backedOff := func(stats *statistics.Statistics) func() bool {
+		return func() bool {
+			until := stats.ForServer(destination).BackoffInfo()
+			return until != nil && !until.IsZero()
+		}
+	}
+
+	t.Run("an unreachable destination is retried", func(t *testing.T) {
+		fc := &flakyFederationClient{failures: 2}
+		queues, stats := setup(t, fc)
+		require.NoError(t, queues.SendEvent(mustCreatePDU(t), "localhost", []spec.ServerName{destination}))
+		require.Eventually(t, func() bool { return stats.ForServer(destination).SuccessCount() == 1 }, 5*time.Second, time.Millisecond)
+		require.Equal(t, 3, fc.count())
+		require.False(t, backedOff(stats)())
+	})
+	t.Run("a destination that stays unreachable is backed off", func(t *testing.T) {
+		fc := &flakyFederationClient{failures: 10}
+		queues, stats := setup(t, fc)
+		require.NoError(t, queues.SendEvent(mustCreatePDU(t), "localhost", []spec.ServerName{destination}))
+		require.Eventually(t, backedOff(stats), 5*time.Second, time.Millisecond)
+		require.Equal(t, 3, fc.count())
+	})
+	t.Run("a destination that failed before is not retried", func(t *testing.T) {
+		fc := &flakyFederationClient{failures: 10}
+		queues, stats := setup(t, fc)
+		// A backoff of about a second, which the queue waits out.
+		stats.MinBackoffExponent = 0
+		stats.ForServer(destination).Failure()
+		require.NoError(t, queues.SendEvent(mustCreatePDU(t), "localhost", []spec.ServerName{destination}))
+		require.Eventually(t, func() bool { return stats.ForServer(destination).FailureCount() == 2 }, 5*time.Second, time.Millisecond)
+		require.Equal(t, 1, fc.count())
+	})
+	t.Run("a destination that answers is not retried", func(t *testing.T) {
+		fc := &flakyFederationClient{httpErr: gomatrix.HTTPError{Code: 500}}
+		queues, stats := setup(t, fc)
+		require.NoError(t, queues.SendEvent(mustCreatePDU(t), "localhost", []spec.ServerName{destination}))
+		require.Eventually(t, backedOff(stats), 5*time.Second, time.Millisecond)
+		require.Equal(t, 1, fc.count())
+	})
 }

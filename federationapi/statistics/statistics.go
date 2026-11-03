@@ -379,6 +379,12 @@ func (s *ServerStatistics) BackoffInfo() *time.Time {
 	return nil
 }
 
+// FailureCount returns the number of consecutive failures since the last
+// success.
+func (s *ServerStatistics) FailureCount() uint32 {
+	return s.backoffCount.Load()
+}
+
 // Blacklisted returns true if the server is blacklisted and false
 // otherwise.
 func (s *ServerStatistics) Blacklisted() bool {

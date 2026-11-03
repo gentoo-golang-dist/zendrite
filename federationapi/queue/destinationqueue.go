@@ -465,7 +465,7 @@ func (oq *destinationQueue) nextTransaction(
 	shouldSendToRelays := oq.statistics.AssumedOffline() && hasRelayServers
 	if !shouldSendToRelays {
 		sendMethod = statistics.SendDirect
-		_, err = oq.client.SendTransaction(ctx, t)
+		err = oq.sendTransactionWithRetries(ctx, t)
 	} else {
 		// Try sending directly to the destination first in case they came back online.
 		sendMethod = statistics.SendDirect
@@ -542,6 +542,32 @@ func (oq *destinationQueue) nextTransaction(
 		logrus.ErrorKey: err,
 	}).Debugf("Failed to send transaction %q", t.TransactionID)
 	return sendMethod, err
+}
+
+// sendTransactionWithRetries sends the transaction directly, resending it
+// after each of the queue's retry delays while it does not reach the
+// destination. A destination that answers, even with an error, or that
+// already failed before is not retried here: the backoff handles it.
+func (oq *destinationQueue) sendTransactionWithRetries(ctx context.Context, t gomatrixserverlib.Transaction) error {
+	var delays []time.Duration
+	if oq.queues != nil && oq.statistics.FailureCount() == 0 {
+		delays = oq.queues.retryDelays
+	}
+	for attempt := 0; ; attempt++ {
+		_, err := oq.client.SendTransaction(ctx, t)
+		var httpErr gomatrix.HTTPError
+		if err == nil || errors.As(err, &httpErr) || errors.Is(err, ownership.ErrDispatchRefused) || attempt >= len(delays) {
+			return err
+		}
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"destination": oq.destination, "transaction_id": t.TransactionID, "retry_in": delays[attempt],
+		}).Debug("Transaction did not reach the destination, retrying")
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(delays[attempt]):
+		}
+	}
 }
 
 // createTransaction generates a gomatrixserverlib.Transaction from the provided pdus and edus.

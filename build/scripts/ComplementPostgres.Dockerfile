@@ -9,8 +9,11 @@ RUN sed -i "s%peer%trust%g" /etc/postgresql/17/main/pg_hba.conf && \
     # Bump up max conns for moar concurrency
     sed -i 's/max_connections = 100/max_connections = 2000/g' /etc/postgresql/17/main/postgresql.conf && \
     # Every homeserver container gets a throwaway database, so trade
-    # durability for speed.
-    printf 'fsync = off\nsynchronous_commit = off\nfull_page_writes = off\n' >> /etc/postgresql/17/main/postgresql.conf
+    # durability for speed. Commits must still reach the operating system:
+    # tests restart homeservers by killing their container, which loses
+    # what synchronous_commit = off leaves in Postgres' memory, such as a
+    # freshly issued access token.
+    printf 'fsync = off\nfull_page_writes = off\n' >> /etc/postgresql/17/main/postgresql.conf
 
 # This entry script starts postgres, waits for it to be up then starts zendrite.
 # It calls pg_ctl directly: the pg_ctlcluster wrapper takes about two seconds
