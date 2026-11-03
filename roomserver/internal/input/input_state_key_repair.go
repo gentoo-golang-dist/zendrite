@@ -910,6 +910,9 @@ func acceptedMembershipOutputs(
 			AddsStateEventIDs: []string{ev.EventID()},
 			SendAsServer:      string(api.DoNotSendToOtherServers),
 			HistoryVisibility: historyVisibility,
+			// The membership was sent long ago, so it must not become the
+			// room's latest event in /sync.
+			ExcludeFromSync: true,
 		}
 		if old, replacedOld := replaced[eventNID]; replacedOld {
 			if oldEvent, found := byNID[old]; found {
@@ -1064,6 +1067,7 @@ func (r *Inputer) announceAcceptedTimelineEvents(
 			OldRoomEvent: &api.OutputOldRoomEvent{
 				Event:             &types.HeaderedEvent{PDU: event},
 				HistoryVisibility: a.historyVisibility,
+				ExcludeFromSync:   true,
 			},
 		})
 		// An accepted redaction redacts an event the sync API already has,

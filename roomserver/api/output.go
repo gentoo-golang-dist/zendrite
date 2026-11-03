@@ -171,6 +171,10 @@ type OutputNewRoomEvent struct {
 	TransactionID *TransactionID `json:"transaction_id,omitempty"`
 	// The history visibility of the event.
 	HistoryVisibility gomatrixserverlib.HistoryVisibility `json:"history_visibility"`
+	// ExcludeFromSync keeps the event from the timelines of /sync while its
+	// state changes still apply, as for an old membership a repair adds to
+	// the current state. See OutputOldRoomEvent.ExcludeFromSync.
+	ExcludeFromSync bool `json:"exclude_from_sync,omitempty"`
 }
 
 func (o *OutputNewRoomEvent) NeededStateEventIDs() ([]*types.HeaderedEvent, []string) {
@@ -199,6 +203,12 @@ type OutputOldRoomEvent struct {
 	// The Event.
 	Event             *types.HeaderedEvent                `json:"event"`
 	HistoryVisibility gomatrixserverlib.HistoryVisibility `json:"history_visibility"`
+	// ExcludeFromSync keeps the event from the timelines of /sync. A repair
+	// that announces events long after they were sent sets it: written at a
+	// new stream position, they would otherwise become the room's latest
+	// events, and clients paginating back from them would skip every event
+	// sent since. The event is still returned by /messages.
+	ExcludeFromSync bool `json:"exclude_from_sync,omitempty"`
 }
 
 // An OutputNewInviteEvent is written whenever an invite becomes active.

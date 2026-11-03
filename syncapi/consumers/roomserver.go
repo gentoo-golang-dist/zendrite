@@ -429,7 +429,7 @@ func (s *OutputRoomEventConsumer) onNewRoomEvent(
 	writeStarted := time.Now()
 	var pduPos types.StreamPosition
 	err = sqlutil.RetryTransient(ctx, "sync API write of "+ev.EventID(), func() (err error) {
-		pduPos, err = s.db.WriteEvent(ctx, ev, addsStateEvents, msg.AddsStateEventIDs, msg.RemovesStateEventIDs, msg.TransactionID, false, msg.HistoryVisibility)
+		pduPos, err = s.db.WriteEvent(ctx, ev, addsStateEvents, msg.AddsStateEventIDs, msg.RemovesStateEventIDs, msg.TransactionID, msg.ExcludeFromSync, msg.HistoryVisibility)
 		return err
 	})
 	if err != nil {
@@ -523,7 +523,7 @@ func (s *OutputRoomEventConsumer) onOldRoomEvent(
 	// Retried in place, as for new events.
 	var pduPos types.StreamPosition
 	err = sqlutil.RetryTransient(ctx, "sync API write of "+ev.EventID(), func() (err error) {
-		pduPos, err = s.db.WriteEvent(ctx, ev, []*rstypes.HeaderedEvent{}, []string{}, []string{}, nil, ev.StateKey() != nil, msg.HistoryVisibility)
+		pduPos, err = s.db.WriteEvent(ctx, ev, []*rstypes.HeaderedEvent{}, []string{}, []string{}, nil, ev.StateKey() != nil || msg.ExcludeFromSync, msg.HistoryVisibility)
 		return err
 	})
 	if err != nil {

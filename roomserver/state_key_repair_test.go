@@ -239,6 +239,7 @@ func TestRepairStateKeys(t *testing.T) {
 			var output api.OutputEvent
 			require.NoError(t, json.Unmarshal(msg.Data, &output))
 			if output.Type == api.OutputTypeOldRoomEvent {
+				require.True(t, output.OldRoomEvent.ExcludeFromSync, "an accepted event must be kept from /sync timelines")
 				switch output.OldRoomEvent.Event.EventID() {
 				case charlieEarlyMessage.EventID():
 					announcedEarlyMessage = true
@@ -258,6 +259,7 @@ func TestRepairStateKeys(t *testing.T) {
 			switch output.NewRoomEvent.Event.EventID() {
 			case charlieJoin.EventID():
 				announcedCharlie = true
+				require.True(t, output.NewRoomEvent.ExcludeFromSync, "an accepted membership must be kept from /sync timelines")
 				require.Equal(t, []string{charlieJoin.EventID()}, output.NewRoomEvent.AddsStateEventIDs)
 				require.Equal(t, string(api.DoNotSendToOtherServers), output.NewRoomEvent.SendAsServer)
 			case eveJoin.EventID():

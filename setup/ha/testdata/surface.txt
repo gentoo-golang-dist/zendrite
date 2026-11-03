@@ -1405,6 +1405,7 @@ migration syncapi: add history visibility column (output_room_events)
 migration syncapi: create sliding sync room metadata tables
 migration syncapi: create sliding sync tables
 migration syncapi: drop sent_by_token
+migration syncapi: exclude events announced long after they were sent from sync
 migration syncapi: fix sequences
 migration syncapi: notification thread counts
 migration syncapi: rename dupe index (output_room_events)

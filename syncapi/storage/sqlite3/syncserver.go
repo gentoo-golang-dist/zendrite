@@ -148,6 +148,10 @@ func (d *SyncServerDatasource) prepare(ctx context.Context) (err error) {
 			Version: "syncapi: create sliding sync room metadata tables",
 			Up:      deltas.UpCreateSlidingSyncRoomMetadata,
 		},
+		sqlutil.Migration{
+			Version: "syncapi: exclude events announced long after they were sent from sync",
+			Up:      deltas.UpExcludeRepairedEvents, // Requires output_room_events and its topology to be created.
+		},
 	)
 	err = m.Up(ctx)
 	if err != nil {
