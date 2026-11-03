@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
@@ -100,7 +101,7 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 		if !roomExists {
 			// attempt to query this room over federation, as either we've never heard of it before
 			// or we've left it and hence are not authorized (but info may be exposed regardless)
-			fedRes := federatedRoomInfo(ctx, querier, walker.Caller, walker.SuggestedOnly, queuedRoom.RoomID, queuedRoom.Vias)
+			fedRes := federatedRoomInfo(ctx, querier, walker.Caller, walker.SuggestedOnly, queuedRoom.RoomID, queuedRoom.ParentRoomID, queuedRoom.Vias)
 			if fedRes != nil {
 				discoveredChildEvents = fedRes.Room.ChildrenState
 				discoveredRooms = append(discoveredRooms, fedRes.Room)
@@ -443,7 +444,9 @@ func roomExists(ctx context.Context, querier *Queryer, roomID spec.RoomID) bool 
 
 // federatedRoomInfo returns more of the spaces graph from another server. Returns nil if this was
 // unsuccessful.
-func federatedRoomInfo(ctx context.Context, querier *Queryer, caller types.DeviceOrServerName, suggestedOnly bool, roomID spec.RoomID, vias []string) *fclient.RoomHierarchyResponse {
+func federatedRoomInfo(
+	ctx context.Context, querier *Queryer, caller types.DeviceOrServerName, suggestedOnly bool, roomID spec.RoomID, parentRoomID *spec.RoomID, vias []string,
+) *fclient.RoomHierarchyResponse {
 	// only do federated requests for client requests
 	if caller.Device() == nil {
 		return nil
@@ -455,12 +458,14 @@ func federatedRoomInfo(ctx context.Context, querier *Queryer, caller types.Devic
 		return &resp
 	}
 	// Check negative cache - if we recently failed to fetch this room, skip federation
-	if querier.Cache.GetRoomHierarchyFailure(roomIDStr) {
+	refusalKey := roomHierarchyRefusalKey(ctx, querier, roomID, parentRoomID, vias)
+	if querier.Cache.GetRoomHierarchyFailure(roomIDStr) || querier.Cache.GetRoomHierarchyFailure(refusalKey) {
 		util.GetLogger(ctx).Debugf("Skipping federation for %s (recently failed)", roomID)
 		return nil
 	}
 	util.GetLogger(ctx).Debugf("Querying %s via %+v", roomID, vias)
 	innerCtx := context.Background()
+	refused, unreachable := false, false
 	// query more of the spaces graph using these servers
 	for _, serverName := range vias {
 		if serverName == string(querier.Cfg.Global.ServerName) {
@@ -471,8 +476,10 @@ func federatedRoomInfo(ctx context.Context, querier *Queryer, caller types.Devic
 			var fedErr *fs.FederationClientError
 			if errors.As(err, &fedErr) && fedErr.Code == http.StatusNotFound {
 				util.GetLogger(ctx).WithError(err).Debugf("room %s not available via server %s", roomIDStr, serverName)
+				refused = true
 			} else {
 				util.GetLogger(ctx).WithError(err).Warnf("failed to call RoomHierarchies on server %s", serverName)
+				unreachable = true
 			}
 			continue
 		}
@@ -491,10 +498,39 @@ func federatedRoomInfo(ctx context.Context, querier *Queryer, caller types.Devic
 
 		return &res
 	}
+	if refused && !unreachable {
+		util.GetLogger(ctx).Debugf("The servers refused %s, caching negative result until one joins the parent", roomID)
+		querier.Cache.StoreRoomHierarchyFailure(refusalKey)
+		return nil
+	}
 	// All vias failed - cache this negative result to avoid repeated failed attempts
 	util.GetLogger(ctx).Debugf("All federation attempts failed for %s, caching negative result", roomID)
 	querier.Cache.StoreRoomHierarchyFailure(roomIDStr)
 	return nil
+}
+
+// roomHierarchyRefusalKey is the cache key for the servers' refusal to share
+// a room. A server that answers 404 does not know yet that a local user may
+// join the room, which typically changes when it joins the parent space and
+// learns its members, so the key holds the vias that are in the parent.
+func roomHierarchyRefusalKey(ctx context.Context, querier *Queryer, roomID spec.RoomID, parentRoomID *spec.RoomID, vias []string) string {
+	key := roomID.String() + "|refused"
+	if parentRoomID == nil {
+		return key
+	}
+	key += "|" + parentRoomID.String()
+	joined := make([]string, 0, len(vias))
+	for _, via := range vias {
+		var res roomserver.QueryServerJoinedToRoomResponse
+		err := querier.QueryServerJoinedToRoom(ctx, &roomserver.QueryServerJoinedToRoomRequest{
+			RoomID: parentRoomID.String(), ServerName: spec.ServerName(via),
+		}, &res)
+		if err == nil && res.IsInRoom {
+			joined = append(joined, via)
+		}
+	}
+	sort.Strings(joined)
+	return key + "|" + strings.Join(joined, ",")
 }
 
 // references returns all child references pointing to or from this room.
