@@ -13,6 +13,7 @@ import (
 	"slices"
 	"time"
 
+	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -130,7 +131,8 @@ type serverMembershipView struct {
 
 // logMembershipVotes logs the membership event each server holds for the
 // user with the given state key NID, so that a membership the repair leaves
-// alone can be traced.
+// alone can be traced. Each vote names the membership, its sender when that
+// is not the member, as for a kick or ban, and the event ID.
 func (r *Inputer) logMembershipVotes(
 	ctx context.Context, roomID string, key types.EventStateKeyNID, views []serverMembershipView, msg string,
 ) {
@@ -142,9 +144,15 @@ func (r *Inputer) logMembershipVotes(
 			}
 		}
 	}
-	eventIDs, err := r.DB.EventIDs(ctx, nids)
-	if err != nil {
-		logrus.WithError(err).Warn("Could not look up the event IDs of the membership votes")
+	events := map[types.EventNID]gomatrixserverlib.PDU{}
+	if roomInfo, err := r.DB.RoomInfo(ctx, roomID); err != nil || roomInfo == nil {
+		logrus.WithError(err).Warn("Could not look up the room of the membership votes")
+	} else if loaded, lerr := r.DB.Events(ctx, roomInfo.RoomVersion, nids); lerr != nil {
+		logrus.WithError(lerr).Warn("Could not look up the membership votes")
+	} else {
+		for _, ev := range loaded {
+			events[ev.EventNID] = ev.PDU
+		}
 	}
 	stateKeys, err := r.DB.EventStateKeys(ctx, []types.EventStateKeyNID{key})
 	if err != nil {
@@ -152,21 +160,45 @@ func (r *Inputer) logMembershipVotes(
 	}
 	fields := logrus.Fields{"room_id": roomID, "user": stateKeys[key]}
 	if current, cerr := r.DB.GetStateEvent(ctx, roomID, spec.MRoomMember, stateKeys[key]); cerr == nil && current != nil {
-		fields["current"] = current.EventID()
+		fields["current"] = r.describeMembership(ctx, current.PDU)
+	}
+	vote := func(nid types.EventNID) string {
+		if ev, ok := events[nid]; ok {
+			return r.describeMembership(ctx, ev)
+		}
+		return fmt.Sprintf("unknown event NID %d", nid)
 	}
 	for _, view := range views {
-		vote := "none"
+		v := "none"
 		switch {
 		case view.memberships[key] != 0:
-			vote = eventIDs[view.memberships[key]]
+			v = vote(view.memberships[key])
 		case view.rejected[key] != 0:
-			vote = "rejected " + eventIDs[view.rejected[key]]
+			v = "rejected " + vote(view.rejected[key])
 		case view.unknown > 0:
-			vote = fmt.Sprintf("none stored (%d state events unknown here)", view.unknown)
+			v = fmt.Sprintf("none stored (%d state events unknown here)", view.unknown)
 		}
-		fields["server "+string(view.server)] = vote
+		fields["server "+string(view.server)] = v
 	}
 	logrus.WithFields(fields).Info(msg)
+}
+
+// describeMembership describes a membership event for the log as its
+// membership, its sender when that is not the member, and its event ID, for
+// example "ban by @mod:example.org $event".
+func (r *Inputer) describeMembership(ctx context.Context, ev gomatrixserverlib.PDU) string {
+	membership, err := ev.Membership()
+	if err != nil {
+		membership = "unknown membership"
+	}
+	if ev.StateKey() != nil && string(ev.SenderID()) != *ev.StateKey() {
+		sender := string(ev.SenderID())
+		if userID, uerr := r.Queryer.QueryUserIDForSender(ctx, ev.RoomID(), ev.SenderID()); uerr == nil && userID != nil {
+			sender = userID.String()
+		}
+		return membership + " by " + sender + " " + ev.EventID()
+	}
+	return membership + " " + ev.EventID()
 }
 
 // moderatorServers returns the servers, other than this one, of the users

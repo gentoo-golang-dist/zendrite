@@ -262,7 +262,8 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		require.False(t, askedC, "a server without a moderator must not be asked")
 
 		// The memberships the repair leaves alone are logged with the event
-		// each server holds.
+		// each server holds, its membership, and its sender when that is not
+		// the member.
 		votes := func(msg, user string) logrus.Fields {
 			t.Helper()
 			for _, entry := range hook.AllEntries() {
@@ -274,10 +275,11 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 			return nil
 		}
 		frankVotes := votes("The servers asked do not agree on a membership", frank.ID)
-		require.Equal(t, rejoins[frank.ID].EventID(), frankVotes["server a.test"])
-		require.Equal(t, bans[frank.ID].EventID(), frankVotes["server b.test"])
+		require.Equal(t, "join "+rejoins[frank.ID].EventID(), frankVotes["server a.test"])
+		require.Equal(t, "ban by "+alice.ID+" "+bans[frank.ID].EventID(), frankVotes["server b.test"])
+		require.Equal(t, "ban by "+alice.ID+" "+bans[frank.ID].EventID(), frankVotes["current"])
 		kimVotes := votes("The servers asked agree on a membership that does not follow the current one", kim.ID)
-		require.Equal(t, joins[kim.ID].EventID(), kimVotes["server a.test"])
-		require.Equal(t, joins[kim.ID].EventID(), kimVotes["server b.test"])
+		require.Equal(t, "join "+joins[kim.ID].EventID(), kimVotes["server a.test"])
+		require.Equal(t, "join "+joins[kim.ID].EventID(), kimVotes["server b.test"])
 	})
 }
