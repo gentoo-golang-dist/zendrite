@@ -11,6 +11,7 @@ cover.out
 .vscode
 .zendrite-dev
 complement
+.complement
 website
 helm
 node_modules

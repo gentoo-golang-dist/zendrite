@@ -1,0 +1,59 @@
+name: Complement
+
+# Matrix spec conformance tests from https://github.com/matrix-org/complement.
+# Pull requests and pushes run the tests listed in test/complement/passing.txt;
+# a manual run covers the whole suite and lists tests that newly pass.
+# See build/scripts/complement.sh.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'build/scripts/Complement*.Dockerfile'
+      - 'build/scripts/complement*.sh'
+      - 'test/complement/**'
+      - '.forgejo/workflows/complement.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  complement:
+    name: Complement (${{ matrix.backend }})
+    runs-on: docker
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - sqlite
+          - postgres
+    env:
+      # Complement commit; Renovate keeps it on the tip of main (renovate.json).
+      COMPLEMENT_REF: e3fcff1998d91f71cae096679b3ec737dda69fdd
+      MODE: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'pr' }}
+    steps:
+      - name: Install runner dependencies
+        run: apk add --no-cache bash git nodejs docker-cli-buildx
+      - uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Show Docker version
+        run: docker version && docker buildx version
+      - name: Run Complement
+        run: build/scripts/complement.sh ${{ matrix.backend }} "$MODE"
+      - name: Upload results
+        if: ${{ !cancelled() }}
+        uses: forgejo/upload-artifact@v5
+        with:
+          name: complement-${{ matrix.backend }}
+          path: .complement/${{ matrix.backend }}

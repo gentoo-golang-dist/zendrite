@@ -11,3 +11,5 @@ To run linting alone, use `just lint` or `prek run golangci-lint --all-files` fr
 The obsolete `find-lint.sh` installer and its `fast` argument have been removed.
 Linting does not use `--fix` or back up and overwrite module files.
 Set `GOGC` to control garbage collection during linting if needed.
+
+Run `build/scripts/complement.sh <sqlite|postgres> [pr|full]` to run the Complement conformance tests as CI does; see the Complement page of the development docs.

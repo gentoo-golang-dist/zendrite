@@ -1,0 +1,13 @@
+# Complement tests whose result changes between runs on unchanged code.
+# They are not gated, and a full run does not suggest them for passing.txt.
+# Same format as passing.txt.
+tests/TestFederationRoomsInvite
+tests/TestFederationThumbnail
+tests/TestKnockRestrictedRoomsLocalJoinNoCreatorsUsesPowerLevelsV11
+tests/TestRestrictedRoomsRemoteJoinLocalUserInMSC3787Room
+tests/TestSendJoinPartialStateResponse
+tests/csapi/TestPresence
+tests/csapi/TestRedact
+tests/csapi/TestSendAndFetchMessage
+tests/csapi/TestSyncLeaveSection
+tests/msc3389/TestMSC3389RedactionStripsRelationInOlderVersions

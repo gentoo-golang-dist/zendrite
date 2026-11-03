@@ -54,6 +54,15 @@
       "depNameTemplate": "ghcr.io/techknowlogick/xgo",
       "extractVersionTemplate": "^go-(?<version>\\d+\\.\\d+)\\.x$",
       "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "description": "Pin Complement to a commit on its main branch",
+      "managerFilePatterns": ["/^\\.forgejo/workflows/complement\\.yaml$/"],
+      "matchStrings": ["COMPLEMENT_REF:\\s*(?<currentDigest>[0-9a-f]{40})"],
+      "datasourceTemplate": "git-refs",
+      "depNameTemplate": "https://github.com/matrix-org/complement",
+      "currentValueTemplate": "main"
     }
   ]
 }

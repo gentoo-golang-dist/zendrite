@@ -63,7 +63,9 @@ zendrite.yaml
 test/wasm/node_modules
 
 # Ignore complement folder when running locally
-complement/
+/complement/
+# Results of build/scripts/complement.sh
+/.complement/
 
 media_store/
 build
