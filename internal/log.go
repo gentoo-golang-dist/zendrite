@@ -27,10 +27,11 @@ import (
 
 // logrus is using a global variable when we're using `logrus.AddHook`
 // this unfortunately results in us adding the same hook multiple times.
-// This map ensures we only ever add one level hook.
+// This flag ensures we only ever add one hook writing to stdout and stderr:
+// two of them at different levels write every message at both levels twice.
 var (
-	stdLevelLogAdded = make(map[logrus.Level]bool)
-	levelLogAddedMu  = &sync.Mutex{}
+	stdLogAdded     bool
+	levelLogAddedMu = &sync.Mutex{}
 )
 
 type utcFormatter struct {
