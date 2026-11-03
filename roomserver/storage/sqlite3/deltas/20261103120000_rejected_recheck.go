@@ -96,3 +96,35 @@ func UpRejectedRecheckForkedMemberships(ctx context.Context, tx *sql.Tx) error {
 	}
 	return nil
 }
+
+// UpRepairStrayEvents moves events stored under a room NID that no longer
+// exists to the room their JSON names, and schedules the recheck of rejected
+// events once more, unless it is still pending. A NID cached from a
+// transaction that was rolled back stored the create event of a room under a
+// room that never existed, so every event of the room cited an auth event the
+// recheck could not find in it. A create event of a room version that derives
+// the room ID from it names no room, so its event ID gives the room ID.
+func UpRepairStrayEvents(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, repairStrayEventsSQL); err != nil {
+		return fmt.Errorf("failed to move events stored under a room that does not exist: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO roomserver_rejected_recheck (after_room_nid)
+		SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM roomserver_rejected_recheck);`); err != nil {
+		return fmt.Errorf("failed to schedule the rejected event recheck after moving stray events: %w", err)
+	}
+	return nil
+}
+
+const repairStrayEventsSQL = `UPDATE roomserver_events SET room_nid = (
+		SELECT r.room_nid FROM roomserver_event_json AS j
+		JOIN roomserver_rooms AS r
+		ON r.room_id = COALESCE(json_extract(j.event_json, '$.room_id'), '!' || substr(roomserver_events.event_id, 2))
+		WHERE j.event_nid = roomserver_events.event_nid
+	)
+	WHERE room_nid NOT IN (SELECT room_nid FROM roomserver_rooms)
+	AND EXISTS (
+		SELECT 1 FROM roomserver_event_json AS j
+		JOIN roomserver_rooms AS r
+		ON r.room_id = COALESCE(json_extract(j.event_json, '$.room_id'), '!' || substr(roomserver_events.event_id, 2))
+		WHERE j.event_nid = roomserver_events.event_nid
+	);`

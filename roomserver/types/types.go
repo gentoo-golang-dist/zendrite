@@ -9,6 +9,7 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -279,6 +280,12 @@ type MissingStateError string
 
 func (e MissingStateError) Error() string { return string(e) }
 
+// An EventJSONMissingError is returned when an event is known by its NID but
+// its JSON is not stored, as in databases a purge left half deleted.
+type EventJSONMissingError EventNID
+
+func (e EventJSONMissingError) Error() string { return fmt.Sprintf("event %d missing", EventNID(e)) }
+
 // A RejectedError is returned when an event is stored as rejected. The error
 // contains the reason why.
 type RejectedError string
@@ -343,6 +350,9 @@ func (r *RoomInfo) CopyFrom(r2 *RoomInfo) {
 }
 
 var ErrorInvalidRoomInfo = fmt.Errorf("room info is invalid")
+
+// ErrRoomNotFound is returned when a room NID has no room.
+var ErrRoomNotFound = errors.New("room does not exist")
 
 // Struct to represent a device or a server name.
 //

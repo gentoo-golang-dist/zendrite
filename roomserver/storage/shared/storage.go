@@ -255,7 +255,7 @@ func (d *Database) RoomInfoByNID(ctx context.Context, roomNID types.RoomNID) (*t
 		return nil, err
 	}
 	if len(roomIDs) == 0 {
-		return nil, fmt.Errorf("room does not exist")
+		return nil, types.ErrRoomNotFound
 	}
 	return d.roomInfo(ctx, nil, roomIDs[0])
 }
@@ -584,7 +584,7 @@ func (d *EventDatabase) events(
 		for _, nid := range inputEventNIDs {
 			event, ok := events[nid]
 			if !ok || event == nil {
-				return nil, fmt.Errorf("event %d missing", nid)
+				return nil, types.EventJSONMissingError(nid)
 			}
 			results = append(results, types.Event{
 				EventNID: nid,
@@ -626,7 +626,7 @@ func (d *EventDatabase) events(
 	for _, nid := range inputEventNIDs {
 		event, ok := events[nid]
 		if !ok || event == nil {
-			return nil, fmt.Errorf("event %d missing", nid)
+			return nil, types.EventJSONMissingError(nid)
 		}
 		results = append(results, types.Event{
 			EventNID: nid,
@@ -658,7 +658,12 @@ func (d *Database) MembershipUpdater(
 		updater, err = NewMembershipUpdater(ctx, d, txn, roomID, targetUserID, targetLocal, roomVersion)
 		return err
 	})
-	return updater, err
+	if err != nil {
+		// Without the updater the caller cannot end the transaction.
+		_ = txn.Rollback()
+		return nil, err
+	}
+	return updater, nil
 }
 
 func (d *Database) GetRoomUpdater(
@@ -699,8 +704,10 @@ func (d *Database) AssignRoomNID(ctx context.Context, roomID spec.RoomID, roomVe
 	if err != nil {
 		return 0, err
 	}
-	// Not setting caches, as assignRoomNID already does this
-	return roomNID, err
+	// The transaction is committed, so the NID can be cached.
+	d.Cache.StoreRoomServerRoomID(roomNID, roomID.String())
+	d.Cache.StoreRoomVersion(roomID.String(), roomVersion)
+	return roomNID, nil
 }
 
 // GetOrCreateRoomInfo gets or creates a new RoomInfo, which is only safe to use with functions only needing a roomVersion or roomNID.
@@ -733,6 +740,9 @@ func (d *Database) GetOrCreateRoomInfo(ctx context.Context, event gomatrixserver
 		}
 		return nil
 	})
+	if err == nil {
+		d.Cache.StoreRoomServerRoomID(roomNID, event.RoomID().String())
+	}
 	if roomVersion != "" {
 		d.Cache.StoreRoomVersion(event.RoomID().String(), roomVersion)
 	}
@@ -900,6 +910,11 @@ func (d *Database) MissingAuthPrevEvents(
 	return
 }
 
+// assignRoomNID returns the NID of a room, and inserts one if the room has
+// none yet. A NID it inserts exists only once the transaction is committed,
+// so it does not cache it: a NID cached from a transaction that is rolled
+// back stores the room's events under a room that does not exist. Callers
+// that commit the transaction themselves cache it after the commit.
 func (d *Database) assignRoomNID(
 	ctx context.Context, txn *sql.Tx, roomID string, roomVersion gomatrixserverlib.RoomVersion,
 ) (types.RoomNID, error) {
@@ -907,11 +922,13 @@ func (d *Database) assignRoomNID(
 	if ok {
 		return roomNID, nil
 	}
+	inserted := false
 	// Check if we already have a numeric ID in the database.
 	roomNID, err := d.RoomsTable.SelectRoomNID(ctx, txn, roomID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// We don't have a numeric ID so insert one into the database.
 		roomNID, err = d.RoomsTable.InsertRoomNID(ctx, txn, roomID, roomVersion)
+		inserted = err == nil
 		if errors.Is(err, sql.ErrNoRows) {
 			// We raced with another insert so run the select again.
 			roomNID, err = d.RoomsTable.SelectRoomNID(ctx, txn, roomID)
@@ -920,8 +937,10 @@ func (d *Database) assignRoomNID(
 	if err != nil {
 		return 0, err
 	}
-	d.Cache.StoreRoomServerRoomID(roomNID, roomID)
-	d.Cache.StoreRoomVersion(roomID, roomVersion)
+	if !inserted {
+		d.Cache.StoreRoomServerRoomID(roomNID, roomID)
+		d.Cache.StoreRoomVersion(roomID, roomVersion)
+	}
 	return roomNID, nil
 }
 

@@ -402,44 +402,47 @@ func (r *Inputer) recheckRejectedMemberships(
 	if len(rejectedNIDs) == 0 {
 		return nil, nil
 	}
-	events, err := updater.Events(ctx, roomInfo.RoomVersion, rejectedNIDs)
+	events, err := storedEvents(ctx, updater, roomInfo.RoomVersion, rejectedNIDs)
 	if err != nil {
-		return nil, fmt.Errorf("updater.Events: %w", err)
+		return nil, err
 	}
 	slices.SortFunc(events, func(a, b types.Event) int { return cmp.Compare(a.EventNID, b.EventNID) })
 
 	// Without repaired events to depend on, every rejected membership is
 	// checked.
 	relevant := maps.Clone(repaired)
-	var accepted []types.StateEntry
-	for _, ev := range events {
+	check := func(ev types.Event) (bool, error) {
 		// Outliers have no state of their own to check them against.
-		_, hasState, herr := stateAtEvents(ctx, updater, []string{ev.EventID()})
-		if herr != nil {
-			return nil, herr
+		_, hasState, err := stateAtEvents(ctx, updater, []string{ev.EventID()})
+		if err != nil || !hasState {
+			return false, err
 		}
-		if !hasState {
-			continue
+		authEvents, err := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)
+		if err != nil {
+			return false, err
 		}
-		authEvents, aerr := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)
-		if aerr != nil {
-			return nil, aerr
-		}
-		stateBefore, known, serr := stateBeforeForAuth(ctx, updater, roomState, roomInfo, ev.PDU, authEvents)
-		if serr != nil {
-			return nil, serr
+		stateBefore, known, err := stateBeforeForAuth(ctx, updater, roomState, roomInfo, ev.PDU, authEvents)
+		if err != nil {
+			return false, err
 		}
 		if !known || (relevant != nil && !dependsOn(authEvents, stateBefore, relevant)) {
+			return false, nil
+		}
+		allowed, err := r.allowedBy(ctx, ev.PDU, pdusOf(authEvents))
+		if err != nil || !allowed {
+			return false, err
+		}
+		return r.allowedByState(ctx, updater, roomInfo, ev.PDU, stateBefore)
+	}
+	var accepted []types.StateEntry
+	for _, ev := range events {
+		allowed, cerr := check(ev)
+		if isMissingData(cerr) {
+			logMissingData(cerr, ev)
 			continue
 		}
-		allowed, aerr := r.allowedBy(ctx, ev.PDU, pdusOf(authEvents))
-		if aerr != nil {
-			return nil, aerr
-		}
-		if allowed {
-			if allowed, aerr = r.allowedByState(ctx, updater, roomInfo, ev.PDU, stateBefore); aerr != nil {
-				return nil, aerr
-			}
+		if cerr != nil {
+			return nil, cerr
 		}
 		if !allowed {
 			continue
@@ -664,6 +667,53 @@ func stateAtEvents(
 		}
 	}
 	return states, true, nil
+}
+
+// isMissingData reports whether an error says that data an event's check
+// needs is not stored: an event, its JSON, or a state snapshot. Databases a
+// Dendrite purge left half deleted miss such data for good, so checking the
+// event again cannot pass, and the other events of its room are still checked.
+// The storage reports the data as missing after reading it, not as a failed
+// statement, so the room's transaction can go on.
+func isMissingData(err error) bool {
+	var missingEvent types.MissingEventError
+	var missingState types.MissingStateError
+	var missingJSON types.EventJSONMissingError
+	return errors.As(err, &missingEvent) || errors.As(err, &missingState) || errors.As(err, &missingJSON)
+}
+
+// logMissingData logs a rejected event that stays rejected because data its
+// check needs is not stored.
+func logMissingData(err error, ev types.Event) {
+	logrus.WithError(err).WithField("event_id", ev.EventID()).Info("Leaving a rejected event rejected whose state or auth events are not stored")
+}
+
+// storedEvents loads the given events, leaving out those whose JSON is not
+// stored, which cannot be checked.
+func storedEvents(
+	ctx context.Context, updater *shared.RoomUpdater, roomVersion gomatrixserverlib.RoomVersion, nids []types.EventNID,
+) ([]types.Event, error) {
+	events, err := updater.Events(ctx, roomVersion, nids)
+	var missing types.EventJSONMissingError
+	if err == nil || !errors.As(err, &missing) {
+		if err != nil {
+			return nil, fmt.Errorf("updater.Events: %w", err)
+		}
+		return events, nil
+	}
+	events = make([]types.Event, 0, len(nids))
+	for _, nid := range nids {
+		loaded, lerr := updater.Events(ctx, roomVersion, []types.EventNID{nid})
+		if errors.As(lerr, &missing) {
+			logrus.WithField("event_nid", nid).Info("Leaving a rejected event rejected whose JSON is not stored")
+			continue
+		}
+		if lerr != nil {
+			return nil, fmt.Errorf("updater.Events: %w", lerr)
+		}
+		events = append(events, loaded...)
+	}
+	return events, nil
 }
 
 // allowedByState reports whether an event passes auth against the given state.
@@ -966,45 +1016,47 @@ func (r *Inputer) recheckRejectedTimelineEvents(
 	if len(rejectedNIDs) == 0 {
 		return nil, nil
 	}
-	rejected, err := updater.Events(ctx, roomInfo.RoomVersion, rejectedNIDs)
+	rejected, err := storedEvents(ctx, updater, roomInfo.RoomVersion, rejectedNIDs)
 	if err != nil {
-		return nil, fmt.Errorf("updater.Events: %w", err)
+		return nil, err
 	}
 	slices.SortFunc(rejected, func(a, b types.Event) int { return cmp.Compare(a.EventNID, b.EventNID) })
 
+	// check returns the state before the event its auth needs, if the event
+	// passes against it and against its auth events.
+	check := func(ev types.Event) ([]types.StateEntry, bool, error) {
+		// Outliers have no state of their own to check them against.
+		_, hasState, err := stateAtEvents(ctx, updater, []string{ev.EventID()})
+		if err != nil || !hasState {
+			return nil, false, err
+		}
+		authEvents, err := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)
+		if err != nil {
+			return nil, false, err
+		}
+		allowed, err := r.allowedBy(ctx, ev.PDU, pdusOf(authEvents))
+		if err != nil || !allowed {
+			return nil, false, err
+		}
+		entries, known, err := stateBeforeForAuth(ctx, updater, roomState, roomInfo, ev.PDU, authEvents)
+		if err != nil || !known {
+			return nil, false, err
+		}
+		allowed, err = r.allowedByState(ctx, updater, roomInfo, ev.PDU, entries)
+		return entries, allowed, err
+	}
 	var accepted []acceptedTimelineEvent
 	for _, ev := range rejected {
 		if ev.StateKey() != nil {
 			continue
 		}
-		// Outliers have no state of their own to check them against.
-		_, hasState, herr := stateAtEvents(ctx, updater, []string{ev.EventID()})
-		if herr != nil {
-			return nil, herr
-		}
-		if !hasState {
+		entries, allowed, cerr := check(ev)
+		if isMissingData(cerr) {
+			logMissingData(cerr, ev)
 			continue
 		}
-		authEvents, aerr := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)
-		if aerr != nil {
-			return nil, aerr
-		}
-		allowed, aerr := r.allowedBy(ctx, ev.PDU, pdusOf(authEvents))
-		if aerr != nil {
-			return nil, aerr
-		}
-		if !allowed {
-			continue
-		}
-		entries, known, serr := stateBeforeForAuth(ctx, updater, roomState, roomInfo, ev.PDU, authEvents)
-		if serr != nil {
-			return nil, serr
-		}
-		if !known {
-			continue
-		}
-		if allowed, aerr = r.allowedByState(ctx, updater, roomInfo, ev.PDU, entries); aerr != nil {
-			return nil, aerr
+		if cerr != nil {
+			return nil, cerr
 		}
 		if !allowed {
 			continue

@@ -7,6 +7,7 @@ package input
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/sirupsen/logrus"
@@ -33,7 +34,11 @@ const rejectedRecheckBatchSize = 100
 //
 // Each room is checked in one room transaction, and progress is recorded per
 // room, so an interrupted recheck resumes with the next room on the next
-// start.
+// start. A room that fails does not stop the recheck of the rooms after it.
+// When the database could not be reached, progress is no longer recorded past
+// the room, so the next start checks it again, along with the rooms after it.
+// A room that fails for another reason, such as data a purge left half
+// deleted, fails the same way on every start, so it is left as it is.
 func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 	afterRoomNID, pending, err := r.DB.RejectedRecheckCursor(ctx)
 	if err != nil {
@@ -45,7 +50,7 @@ func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 	}
 	logrus.WithField("after_room_nid", afterRoomNID).Info("Checking rejected events again")
 
-	rooms, memberships, events, staleRooms, stale := 0, 0, 0, 0, 0
+	rooms, memberships, events, staleRooms, stale, failed, skipped := 0, 0, 0, 0, 0, 0, 0
 	for {
 		if ctx.Err() != nil {
 			return
@@ -57,10 +62,24 @@ func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 		}
 		for _, roomNID := range roomNIDs {
 			roomID, accepted, repaired, acceptedEvents, unresolved, rerr := r.recheckRoomRejectedEvents(ctx, roomNID)
-			if rerr != nil {
-				// The room is not recorded, so the next start checks it again.
+			afterRoomNID = roomNID
+			if rerr != nil && (ctx.Err() != nil || sqlutil.IsTransient(rerr)) {
+				// Progress is not recorded past the room, so the next start
+				// checks it again.
+				failed++
 				logrus.WithError(rerr).WithField("room_nid", roomNID).Warn("Failed to check rejected events again")
-				return
+				continue
+			}
+			if rerr != nil {
+				skipped++
+				logrus.WithError(rerr).WithField("room_nid", roomNID).Warn("Failed to check rejected events again; the room's stored data is inconsistent, so it is not checked again")
+				if failed == 0 {
+					if err = r.DB.AdvanceRejectedRecheck(ctx, roomNID, false); err != nil {
+						logrus.WithError(err).Warn("Failed to record the progress of the rejected event recheck")
+						return
+					}
+				}
+				continue
 			}
 			if aerr := r.announceAcceptedTimelineEvents(ctx, roomNID, roomID, acceptedEvents); aerr != nil {
 				eventIDs := make([]string, len(acceptedEvents))
@@ -99,15 +118,29 @@ func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 					"memberships": repaired,
 				}).Warn("Added memberships stored as outliers that follow the current state")
 			}
+			if failed > 0 {
+				continue
+			}
 			if err = r.DB.AdvanceRejectedRecheck(ctx, roomNID, false); err != nil {
 				logrus.WithError(err).Warn("Failed to record the progress of the rejected event recheck")
 				return
 			}
-			afterRoomNID = roomNID
 		}
 		if len(roomNIDs) < rejectedRecheckBatchSize {
 			break
 		}
+	}
+	if failed > 0 {
+		logrus.WithFields(logrus.Fields{
+			"rooms":             rooms,
+			"memberships":       memberships,
+			"events":            events,
+			"stale_rooms":       staleRooms,
+			"stale_memberships": stale,
+			"failed_rooms":      failed,
+			"skipped_rooms":     skipped,
+		}).Warn("Checked rejected events again, but some rooms failed; they are checked again on the next start")
+		return
 	}
 	if err = r.DB.AdvanceRejectedRecheck(ctx, afterRoomNID, true); err != nil {
 		logrus.WithError(err).Warn("Failed to record the end of the rejected event recheck")
@@ -119,6 +152,7 @@ func (r *Inputer) RecheckRejectedEvents(ctx context.Context) {
 		"events":            events,
 		"stale_rooms":       staleRooms,
 		"stale_memberships": stale,
+		"skipped_rooms":     skipped,
 	}).Info("Finished checking rejected events again")
 }
 
@@ -137,6 +171,13 @@ func (r *Inputer) recheckRoomRejectedEvents(
 	unresolved map[types.EventStateKeyNID]struct{}, err error,
 ) {
 	roomInfo, err := r.DB.RoomInfoByNID(ctx, roomNID)
+	if errors.Is(err, types.ErrRoomNotFound) {
+		// Events stored under a room NID that has no room, whose room the
+		// repair of stray events could not find either, leave nothing to
+		// check against.
+		logrus.WithField("room_nid", roomNID).Info("Not checking the rejected events of a room NID that has no room")
+		return "", 0, 0, nil, nil, nil
+	}
 	if err != nil {
 		return "", 0, 0, nil, nil, fmt.Errorf("r.DB.RoomInfoByNID: %w", err)
 	}

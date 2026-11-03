@@ -36,6 +36,8 @@ func NewMembershipUpdater(
 	var targetUserNID types.EventStateKeyNID
 	var err error
 	err = d.Writer.Do(d.DB, txn, func(txn *sql.Tx) error {
+		// A NID this inserts is not cached, since the caller may roll the
+		// transaction back.
 		roomNID, err = d.assignRoomNID(ctx, txn, roomID, roomVersion)
 		if err != nil {
 			return err

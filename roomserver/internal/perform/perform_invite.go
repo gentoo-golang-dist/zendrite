@@ -111,6 +111,7 @@ func (r *Inviter) ProcessInviteMembership(
 		PDU:      inviteEvent.PDU,
 	}, outputUpdates, inviteEvent.Version())
 	if err != nil {
+		_ = updater.Rollback()
 		return nil, fmt.Errorf("updateToInviteMembership: %w", err)
 	}
 	if err = updater.Commit(); err != nil {

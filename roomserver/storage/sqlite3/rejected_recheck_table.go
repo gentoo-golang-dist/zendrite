@@ -77,6 +77,9 @@ func CreateRejectedRecheckTable(db *sql.DB) error {
 	}, sqlutil.Migration{
 		Version: "roomserver: ask other servers about forked memberships",
 		Up:      deltas.UpRejectedRecheckForkedMemberships,
+	}, sqlutil.Migration{
+		Version: "roomserver: move events stored under a room that does not exist",
+		Up:      deltas.UpRepairStrayEvents,
 	})
 	return m.Up(context.Background())
 }

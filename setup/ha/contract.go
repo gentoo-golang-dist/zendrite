@@ -70,9 +70,11 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // room's state on other servers, level 25 schedules it again to log the
 // memberships those servers hold for the users it leaves alone, level 26
 // schedules it again to ask them about forked memberships in rooms with
-// nothing else to add, and level 27 keeps the events the repairs announced
-// long after they were sent from sync timelines.
-const releaseLevel = 27
+// nothing else to add, level 27 keeps the events the repairs announced long
+// after they were sent from sync timelines, and level 28 moves events stored
+// under a room that does not exist back to their room and schedules the
+// recheck again.
+const releaseLevel = 28
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades
