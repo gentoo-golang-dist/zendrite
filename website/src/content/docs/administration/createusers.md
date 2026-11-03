@@ -54,7 +54,7 @@ client_api:
   registration_shared_secret: ""
 ```
 
-You can then use the `/_synapse/admin/v1/register` endpoint as per the [Synapse documentation](https://matrix-org.github.io/synapse/latest/admin_api/register_api.html).
+You can then use the `/_synapse/admin/v1/register` endpoint as per the [Synapse documentation](https://element-hq.github.io/synapse/latest/admin_api/register_api.html).
 
 Shared secret registration is only enabled once a secret is configured.
 To disable shared secret registration again, remove the secret from the configuration file.

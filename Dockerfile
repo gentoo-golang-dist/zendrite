@@ -39,7 +39,7 @@ RUN apk --update --no-cache add ca-certificates curl tzdata \
     && adduser -u 1000 -G zendrite -h /etc/zendrite -D zendrite
 
 LABEL org.opencontainers.image.title="Zendrite"
-LABEL org.opencontainers.image.description="Next-generation Matrix homeserver written in Go"
+LABEL org.opencontainers.image.description="Matrix homeserver written in Go"
 LABEL org.opencontainers.image.source="https://codefloe.com/pat-s/zendrite"
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only OR LicenseRef-Element-Commercial"
 

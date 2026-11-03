@@ -6,4 +6,4 @@ TAG=${1:-latest}
 
 echo "Building tag '${TAG}'"
 
-docker build -t pats22/dendrite:${TAG} .
+docker build -t pats22/zendrite:${TAG} .

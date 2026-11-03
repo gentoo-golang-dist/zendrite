@@ -39,7 +39,7 @@ docker run --rm --entrypoint="/bin/sh" \
   -v $(pwd)/config:/mnt \
   pats22/zendrite:latest \
   -c "/usr/bin/generate-config \
-    -dir /var/zendrite/ \
+    -dir /var/lib/zendrite/ \
     -db postgres://zendrite:itsasecret@postgres/zendrite?sslmode=disable \
     -server YourDomainHere > /mnt/zendrite.yaml"
 ```

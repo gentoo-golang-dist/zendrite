@@ -6,23 +6,6 @@ description: Guidelines for contributing to Zendrite development
 Everyone is welcome to contribute to Zendrite!
 We aim to make it as easy as possible to get started.
 
-## Contribution types
-
-We are a small team maintaining a large project.
-As a result, we cannot merge every feature, even if it is bug-free and useful, because we then commit to maintaining it indefinitely.
-
-We will accept the following with caveats:
-
-- documentation fixes, provided they do not add additional instructions which can end up going out-of-date, e.g example configs, shell commands.
-- performance fixes, provided they do not add significantly more maintenance burden.
-- additional functionality on existing features, provided the functionality is small and maintainable.
-- additional functionality that, in its absence, would impact the ecosystem e.g spam and abuse mitigations.
-- test-only changes, provided they help improve coverage or test tricky code.
-
-The following items are at risk of not being accepted:
-
-- Configuration or CLI changes, particularly ones which increase the overall configuration surface.
-
 ## Getting up and running
 
 See the [Installation](/installation/planning) section for information on how to build an instance of Zendrite.
@@ -169,7 +152,7 @@ pre-commit run --all-files
 To run the full test suite locally:
 
 ```bash
-go test -race ./...
+go test -tags goolm -race ./...
 ```
 
 If these steps report no problems, the code should be able to pass the CI tests.

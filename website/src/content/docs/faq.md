@@ -8,9 +8,9 @@ Please use with caution and/or report drifts in an issue/Pull Request.
 
 ## Why does Zendrite exist?
 
-Zendrite aims to provide a matrix compatible server that has low resource usage compared to [Synapse](https://github.com/matrix-org/synapse).
+Zendrite aims to provide a matrix compatible server that has low resource usage compared to [Synapse](https://github.com/element-hq/synapse).
 It also aims to provide more flexibility when scaling either up or down.
-Zendrite's code is also very easy to hack on which makes it suitable for experimenting with new matrix features such as peer-to-peer.
+Zendrite's code is also very easy to hack on which makes it suitable for experimenting with new Matrix features.
 It was forked from Dendrite to add [significant features](/mscs), optimisations and fixes.
 
 ## Is Zendrite stable?
@@ -55,16 +55,12 @@ Otherwise this is most likely due to a reverse proxy misconfiguration.
 
 ## Does Zendrite work with my favourite client?
 
-It should do, although we are aware of some minor issues:
-
-- **Element Android**: registration does not work, but logging in with an existing account does.
-- **Hydrogen**: occasionally sync can fail due to gaps in the `since` parameter, but clearing the cache fixes this.
+It should.
+If a client misbehaves against Zendrite, please open an issue.
 
 ## Is there a public instance of Zendrite I can try out?
 
-The Matrix.org Foundation runs [dendrite.matrix.org](https://dendrite.matrix.org).
-
-This instance is based on [element-hq/dendrite](https://github.com/element-hq/dendrite) and is not a valid test instance for this fork!
+No, there is no public Zendrite instance.
 
 ## Does Zendrite support Space Summaries?
 
@@ -72,8 +68,10 @@ Yes
 
 ## Does Zendrite support Threads?
 
-Yes, to enable them [msc2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) would need to be added to mscs configuration in order to support Threading.
-Other MSCs are not currently supported.
+Yes, threads (`m.thread` relations) work without any configuration.
+
+The older threading proposal [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) is a different, experimental feature that clients do not use for threads.
+You can opt into it in the `mscs` configuration:
 
 ```yaml
 mscs:
@@ -81,7 +79,8 @@ mscs:
     - msc2836
 ```
 
-Please note that MSCs should be considered experimental and can result in significant usability issues when enabled.
+See [MSC support](/mscs) for the other proposals Zendrite implements.
+Please note that opt-in MSCs should be considered experimental and can result in significant usability issues when enabled.
 If you'd like more details on how MSCs are ratified or the current status of MSCs, please see the [Matrix specification documentation](https://spec.matrix.org/proposals/) on the subject.
 
 ## Does Zendrite support push notifications?
@@ -124,7 +123,7 @@ Please use PostgreSQL wherever possible, especially if you are planning to run a
 
 The list of files that need to be stored is:
 
-- `matrix-key.pem`
+- `matrix_key.pem`
 - `zendrite.yaml`
 - the postgres or sqlite DB
 - the jetstream directory
@@ -158,7 +157,8 @@ No, if you already have a proper certificate from some provider, like Let's Encr
 ## Zendrite is running out of PostgreSQL database connections
 
 You may need to revisit the connection limit of your PostgreSQL server and/or make changes to the `max_connections` lines in your Zendrite configuration.
-Be aware that each Zendrite component opens its own database connections and has its own connection limit, even in monolith mode!
+With the `global.database` pool, all components share one pool, so its `max_open_conns` is the limit for the whole server.
+Every component that has its own `database` block with a different connection string opens its own pool with its own limit on top of that.
 
 ## VOIP and Video Calls don't appear to work on Zendrite
 
@@ -174,6 +174,8 @@ The following is an example of the data that is sent:
 ```json
 {
   "cpu_average": 0,
+  "daily_active_e2ee_rooms": 0,
+  "daily_active_rooms": 0,
   "daily_active_users": 97,
   "daily_e2ee_messages": 0,
   "daily_messages": 0,
@@ -182,11 +184,11 @@ The following is an example of the data that is sent:
   "daily_user_type_bridged": 2,
   "daily_user_type_native": 97,
   "database_engine": "Postgres",
-  "database_server_version": "11.14 (Debian 11.14-0+deb10u1)",
+  "database_server_version": "17.6",
   "federation_disabled": false,
   "go_arch": "amd64",
   "go_os": "linux",
-  "go_version": "go1.16.13",
+  "go_version": "go1.26.0",
   "homeserver": "my.domain.com",
   "log_level": "trace",
   "memory_rss": 93452,
@@ -206,6 +208,6 @@ The following is an example of the data that is sent:
   "total_room_count": 0,
   "total_users": 99,
   "uptime_seconds": 30,
-  "version": "0.8.2"
+  "version": "3.6.0"
 }
 ```

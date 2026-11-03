@@ -54,8 +54,7 @@ PPROFLISTEN=localhost:65432 ./bin/zendrite ...
 If pprof has been enabled successfully, a log line at startup will show that pprof is listening:
 
 ```text
-WARN[2020-12-03T13:32:33.669405000Z] [/Users/neilalexander/Desktop/zendrite/internal/log.go:87] SetupPprof
-  Starting pprof on localhost:65432
+level=warning msg="Starting pprof listener on localhost:65432 — this endpoint has NO authentication, do not expose to untrusted networks"
 ```
 
 All examples from this point forward assume `PPROFLISTEN=localhost:65432` but you may need to adjust as necessary for your setup.

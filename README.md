@@ -2,7 +2,7 @@
 
 <img src="website/public/favicon.svg" width="120" align="right" alt="Zendrite logo">
 
-Zendrite is a second-generation Matrix homeserver written in Go, designed to be efficient, reliable, and scalable.
+Zendrite is a Matrix homeserver written in Go, designed to be efficient, reliable, and scalable.
 
 [![Liberapay receives](https://img.shields.io/liberapay/receives/pat-s.svg?logo=liberapay)](https://liberapay.com/pat-s/)
 
@@ -21,7 +21,7 @@ See the [documentation site](https://zendrite.pat-s.me) for installation, admini
 
 - **Container images:**
   - [Docker Hub](https://hub.docker.com/r/pats22/zendrite)
-  - [Codefloe Registry](https://codefloe.com/pat-s/-/packages/container/pat-s/zendrite)
+  - [Codefloe Registry](https://codefloe.com/pat-s/-/packages/container/zendrite)
 - **Binaries:** [Releases](https://codefloe.com/pat-s/zendrite/releases)
 
 The first public release of this fork is v0.15.3.

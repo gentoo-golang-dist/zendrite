@@ -36,7 +36,7 @@ Correct any errors if shown and re-run the federation tester to check the result
 ## 3. System time
 
 Matrix relies heavily on TLS which requires the system time to be correct.
-If the clock drifts then you may find that federation no works reliably (or at all) and clients may struggle to connect to your Zendrite server.
+If the clock drifts then you may find that federation will not work reliably (or at all) and clients may struggle to connect to your Zendrite server.
 
 Ensure that your system time is correct and consider syncing to a reliable NTP source.
 
@@ -53,10 +53,10 @@ Zendrite requires a sufficient number of file descriptors for every connection i
 We recommend ensuring that the limit is no lower than 65535 for Zendrite.
 
 Zendrite will check at startup if there are a sufficient number of available descriptors.
-If there aren't, you will see a log lines like this:
+If there aren't, you will see a log line like this:
 
 ```text
-level=warning msg="IMPORTANT: Process file descriptor limit is currently 65535, it is recommended to raise the limit for Zendrite to at least 65535 to avoid issues"
+level=warning msg="IMPORTANT: Process file descriptor limit is currently 1024, it is recommended to raise the limit for Zendrite to at least 65535 to avoid issues"
 ```
 
 Follow the [Optimisation](/administration/optimisation) instructions to correct the available number of file descriptors.

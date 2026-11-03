@@ -57,13 +57,7 @@ Many MSCs require changes in **both** — protocol types in gomatrixserverlib an
 - **gomatrixserverlib**: defines `MSC2836EventRelationshipsResponse` federation type
 - **Zendrite**: implements the `/event_relationships` endpoint, database tables for parent-child tracking, and the opt-in config toggle in `setup/mscs/msc2836/`
 
-## gomatrixserverlib fork
+## Changing gomatrixserverlib
 
-This fork uses a patched version of gomatrixserverlib via a `replace` directive in `go.mod`:
-
-```go
-replace codefloe.com/pat-s/gomatrixserverlib => github.com/jackmaninov/gomatrixserverlib ...
-```
-
-When upstream gomatrixserverlib adds new protocol features (error codes, struct fields, room versions), the fork must be synced to pick them up.
-Zendrite code that references features missing from the fork will fail to compile.
+Zendrite depends on its own [gomatrixserverlib](https://codefloe.com/pat-s/gomatrixserverlib) module, `codefloe.com/pat-s/gomatrixserverlib`, at the version pinned in `go.mod`.
+A change that needs new protocol types lands in gomatrixserverlib first, gets a release, and is then picked up in Zendrite by bumping that version.
