@@ -291,6 +291,8 @@ type RoomDatabase interface {
 	// RoomInfo returns room information for the given room ID, or nil if there is no room.
 	RoomInfo(ctx context.Context, roomID string) (*types.RoomInfo, error)
 	RoomInfoByNID(ctx context.Context, roomNID types.RoomNID) (*types.RoomInfo, error)
+	// GetLocalServerInRoom returns true if we think we're in a given room or false otherwise.
+	GetLocalServerInRoom(ctx context.Context, roomNID types.RoomNID) (bool, error)
 	// IsEventRejected returns true if the event is known and rejected.
 	IsEventRejected(ctx context.Context, roomNID types.RoomNID, eventID string) (rejected bool, err error)
 	MissingAuthPrevEvents(ctx context.Context, e gomatrixserverlib.PDU) (missingAuth, missingPrev []string, err error)

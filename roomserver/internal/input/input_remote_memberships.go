@@ -58,6 +58,14 @@ func (r *Inputer) repairMembershipsFromRemoteState(
 	if r.FSAPI == nil {
 		return 0, nil
 	}
+	// The servers in a room refuse to tell a server that left it its state.
+	inRoom, err := r.DB.GetLocalServerInRoom(ctx, roomNID)
+	if err != nil {
+		return 0, fmt.Errorf("r.DB.GetLocalServerInRoom: %w", err)
+	}
+	if !inRoom {
+		return 0, nil
+	}
 	latestIDs, _, _, err := r.DB.LatestEventIDs(ctx, roomNID)
 	if err != nil {
 		return 0, fmt.Errorf("r.DB.LatestEventIDs: %w", err)
@@ -268,7 +276,17 @@ func (r *Inputer) remoteMembershipView(
 			lastErr = err
 			continue
 		}
-		stateIDs := res.GetStateEventIDs()
+		// Look up only the events this server stores: looking up one it
+		// does not fails the whole lookup. The others are counted as
+		// unknown.
+		known, err := r.DB.EventNIDs(ctx, res.GetStateEventIDs())
+		if err != nil {
+			return serverMembershipView{}, fmt.Errorf("r.DB.EventNIDs: %w", err)
+		}
+		stateIDs := make([]string, 0, len(known))
+		for eventID := range known {
+			stateIDs = append(stateIDs, eventID)
+		}
 		all, err := r.DB.StateEntriesForEventIDs(ctx, stateIDs, false)
 		if err != nil {
 			return serverMembershipView{}, fmt.Errorf("r.DB.StateEntriesForEventIDs: %w", err)
@@ -281,7 +299,7 @@ func (r *Inputer) remoteMembershipView(
 			server:      server,
 			memberships: map[types.EventStateKeyNID]types.EventNID{},
 			rejected:    map[types.EventStateKeyNID]types.EventNID{},
-			unknown:     len(stateIDs) - len(all),
+			unknown:     len(res.GetStateEventIDs()) - len(all),
 		}
 		for _, entry := range accepted {
 			if _, ok := keys[entry.EventStateKeyNID]; ok && entry.EventTypeNID == types.MRoomMemberNID {

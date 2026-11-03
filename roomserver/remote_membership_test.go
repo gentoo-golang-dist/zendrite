@@ -40,14 +40,17 @@ type remoteStateFederationAPI struct {
 	fsAPI.RoomserverFederationAPI
 	state map[spec.ServerName][]string
 	asked *sync.Map
+	// askedRooms holds the IDs of the rooms any server was asked about.
+	askedRooms *sync.Map
 }
 
 func (remoteStateFederationAPI) IsServerBackingOff(spec.ServerName) bool { return false }
 
 func (f remoteStateFederationAPI) LookupStateIDs(
-	_ context.Context, _, server spec.ServerName, _, _ string,
+	_ context.Context, _, server spec.ServerName, roomID, _ string,
 ) (gomatrixserverlib.StateIDResponse, error) {
 	f.asked.Store(server, true)
+	f.askedRooms.Store(roomID, true)
 	return fclient.RespStateIDs{StateEventIDs: f.state[server]}, nil
 }
 
@@ -171,6 +174,26 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		for _, ev := range []*types.HeaderedEvent{olaLeave, olaProfile} {
 			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindOutlier, []*types.HeaderedEvent{ev}, "test", "test", "test", nil, false))
 		}
+		// A third room like the second, with Mallory, a remote user, in
+		// Ola's place, which this server has left. The servers in it refuse
+		// to answer a server that is not in it, so it must not ask them.
+		room3 := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV10), test.RoomPreset(test.PresetPublicChat))
+		for _, user := range []*test.User{modA, modB} {
+			room3.CreateAndInsert(t, user, spec.MRoomMember, join, test.WithStateKey(user.ID), test.WithTimestamp(tick()))
+		}
+		room3.CreateAndInsert(t, alice, spec.MRoomPowerLevels, powerLevels, test.WithStateKey(""), test.WithTimestamp(tick()))
+		malloryJoin3 := room3.CreateAndInsert(t, mallory, spec.MRoomMember, join, test.WithStateKey(mallory.ID), test.WithTimestamp(tick()))
+		room3.CreateAndInsert(t, alice, spec.MRoomMember, leave, test.WithStateKey(alice.ID), test.WithTimestamp(tick()))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room3.Events(), "test", "test", "test", nil, false))
+		prev3 := test.WithPrevEvents(malloryJoin3.EventID())
+		for _, ev := range []*types.HeaderedEvent{
+			room3.CreateEvent(t, mallory, spec.MRoomMember, leave, test.WithStateKey(mallory.ID), prev3, test.WithTimestamp(tick())),
+			room3.CreateEvent(t, mallory, spec.MRoomMember, map[string]any{"membership": spec.Join, "displayname": "Mallory"},
+				test.WithStateKey(mallory.ID), prev3, test.WithTimestamp(tick())),
+		} {
+			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindOutlier, []*types.HeaderedEvent{ev}, "test", "test", "test", nil, false))
+		}
+
 		var room2State []string
 		for _, ev := range room2.CurrentState() {
 			if ev.Type() == spec.MRoomMember && *ev.StateKey() == ola.ID {
@@ -209,14 +232,18 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		for k, v := range common {
 			serverC[k] = v
 		}
-		asked := &sync.Map{}
+		// The moderators' servers also hold a state event this server does
+		// not store, which must not discard their answers.
+		const notStored = "$not-stored-here"
+		asked, askedRooms := &sync.Map{}, &sync.Map{}
 		rsAPI.SetFederationAPI(remoteStateFederationAPI{
 			state: map[spec.ServerName][]string{
-				"a.test": append(stateWith(serverA), room2State...),
-				"b.test": append(stateWith(serverB), room2State...),
+				"a.test": append(append(stateWith(serverA), room2State...), notStored),
+				"b.test": append(append(stateWith(serverB), room2State...), notStored),
 				"c.test": append(stateWith(serverC), room2State...),
 			},
-			asked: asked,
+			asked:      asked,
+			askedRooms: askedRooms,
 		}, nil)
 
 		membership := func(user *test.User) string {
@@ -260,6 +287,8 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 		_, askedC := asked.Load(spec.ServerName("c.test"))
 		require.True(t, askedA && askedB, "the moderators' servers must be asked")
 		require.False(t, askedC, "a server without a moderator must not be asked")
+		_, askedRoom3 := askedRooms.Load(room3.ID)
+		require.False(t, askedRoom3, "no server must be asked about a room this server has left")
 
 		// The memberships the repair leaves alone are logged with the event
 		// each server holds, its membership, and its sender when that is not
