@@ -3,6 +3,9 @@
   "extends": ["local>codefloe/renovate-config"],
   "automergeType": "pr",
   "automergeStrategy": "squash",
+  "woodpecker": {
+    "managerFilePatterns": ["/^\\.crow/[^/]+\\.ya?ml$/"]
+  },
   "packageRules": [
     {
       "matchManagers": ["gomod"],
@@ -10,8 +13,8 @@
       "schedule": ["* * 1 * *"]
     },
     {
-      "matchManagers": ["dockerfile", "docker-compose"],
-      "matchPackageNames": ["golang"],
+      "matchManagers": ["dockerfile", "docker-compose", "woodpecker"],
+      "matchPackageNames": ["golang", "docker.io/library/golang"],
       "groupName": "go dependencies",
       "schedule": ["* * 1 * *"]
     },
@@ -25,6 +28,13 @@
       "matchPackageNames": ["forgejo/upload-artifact", "forgejo/download-artifact"],
       "overrideDatasource": "git-tags",
       "overridePackageName": "https://data.forgejo.org/{{{packageName}}}.git"
+    },
+    {
+      "description": "Keep the xgo cross-compile image on the same Go minor as the rest of the toolchain",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["ghcr.io/techknowlogick/xgo"],
+      "groupName": "go dependencies",
+      "schedule": ["* * 1 * *"]
     }
   ],
   "customManagers": [
@@ -34,6 +44,16 @@
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*\\w+:\\s*[\"']?(?<currentValue>[^\"'\\s]+)[\"']?"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track the floating go-X.Y.x tag of the xgo image used by the release workflow",
+      "managerFilePatterns": ["/^\\.forgejo/workflows/.*\\.ya?ml$/"],
+      "matchStrings": ["ghcr\\.io/techknowlogick/xgo:go-(?<currentValue>\\d+\\.\\d+)\\.x"],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/techknowlogick/xgo",
+      "extractVersionTemplate": "^go-(?<version>\\d+\\.\\d+)\\.x$",
+      "versioningTemplate": "loose"
     }
   ]
 }

@@ -43,7 +43,7 @@ jobs:
             -e FLAG_TRIMPATH=true \
             -e FLAG_BUILDMODE=default \
             -e TARGETS="linux/amd64 linux/arm64 linux/arm-7 darwin/amd64 darwin/arm64 windows/amd64" \
-            ghcr.io/techknowlogick/xgo:go-1.26.x .)
+            ghcr.io/techknowlogick/xgo:go-1.27.x .)
 
           docker cp . "$CONTAINER_ID:/source"
           docker start -a "$CONTAINER_ID"
