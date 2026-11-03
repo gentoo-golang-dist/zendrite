@@ -37,6 +37,10 @@ const (
 	// RemoteTimestampBackfillLimit is the number of events backfilled from a
 	// remote result, so that /context and /messages can use it.
 	remoteTimestampBackfillLimit = 20
+	// MembershipSyncTimeout bounds how long a lookup waits for the sync API
+	// to store the user's membership, which it learns of after the roomserver.
+	membershipSyncTimeout = 5 * time.Second
+	membershipSyncPoll    = 50 * time.Millisecond
 )
 
 type timestampToEventResponse struct {
@@ -123,6 +127,9 @@ func TimestampToEvent(
 		return util.ErrorResponse(err)
 	}
 	ctx := req.Context()
+	if errRes := checkTimestampLookupAllowed(ctx, syncDB, rsAPI, roomID, *userID); errRes != nil {
+		return *errRes
+	}
 	visibleTo := func(db storage.DatabaseTransaction) func([]*rstypes.HeaderedEvent) (*rstypes.HeaderedEvent, error) {
 		return func(events []*rstypes.HeaderedEvent) (*rstypes.HeaderedEvent, error) {
 			visible, err := internal.ApplyHistoryVisibilityFilter(ctx, db, rsAPI, events, nil, *userID, "timestamp_to_event")
@@ -169,6 +176,61 @@ func TimestampToEvent(
 		return util.JSONResponse{Code: http.StatusOK, JSON: timestampToEventResponse{EventID: local.EventID(), OriginServerTS: local.OriginServerTS()}}
 	}
 	return util.JSONResponse{Code: http.StatusNotFound, JSON: spec.NotFound("No event was found or you do not have permission to read it")}
+}
+
+// checkTimestampLookupAllowed answers 403 unless the user may read the room's
+// history. A user who just joined may not be in the sync API yet, which would
+// hide the join and the gap before it, so it waits for the user's membership
+// event to reach the sync API first.
+func checkTimestampLookupAllowed(
+	ctx context.Context, syncDB storage.Database, rsAPI api.SyncRoomserverAPI, roomID string, userID spec.UserID,
+) *util.JSONResponse {
+	parsedRoomID, err := spec.NewRoomID(roomID)
+	if err != nil {
+		return &util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.InvalidParam("invalid room ID")}
+	}
+	db, err := syncDB.NewDatabaseSnapshot(ctx)
+	if err != nil {
+		res := util.ErrorResponse(err)
+		return &res
+	}
+	allowed, membershipEventID, err := canViewRoomHistory(ctx, db, rsAPI, *parsedRoomID, userID)
+	_ = db.Rollback()
+	if err != nil {
+		res := util.ErrorResponse(err)
+		return &res
+	}
+	if !allowed {
+		return &util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden("You are not allowed to read this room's history")}
+	}
+	if membershipEventID != "" {
+		waitForSyncEvent(ctx, syncDB, membershipEventID)
+	}
+	return nil
+}
+
+// waitForSyncEvent waits until the sync API stores the event, for at most
+// membershipSyncTimeout. It gives up quietly, as a late event only makes the
+// lookup less complete.
+func waitForSyncEvent(ctx context.Context, syncDB storage.Database, eventID string) {
+	ctx, cancel := context.WithTimeout(ctx, membershipSyncTimeout)
+	defer cancel()
+	for {
+		db, err := syncDB.NewDatabaseSnapshot(ctx)
+		if err != nil {
+			return
+		}
+		events, err := db.Events(ctx, []string{eventID})
+		_ = db.Rollback()
+		if err != nil || len(events) > 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(membershipSyncPoll):
+		}
+	}
 }
 
 // remoteTimestampServersForGap returns the servers to ask when the local

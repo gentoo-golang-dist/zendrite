@@ -33,7 +33,7 @@ RUN echo '\
     #!/bin/bash -eu \n\
     ./generate-keys --private-key matrix_key.pem \n\
     ./generate-keys -keysize 1024 --server $SERVER_NAME --tls-cert server.crt --tls-key server.key --tls-authority-cert /complement/ca/ca.crt --tls-authority-key /complement/ca/ca.key \n\
-    ./generate-config -server $SERVER_NAME --ci > zendrite.yaml \n\
+    ./generate-config -server $SERVER_NAME --ci -appservices /complement/appservice > zendrite.yaml \n\
     cp /complement/ca/ca.crt /usr/local/share/ca-certificates/ && update-ca-certificates \n\
     [ ${COVER} -eq 1 ] && mkdir -p /tmp/covdatafiles && GOCOVERDIR=/tmp/covdatafiles exec ./zendrite-cover --really-enable-open-registration --tls-cert server.crt --tls-key server.key --config zendrite.yaml \n\
     exec ./zendrite --really-enable-open-registration --tls-cert server.crt --tls-key server.key --config zendrite.yaml \n\

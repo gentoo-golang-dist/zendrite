@@ -1129,7 +1129,16 @@ func testContext(t *testing.T, dbType test.DBType) {
 		wantStateLength  int
 		wantBeforeLength int
 		wantAfterLength  int
+		// lastEvent requests the context of the room's last event, which has
+		// no events after it.
+		lastEvent  bool
+		wantTokens bool
 	}{
+		{
+			name:       "the last event still has an end token",
+			lastEvent:  true,
+			wantTokens: true,
+		},
 		{
 			name: "invalid filter",
 			params: map[string]string{
@@ -1259,6 +1268,9 @@ func testContext(t *testing.T, dbType test.DBType) {
 			if tc.eventID != "" {
 				eventID = tc.eventID
 			}
+			if tc.lastEvent {
+				eventID = lastMsg.EventID()
+			}
 			requestPath := fmt.Sprintf("/_matrix/client/v3/rooms/%s/context/%s", roomID, eventID)
 			if tc.params != nil {
 				for k, v := range tc.params {
@@ -1287,6 +1299,9 @@ func testContext(t *testing.T, dbType test.DBType) {
 
 			if !tc.wantError && resp.Event.EventID != eventID {
 				t.Fatalf("unexpected eventID %s, expected %s", resp.Event.EventID, eventID)
+			}
+			if tc.wantTokens && (resp.Start == "" || resp.End == "") {
+				t.Fatalf("expected start and end tokens, got %q and %q", resp.Start, resp.End)
 			}
 		})
 	}

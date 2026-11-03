@@ -80,19 +80,6 @@ func OnIncomingMessagesRequest(
 		}
 	}
 
-	// NewDatabaseTransaction is used here instead of NewDatabaseSnapshot as we
-	// expect to be able to write to the database in response to a /messages
-	// request that requires backfilling from the roomserver or federation.
-	snapshot, err := db.NewDatabaseTransaction(req.Context())
-	if err != nil {
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
-	var succeeded bool
-	defer sqlutil.EndTransactionWithCheck(snapshot, &succeeded, &err)
-
 	// check if the user has already forgotten about this room
 	membershipResp, err := getMembershipForUser(req.Context(), roomID, device.UserID, rsAPI)
 	if err != nil {
@@ -114,6 +101,26 @@ func OnIncomingMessagesRequest(
 			JSON: spec.Forbidden("user already forgot about this room"),
 		}
 	}
+
+	// The sync API learns of a join after the roomserver, so a user who just
+	// joined would get an empty page. Wait for the join before reading, and
+	// before opening the transaction, which would hold up the writer.
+	if membershipResp.IsInRoom && membershipResp.EventID != "" {
+		waitForSyncEvent(req.Context(), db, membershipResp.EventID)
+	}
+
+	// NewDatabaseTransaction is used here instead of NewDatabaseSnapshot as we
+	// expect to be able to write to the database in response to a /messages
+	// request that requires backfilling from the roomserver or federation.
+	snapshot, err := db.NewDatabaseTransaction(req.Context())
+	if err != nil {
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	var succeeded bool
+	defer sqlutil.EndTransactionWithCheck(snapshot, &succeeded, &err)
 
 	filter, err := parseRoomEventFilter(req)
 	if err != nil {
@@ -484,9 +491,12 @@ func (r *messagesReq) handleEmptyEventsSlice() (
 	// Check if we have backward extremities for this room.
 	if len(backwardExtremities) > 0 {
 		// If so, retrieve as much events as needed through backfilling.
-		events, err = r.backfill(r.roomID, backwardExtremities, r.filter.Limit)
-		if err != nil {
-			return
+		var backfillErr error
+		events, backfillErr = r.backfill(r.roomID, backwardExtremities, r.filter.Limit)
+		if backfillErr != nil {
+			// No server could fill the gap, which leaves an empty page.
+			r.logBackfillFailure(backfillErr)
+			return []*rstypes.HeaderedEvent{}, nil
 		}
 		r.didBackfill = true
 		// Backfilled events come from federation and are not pre-filtered by the
@@ -535,25 +545,39 @@ func (r *messagesReq) handleNonEmptyEventsSlice(streamEvents []types.StreamEvent
 	// Backfill is needed if we've reached a backward extremity and need more
 	// events. It's only needed if the direction is backward.
 	if len(backwardExtremities) > 0 && !isSetLargeEnough && r.backwardOrdering {
-		var pdus []*rstypes.HeaderedEvent
-		// Only ask the remote server for enough events to reach the limit.
-		pdus, err = r.backfill(r.roomID, backwardExtremities, r.filter.Limit-len(streamEvents))
-		if err != nil {
-			return
+		// The local events may lie on both sides of the gap, so ask for a
+		// whole page: the page is cut to the newest events below.
+		pdus, backfillErr := r.backfill(r.roomID, backwardExtremities, r.filter.Limit)
+		if backfillErr != nil {
+			// The local events are still a valid page.
+			r.logBackfillFailure(backfillErr)
+		} else {
+			r.didBackfill = true
+			// Backfilled events come from federation and are not pre-filtered by the
+			// database query; apply the client's sender/type filter here.
+			pdus = filterHeaderedEvents(pdus, r.filter)
+			// Append the PDUs to the list to send back to the client.
+			events = append(events, pdus...)
 		}
-		r.didBackfill = true
-		// Backfilled events come from federation and are not pre-filtered by the
-		// database query; apply the client's sender/type filter here.
-		pdus = filterHeaderedEvents(pdus, r.filter)
-		// Append the PDUs to the list to send back to the client.
-		events = append(events, pdus...)
 	}
 
 	// Append the events ve previously retrieved locally.
 	events = append(events, r.snapshot.StreamEventsToEvents(r.ctx, nil, streamEvents, r.rsAPI)...)
 	sort.Sort(eventsByDepth(events))
+	// A backward page holds the newest events. Local events older than the
+	// backfilled ones lie before the gap and come on a later page; keeping
+	// them would place the end token before events this page skipped.
+	if r.didBackfill && len(events) > r.filter.Limit {
+		events = events[len(events)-r.filter.Limit:]
+	}
 
 	return
+}
+
+// logBackfillFailure logs that no server could backfill the room. The
+// request still answers with the events this server has, rather than 500.
+func (r *messagesReq) logBackfillFailure(err error) {
+	logrus.WithError(err).WithField("room_id", r.roomID).Warn("Failed to backfill, returning local events only")
 }
 
 type eventsByDepth []*rstypes.HeaderedEvent

@@ -36,6 +36,17 @@ type timestampRoomserver struct {
 	serverVisible  map[spec.ServerName]map[string]bool
 	backfills      []*api.PerformBackfillRequest
 	backfillEvents []*rstypes.HeaderedEvent
+	// membershipEventID is the membership event QueryMembershipForUser
+	// returns for userID.
+	membershipEventID string
+}
+
+func (s *timestampRoomserver) QueryMembershipForUser(_ context.Context, req *api.QueryMembershipForUserRequest, res *api.QueryMembershipForUserResponse) error {
+	res.RoomExists = req.RoomID != "!unknown:example.com"
+	if res.RoomExists && req.UserID.String() == s.userID {
+		res.HasBeenInRoom, res.IsInRoom, res.Membership, res.EventID = true, true, spec.Join, s.membershipEventID
+	}
+	return nil
 }
 
 func (s *timestampRoomserver) QuerySenderIDForUser(_ context.Context, _ spec.RoomID, userID spec.UserID) (*spec.SenderID, error) {
@@ -96,7 +107,11 @@ func TestTimestampToEvent(t *testing.T) {
 		later := write(room, 3000, true, false, gomatrixserverlib.HistoryVisibilityJoined)
 		earlier := write(room, 1000, true, true, gomatrixserverlib.HistoryVisibilityJoined)
 		write(room, 2000, false, false, gomatrixserverlib.HistoryVisibilityJoined)
-		publicRoom := test.NewRoom(t, alice)
+		publicRoom := test.NewRoom(t, alice, test.RoomHistoryVisibility(gomatrixserverlib.HistoryVisibilityWorldReadable))
+		for _, event := range publicRoom.Events() {
+			_, err = db.WriteEvent(t.Context(), event, []*rstypes.HeaderedEvent{event}, []string{event.EventID()}, nil, nil, false, gomatrixserverlib.HistoryVisibilityWorldReadable)
+			require.NoError(t, err)
+		}
 		public := write(publicRoom, 2000, false, false, gomatrixserverlib.HistoryVisibilityWorldReadable)
 
 		// Simulate upgrading a database whose event rows predate the timestamp index.
@@ -126,8 +141,8 @@ func TestTimestampToEvent(t *testing.T) {
 			{name: "negative", query: "ts=-1&dir=f", want: earlier},
 			{name: "no forward result", query: "ts=3001&dir=f", status: http.StatusNotFound},
 			{name: "no backward result", query: "ts=999&dir=b", status: http.StatusNotFound},
-			{name: "unknown room", query: "ts=0&dir=f", roomID: "!unknown:example.com", status: http.StatusNotFound},
-			{name: "inaccessible", query: "ts=0&dir=f", userID: bob.ID, status: http.StatusNotFound},
+			{name: "unknown room", query: "ts=0&dir=f", roomID: "!unknown:example.com", status: http.StatusForbidden},
+			{name: "not a member", query: "ts=0&dir=f", userID: bob.ID, status: http.StatusForbidden},
 			{name: "world readable", query: "ts=0&dir=f", roomID: publicRoom.ID, userID: bob.ID, want: public},
 			{name: "invalid room", query: "ts=0&dir=f", roomID: "invalid", status: http.StatusBadRequest},
 		}
@@ -185,6 +200,26 @@ func TestTimestampToEvent(t *testing.T) {
 			rec := httptest.NewRecorder()
 			limitedRouter.ServeHTTP(rec, req)
 			require.Equal(t, http.StatusTooManyRequests, rec.Code)
+		})
+		t.Run("waits for the user's membership to reach the sync API", func(t *testing.T) {
+			lateRoom := test.NewRoom(t, alice)
+			join := lateRoom.CreateAndInsert(t, alice, "m.room.message", map[string]string{"body": "late"}, test.WithTimestamp(time.UnixMilli(7000)))
+			rs.memberships[join.EventID()] = membership
+			rs.membershipEventID = join.EventID()
+			defer func() { rs.membershipEventID = "" }()
+			written := make(chan error, 1)
+			go func() {
+				time.Sleep(3 * membershipSyncPoll)
+				_, err := db.WriteEvent(t.Context(), join, nil, nil, nil, nil, false, gomatrixserverlib.HistoryVisibilityJoined)
+				written <- err
+			}()
+			req := httptest.NewRequest(http.MethodGet, "/?ts=6000&dir=f", nil)
+			result := TimestampToEvent(req, &device, lateRoom.ID, db, rs, &config.SyncAPI{}, nil)
+			require.NoError(t, <-written)
+			require.Equal(t, http.StatusOK, result.Code)
+			body, ok := result.JSON.(timestampToEventResponse)
+			require.True(t, ok)
+			require.Equal(t, join.EventID(), body.EventID)
 		})
 		t.Run("visibility across timestamp ties and batches", func(t *testing.T) {
 			backward := write(room, 5000, true, false, gomatrixserverlib.HistoryVisibilityJoined)
@@ -357,12 +392,12 @@ func TestTimestampToEventRemote(t *testing.T) {
 			require.Equal(t, "1900", federation.requests[0].URL.Query().Get("ts"))
 			require.Equal(t, "f", federation.requests[0].URL.Query().Get("dir"))
 		})
-		t.Run("a user who cannot see the gap asks no server", func(t *testing.T) {
+		t.Run("a user who is not in the room asks no server", func(t *testing.T) {
 			federation := &timestampFederation{}
 			stranger := userapi.Device{UserID: test.NewUser(t).ID, ID: "device"}
 			req := httptest.NewRequest(http.MethodGet, "/?ts=1900&dir=f", nil)
 			res := TimestampToEvent(req, &stranger, room.ID, db, rs, cfg, federation)
-			require.Equal(t, http.StatusNotFound, res.Code)
+			require.Equal(t, http.StatusForbidden, res.Code)
 			require.Empty(t, federation.requests)
 		})
 		t.Run("an exact local match asks no server", func(t *testing.T) {

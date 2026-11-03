@@ -26,8 +26,10 @@ tests/TestInboundFederationProfile
 tests/TestIsDirectFlagFederation
 tests/TestIsDirectFlagLocal
 tests/TestJoinFederatedRoomFailOver
+tests/TestJoinFederatedRoomFromApplicationServiceBridgeUser
 tests/TestJoinFederatedRoomWithUnverifiableEvents
 tests/TestJoinViaRoomIDAndServerName
+tests/TestJumpToDateEndpoint
 tests/TestKnockRestrictedRoomsLocalJoinNoCreatorsUsesPowerLevelsV12
 tests/TestKnockRoomsInPublicRoomsDirectory
 tests/TestKnockRoomsInPublicRoomsDirectoryInMSC3787Room
@@ -113,6 +115,7 @@ tests/csapi/TestLogin
 tests/csapi/TestLogout
 tests/csapi/TestMediaConfig
 tests/csapi/TestMembershipOnEvents
+tests/csapi/TestMessagesOverFederation
 tests/csapi/TestNotPresentUserCannotBanOthers
 tests/csapi/TestOlderLeftRoomsNotInLeaveSection
 tests/csapi/TestPowerLevels

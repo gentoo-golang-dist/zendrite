@@ -209,7 +209,7 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 				JSON: spec.InternalServerError{},
 			}
 		}
-		startToken, endToken, err := getStartEnd(ctx, snapshot, eventsBefore, eventsAfter)
+		startToken, endToken, err := getStartEnd(ctx, snapshot, event.EventID(), eventsBefore, eventsAfter)
 		if err != nil {
 			logrus.WithError(err).Error("failed to get start/end")
 			return util.JSONResponse{

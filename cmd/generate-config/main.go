@@ -23,6 +23,7 @@ func main() {
 	dbURI := flag.String("db", "", "The DB URI to use for all components (PostgreSQL only)")
 	dirPath := flag.String("dir", "./", "The folder to use for paths (like SQLite databases, media storage)")
 	normalise := flag.String("normalise", "", "Normalise an existing configuration file by adding new/missing options and defaults")
+	appservices := flag.String("appservices", "", "Load every application service registration (*.yaml) in this folder")
 	flag.Parse()
 
 	var cfg *config.Zendrite
@@ -113,6 +114,14 @@ func main() {
 		if cfg, err = config.Load(*normalise); err != nil {
 			panic(err)
 		}
+	}
+
+	if *appservices != "" {
+		files, err := filepath.Glob(filepath.Join(*appservices, "*.yaml"))
+		if err != nil {
+			panic(err)
+		}
+		cfg.AppServiceAPI.ConfigFiles = append(cfg.AppServiceAPI.ConfigFiles, files...)
 	}
 
 	j, err := yaml.Marshal(cfg)

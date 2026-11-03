@@ -261,7 +261,7 @@ func Context(
 	if len(response.State) > filter.Limit {
 		response.State = response.State[len(response.State)-filter.Limit:]
 	}
-	start, end, err := getStartEnd(ctx, snapshot, eventsBefore, eventsAfter)
+	start, end, err := getStartEnd(ctx, snapshot, requestedEvent.EventID(), eventsBefore, eventsAfter)
 	if err == nil {
 		response.End = end.String()
 		response.Start = start.String()
@@ -313,15 +313,32 @@ func applyHistoryVisibilityOnContextEvents(
 	return filteredBefore, filteredAfter, nil
 }
 
-func getStartEnd(ctx context.Context, snapshot storage.DatabaseTransaction, startEvents, endEvents []*rstypes.HeaderedEvent) (start, end types.TopologyToken, err error) {
+// getStartEnd returns the pagination tokens around the context window. When
+// no events come before or after the requested event, the token on that side
+// is the requested event's own position: a backward page includes the event
+// at its token, so the start token steps back over it.
+func getStartEnd(
+	ctx context.Context, snapshot storage.DatabaseTransaction, eventID string, startEvents, endEvents []*rstypes.HeaderedEvent,
+) (start, end types.TopologyToken, err error) {
+	var position types.TopologyToken
+	if len(startEvents) == 0 || len(endEvents) == 0 {
+		if position, err = snapshot.EventPositionInTopology(ctx, eventID); err != nil {
+			return
+		}
+	}
 	if len(startEvents) > 0 {
 		start, err = snapshot.EventPositionInTopology(ctx, startEvents[0].EventID())
 		if err != nil {
 			return
 		}
+	} else {
+		start = position
+		start.Decrement()
 	}
 	if len(endEvents) > 0 {
 		end, err = snapshot.EventPositionInTopology(ctx, endEvents[0].EventID())
+	} else {
+		end = position
 	}
 	return
 }

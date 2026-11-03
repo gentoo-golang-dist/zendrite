@@ -97,7 +97,7 @@ func Threads(req *http.Request, device *userapi.Device, syncDB storage.Database,
 	}
 	succeeded := false
 	defer sqlutil.EndTransactionWithCheck(snapshot, &succeeded, &err)
-	allowed, err := canViewThreads(req.Context(), snapshot, rsAPI, *roomID, *userID)
+	allowed, _, err := canViewRoomHistory(req.Context(), snapshot, rsAPI, *roomID, *userID)
 	if err != nil {
 		return util.ErrorResponse(err)
 	}
@@ -130,25 +130,30 @@ func Threads(req *http.Request, device *userapi.Device, syncDB storage.Database,
 	return util.JSONResponse{Code: http.StatusOK, JSON: response}
 }
 
-func canViewThreads(ctx context.Context, snapshot storage.DatabaseTransaction, rsAPI api.SyncRoomserverAPI, roomID spec.RoomID, userID spec.UserID) (bool, error) {
+// canViewRoomHistory reports whether the user may read the room's history:
+// they have been in the room and are not banned, or it is world readable. It
+// also returns the user's latest membership event ID, if any.
+func canViewRoomHistory(
+	ctx context.Context, snapshot storage.DatabaseTransaction, rsAPI api.SyncRoomserverAPI, roomID spec.RoomID, userID spec.UserID,
+) (allowed bool, membershipEventID string, err error) {
 	var membership api.QueryMembershipForUserResponse
 	if err := rsAPI.QueryMembershipForUser(ctx, &api.QueryMembershipForUserRequest{RoomID: roomID.String(), UserID: userID}, &membership); err != nil {
-		return false, err
+		return false, "", err
 	}
 	if !membership.RoomExists || membership.Membership == spec.Ban || membership.IsRoomForgotten {
-		return false, nil
+		return false, "", nil
 	}
 	if membership.HasBeenInRoom {
-		return true, nil
+		return true, membership.EventID, nil
 	}
 	visibility, err := snapshot.GetStateEvent(ctx, roomID.String(), spec.MRoomHistoryVisibility, "")
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return false, "", nil
 	}
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	return visibility != nil && gjson.GetBytes(visibility.Content(), "history_visibility").Str == spec.WorldReadable, nil
+	return visibility != nil && gjson.GetBytes(visibility.Content(), "history_visibility").Str == spec.WorldReadable, "", nil
 }
 
 type threadReader struct {
