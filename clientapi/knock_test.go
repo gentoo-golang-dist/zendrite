@@ -132,6 +132,8 @@ func TestKnock(t *testing.T) {
 			assert.Equal(t, spec.Knock, byType[spec.MRoomMember].Get("content.membership").Str, room.Version)
 			assert.Equal(t, "let me in", byType[spec.MRoomMember].Get("content.reason").Str, room.Version)
 			assert.False(t, byType[spec.MRoomCreate].Get("signatures").Exists(), "knock_state must be stripped")
+			assert.False(t, byType[spec.MRoomMember].Get("origin_server_ts").Exists(), "the knock in knock_state must be stripped")
+			assert.False(t, byType[spec.MRoomMember].Get("event_id").Exists(), "the knock in knock_state must be stripped")
 			assert.False(t, sync.Get(roomKey("invite", room.ID)).Exists(), room.Version)
 			assert.False(t, sync.Get(roomKey("join", room.ID)).Exists(), room.Version)
 		}

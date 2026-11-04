@@ -710,13 +710,25 @@ func strippedStateWithEvent(
 		return nil, err
 	}
 
-	// Ensure unsigned field is empty so it isn't marshaled into the final JSON
-	clientEvent.Unsigned = nil
-
-	if ev, err := json.Marshal(*clientEvent); err == nil {
+	// Everything in invite_state and knock_state is a stripped state event,
+	// including the invite or knock itself.
+	if ev, err := json.Marshal(strippedClientEvent{
+		Content:  clientEvent.Content,
+		Sender:   clientEvent.Sender,
+		StateKey: clientEvent.StateKey,
+		Type:     clientEvent.Type,
+	}); err == nil {
 		events = append(events, ev)
 	}
 	return events, nil
+}
+
+// strippedClientEvent is the format of stripped state events in /sync.
+type strippedClientEvent struct {
+	Content  spec.RawJSON `json:"content"`
+	Sender   string       `json:"sender"`
+	StateKey *string      `json:"state_key"`
+	Type     string       `json:"type"`
 }
 
 // LeaveResponse represents a /sync response for a room which is under the 'leave' key.
