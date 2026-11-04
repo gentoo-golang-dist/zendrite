@@ -80,6 +80,7 @@ tests/TestRestrictedRoomsRemoteJoinLocalUser
 tests/TestRestrictedRoomsSpacesSummaryFederation
 tests/TestRestrictedRoomsSpacesSummaryLocal
 tests/TestRoomSummaryAllowedRoomIDs
+tests/TestSyncOmitsStateChangeOnFilteredEvents
 tests/TestToDeviceMessagesOverFederation
 tests/TestUnbanViaInvite
 tests/TestUnknownEndpoints

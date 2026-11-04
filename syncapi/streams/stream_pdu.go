@@ -1,10 +1,12 @@
 package streams
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -160,6 +162,10 @@ func (p *PDUStreamProvider) CompleteSync(
 		eventFormat = synctypes.FormatSyncFederation
 	}
 
+	limit := eventFilter.Limit
+	if limit > 0 {
+		eventFilter.Limit += depthOrderWindow
+	}
 	recentEvents, err := snapshot.RecentEvents(ctx, joinedRoomIDs, r, &eventFilter, true, true)
 	if err != nil {
 		return from
@@ -172,7 +178,7 @@ func (p *PDUStreamProvider) CompleteSync(
 			req.Log.WithError(ctxErr).Debugln("Abandoning complete sync, the client went away")
 			return from
 		}
-		events := recentEvents[roomID]
+		events := latestByDepth(recentEvents[roomID], limit)
 		// Invalidate the lazyLoadCache, otherwise we end up with missing displaynames/avatars
 		// TODO: This might be inefficient, when joined to many and/or large rooms.
 		joinedUsers := p.notifier.JoinedUsers(roomID)
@@ -218,7 +224,7 @@ func (p *PDUStreamProvider) CompleteSync(
 
 		for _, roomID := range peekRooms {
 			var jr *types.JoinResponse
-			events := recentEvents[roomID]
+			events := latestByDepth(recentEvents[roomID], limit)
 			jr, err = p.getJoinResponseForCompleteSync(
 				ctx, snapshot, roomID, &stateFilter, req.WantFullState, req.UseStateAfter(), req.Device, true,
 				events.Events, events.Limited, eventFormat, to, bundler,
@@ -455,6 +461,28 @@ func latestDelivered(
 		}
 	}
 	return latest
+}
+
+// depthOrderWindow is how many events a complete sync reads beyond the
+// timeline limit of a room, to order the timeline by depth.
+const depthOrderWindow = 10
+
+// latestByDepth returns the timeline of a complete sync: the given events in
+// the order of the room's DAG, cut to the limit. An event of a fork that arrived
+// late then does not end the timeline, where its state would count as older
+// than that of the events before it, and it appears in the state instead. The
+// events must be in stream order, which breaks ties in depth.
+func latestByDepth(recent types.RecentEvents, limit int) types.RecentEvents {
+	sorted := slices.Clone(recent.Events)
+	slices.SortStableFunc(sorted, func(a, b types.StreamEvent) int {
+		return cmp.Compare(a.Depth(), b.Depth())
+	})
+	if limit >= 0 && len(sorted) > limit {
+		sorted = sorted[len(sorted)-limit:]
+		recent.Limited = true
+	}
+	recent.Events = sorted
+	return recent
 }
 
 //nolint:gocyclo
