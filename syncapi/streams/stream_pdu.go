@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -55,6 +56,48 @@ func (p *PDUStreamProvider) Setup(
 	p.latest = id
 }
 
+// A snapshot can hold events the sync position has not reached: the position
+// only advances once an event is written, after its transaction commits.
+// These bound the wait for it to catch up, which is a few milliseconds.
+const (
+	snapshotPositionTimeout = 500 * time.Millisecond
+	snapshotPositionPoll    = 2 * time.Millisecond
+)
+
+// positionOfSnapshot returns the position a complete sync must report for the
+// state in the snapshot. A complete sync returns all of the current state, so
+// at a lower position the next sync would return events the client has already
+// seen. It waits for the notifier to reach the snapshot, because an incremental
+// sync from a position past the notifier runs backwards. If it does not get
+// there in time, it returns the given position, and the client may see those
+// events twice.
+func (p *PDUStreamProvider) positionOfSnapshot(
+	ctx context.Context, snapshot storage.DatabaseTransaction, req *types.SyncRequest, latest types.StreamPosition,
+) types.StreamPosition {
+	pos, err := snapshot.LatestSyncEventAfter(ctx, latest)
+	if err != nil {
+		req.Log.WithError(err).Warn("Failed to read the newest event of the snapshot")
+		return latest
+	}
+	if pos <= latest {
+		return latest
+	}
+	timeout := time.NewTimer(snapshotPositionTimeout)
+	defer timeout.Stop()
+	poll := time.NewTicker(snapshotPositionPoll)
+	defer poll.Stop()
+	for p.notifier.CurrentPosition().PDUPosition < pos {
+		select {
+		case <-poll.C:
+		case <-timeout.C:
+			return latest
+		case <-ctx.Done():
+			return latest
+		}
+	}
+	return pos
+}
+
 //nolint:gocyclo
 func (p *PDUStreamProvider) CompleteSync(
 	ctx context.Context,
@@ -62,7 +105,7 @@ func (p *PDUStreamProvider) CompleteSync(
 	req *types.SyncRequest,
 ) types.StreamPosition {
 	from := types.StreamPosition(0)
-	to := p.LatestPosition(ctx)
+	to := p.positionOfSnapshot(ctx, snapshot, req, p.LatestPosition(ctx))
 
 	// Get the current sync position which we will base the sync response on.
 	// For complete syncs, we want to start at the most recent events and work

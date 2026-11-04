@@ -30,6 +30,9 @@ type DatabaseTransaction interface {
 	SharedUsers
 
 	MaxStreamPositionForPDUs(ctx context.Context) (types.StreamPosition, error)
+	// LatestSyncEventAfter returns the newest event after the given position
+	// that a sync can return, or 0 if there is none.
+	LatestSyncEventAfter(ctx context.Context, after types.StreamPosition) (types.StreamPosition, error)
 	MaxStreamPositionForReceipts(ctx context.Context) (types.StreamPosition, error)
 	MaxStreamPositionForInvites(ctx context.Context) (types.StreamPosition, error)
 	MaxStreamPositionForAccountData(ctx context.Context) (types.StreamPosition, error)

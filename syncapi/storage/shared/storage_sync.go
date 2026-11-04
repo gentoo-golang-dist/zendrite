@@ -39,6 +39,14 @@ func (d *DatabaseTransaction) Rollback() error {
 	return d.txn.Rollback()
 }
 
+func (d *DatabaseTransaction) LatestSyncEventAfter(ctx context.Context, after types.StreamPosition) (types.StreamPosition, error) {
+	id, err := d.OutputEvents.SelectLatestSyncEventAfter(ctx, d.txn, int64(after))
+	if err != nil {
+		return 0, fmt.Errorf("d.OutputEvents.SelectLatestSyncEventAfter: %w", err)
+	}
+	return types.StreamPosition(id), nil
+}
+
 func (d *DatabaseTransaction) MaxStreamPositionForPDUs(ctx context.Context) (types.StreamPosition, error) {
 	id, err := d.OutputEvents.SelectMaxEventID(ctx, d.txn)
 	if err != nil {

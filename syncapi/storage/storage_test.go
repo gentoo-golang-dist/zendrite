@@ -67,6 +67,38 @@ func TestWriteEvents(t *testing.T) {
 	})
 }
 
+// Backfilled events are written to the same table without advancing the sync
+// position. A complete sync must not wait for a position that never comes.
+func TestLatestSyncEventAfterIgnoresEventsKeptFromSync(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		alice := test.NewUser(t)
+		r := test.NewRoom(t, alice)
+		db, close := MustCreateDatabase(t, dbType)
+		defer close()
+		positions := MustWriteEvents(t, db, r.Events())
+		last := positions[len(positions)-1]
+
+		visible := r.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "live"})
+		visiblePos := MustWriteEvents(t, db, []*rstypes.HeaderedEvent{visible})[0]
+		backfilled := r.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "old"})
+		if _, err := db.WriteEvent(ctx, backfilled, nil, nil, nil, nil, true, gomatrixserverlib.HistoryVisibilityShared); err != nil {
+			t.Fatal(err)
+		}
+
+		WithSnapshot(t, db, func(snapshot storage.DatabaseTransaction) {
+			for after, want := range map[types.StreamPosition]types.StreamPosition{last: visiblePos, visiblePos: 0} {
+				got, err := snapshot.LatestSyncEventAfter(ctx, after)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got != want {
+					t.Errorf("after %d: got %d, want %d", after, got, want)
+				}
+			}
+		})
+	})
+}
+
 func WithSnapshot(t *testing.T, db storage.Database, f func(snapshot storage.DatabaseTransaction)) {
 	snapshot, err := db.NewDatabaseSnapshot(ctx)
 	if err != nil {

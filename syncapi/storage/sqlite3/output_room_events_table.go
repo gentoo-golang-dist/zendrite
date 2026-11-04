@@ -77,6 +77,11 @@ const selectRecentEventsForSyncSQL = "" +
 
 // WHEN, ORDER BY and LIMIT are appended by prepareWithFilters.
 
+// The newest event after the given position that a sync can return. Events
+// kept from sync, such as backfilled ones, do not advance the sync position.
+const selectLatestSyncEventAfterSQL = "" +
+	"SELECT MAX(id) FROM syncapi_output_room_events WHERE id > $1 AND exclude_from_sync = FALSE"
+
 const selectMaxEventIDSQL = "" +
 	"SELECT MAX(id) FROM syncapi_output_room_events"
 
@@ -126,18 +131,19 @@ AND ($3 = 0 OR CAST(json_extract(headered_event_json, '$.origin_server_ts') AS B
 ORDER BY CAST(json_extract(headered_event_json, '$.origin_server_ts') AS BIGINT) DESC, id DESC LIMIT $4`
 
 type outputRoomEventsStatements struct {
-	selectTimestampForwardStmt   *sql.Stmt
-	selectTimestampBackwardStmt  *sql.Stmt
-	db                           *sql.DB
-	streamIDStatements           *StreamIDStatements
-	insertEventStmt              *sql.Stmt
-	selectMaxEventIDStmt         *sql.Stmt
-	updateEventJSONStmt          *sql.Stmt
-	deleteEventsForRoomStmt      *sql.Stmt
-	selectContextEventStmt       *sql.Stmt
-	selectContextBeforeEventStmt *sql.Stmt
-	selectContextAfterEventStmt  *sql.Stmt
-	purgeEventsStmt              *sql.Stmt
+	selectTimestampForwardStmt     *sql.Stmt
+	selectTimestampBackwardStmt    *sql.Stmt
+	db                             *sql.DB
+	streamIDStatements             *StreamIDStatements
+	insertEventStmt                *sql.Stmt
+	selectMaxEventIDStmt           *sql.Stmt
+	selectLatestSyncEventAfterStmt *sql.Stmt
+	updateEventJSONStmt            *sql.Stmt
+	deleteEventsForRoomStmt        *sql.Stmt
+	selectContextEventStmt         *sql.Stmt
+	selectContextBeforeEventStmt   *sql.Stmt
+	selectContextAfterEventStmt    *sql.Stmt
+	purgeEventsStmt                *sql.Stmt
 	// selectSearchStmt             *sql.Stmt - prepared at runtime
 }
 
@@ -172,6 +178,7 @@ func NewSqliteEventsTable(db *sql.DB, streamID *StreamIDStatements) (tables.Even
 		{&s.selectTimestampBackwardStmt, selectTimestampBackwardSQL},
 		{&s.insertEventStmt, insertEventSQL},
 		{&s.selectMaxEventIDStmt, selectMaxEventIDSQL},
+		{&s.selectLatestSyncEventAfterStmt, selectLatestSyncEventAfterSQL},
 		{&s.updateEventJSONStmt, updateEventJSONSQL},
 		{&s.deleteEventsForRoomStmt, deleteEventsForRoomSQL},
 		{&s.selectContextEventStmt, selectContextEventSQL},
@@ -296,6 +303,20 @@ func (s *outputRoomEventsStatements) SelectStateInRange(
 // MaxID returns the ID of the last inserted event in this table. 'txn' is optional. If it is not supplied,
 // then this function should only ever be used at startup, as it will race with inserting events if it is
 // done afterwards. If there are no inserted events, 0 is returned.
+// SelectLatestSyncEventAfter returns the newest event after the given position
+// that a sync can return, or 0 if there is none.
+func (s *outputRoomEventsStatements) SelectLatestSyncEventAfter(
+	ctx context.Context, txn *sql.Tx, after int64,
+) (id int64, err error) {
+	var nullableID sql.NullInt64
+	stmt := sqlutil.TxStmt(txn, s.selectLatestSyncEventAfterStmt)
+	err = stmt.QueryRowContext(ctx, after).Scan(&nullableID)
+	if nullableID.Valid {
+		id = nullableID.Int64
+	}
+	return
+}
+
 func (s *outputRoomEventsStatements) SelectMaxEventID(
 	ctx context.Context, txn *sql.Tx,
 ) (id int64, err error) {

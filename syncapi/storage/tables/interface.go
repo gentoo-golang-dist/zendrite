@@ -54,6 +54,9 @@ type Events interface {
 	SelectEventsByTimestamp(ctx context.Context, txn *sql.Tx, roomID string, timestamp int64, afterID types.StreamPosition, backwards bool, limit int) ([]types.StreamEvent, error)
 	SelectStateInRange(ctx context.Context, txn *sql.Tx, r types.Range, stateFilter *synctypes.StateFilter, roomIDs []string) (map[string]map[string]bool, map[string]types.StreamEvent, error)
 	SelectMaxEventID(ctx context.Context, txn *sql.Tx) (id int64, err error)
+	// SelectLatestSyncEventAfter returns the newest event after the given
+	// position that a sync can return, or 0 if there is none.
+	SelectLatestSyncEventAfter(ctx context.Context, txn *sql.Tx, after int64) (id int64, err error)
 	InsertEvent(
 		ctx context.Context, txn *sql.Tx,
 		event *rstypes.HeaderedEvent,
