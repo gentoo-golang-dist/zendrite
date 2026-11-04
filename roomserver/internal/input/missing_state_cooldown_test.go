@@ -43,6 +43,7 @@ type remoteFederation struct {
 	keyRing *gomatrixserverlib.KeyRing
 	missing []*types.HeaderedEvent
 	failing atomic.Bool
+	lookups atomic.Int32
 }
 
 func (f *remoteFederation) KeyRing() *gomatrixserverlib.KeyRing { return f.keyRing }
@@ -87,6 +88,7 @@ func (*remoteFederation) IsServerBackingOff(spec.ServerName) bool { return false
 func (f *remoteFederation) LookupMissingEvents(
 	context.Context, spec.ServerName, spec.ServerName, string, fclient.MissingEvents, gomatrixserverlib.RoomVersion,
 ) (fclient.RespMissingEvents, error) {
+	f.lookups.Add(1)
 	var res fclient.RespMissingEvents
 	if f.failing.Load() {
 		return res, errors.New("remote.test: 500 internal server error")
@@ -204,5 +206,56 @@ func TestMissingStateCooldownDefersEvents(t *testing.T) {
 		var res api.QueryLatestEventsAndStateResponse
 		require.NoError(t, rsAPI.QueryLatestEventsAndState(ctx, &api.QueryLatestEventsAndStateRequest{RoomID: room.ID}, &res))
 		require.True(t, slices.Contains(res.LatestEvents, after.EventID()), "latest events %v", res.LatestEvents)
+	})
+}
+
+// A remote that answers /get_missing_events without anything usable, such as
+// when the prev event it returns is malformed, cost one request and no state
+// was loaded, so the next events of the room may ask again, up to an allowance.
+func TestUnusableMissingEventsStartNoCooldown(t *testing.T) {
+	const unusableAllowance = 3
+	alice := test.NewUser(t, test.WithSigningServer("test", "ed25519:test", test.PrivateKeyB))
+	bob := test.NewUser(t, test.WithSigningServer(remoteServer, "ed25519:remote", test.PrivateKeyA))
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		room := test.NewRoom(t, alice, test.RoomPreset(test.PresetPublicChat))
+		room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(bob.ID))
+		known := len(room.Events())
+		room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"body": "lost"})
+		first := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"body": "first"})
+		events := []*types.HeaderedEvent{first}
+		for range unusableAllowance {
+			events = append(events, room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"body": "next"}))
+		}
+
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		natsInstance := jetstream.NATSInstance{}
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		keyRing := &gomatrixserverlib.KeyRing{KeyDatabase: serverKeys{"test": test.PrivateKeyB, remoteServer: test.PrivateKeyA}}
+		federation := &remoteFederation{room: room, keyRing: keyRing}
+		rsAPI.SetFederationAPI(federation, keyRing)
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events()[:known], "test", "test", "test", nil, false))
+
+		send := func(ev *types.HeaderedEvent) error {
+			return api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{ev}, "test", remoteServer, api.DoNotSendToOtherServers, nil, false)
+		}
+		for i, ev := range events[:unusableAllowance] {
+			err := send(ev)
+			require.True(t, api.IsInputRejected(err), "the event was not rejected: %v", err)
+			require.EqualValues(t, i+1, federation.lookups.Load(), "the event did not ask the remote")
+		}
+
+		// A remote that keeps this up has used the room's allowance, and the
+		// answer past it starts the cooldown.
+		lookups := federation.lookups.Load()
+		require.True(t, api.IsInputRejected(send(events[unusableAllowance])))
+		require.Equal(t, lookups+1, federation.lookups.Load())
+		last := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"body": "last"})
+		require.Error(t, send(last))
+		require.Equal(t, lookups+1, federation.lookups.Load(), "the cooldown did not start")
 	})
 }

@@ -721,7 +721,7 @@ Event:
 		}
 	}
 	if !hasPrevEvent {
-		err = fmt.Errorf("called /get_missing_events but server %s didn't return any prev_events with IDs %v", t.origin, shouldHaveSomeEventIDs)
+		err = fmt.Errorf("%w: called /get_missing_events but server %s didn't return any prev_events with IDs %v", errUnusableMissingEvents, t.origin, shouldHaveSomeEventIDs)
 		logger.WithError(err).Warnf(
 			"%s pushed us an event but couldn't give us details about prev_events via /get_missing_events - dropping this event until it can",
 			t.origin,
@@ -1237,6 +1237,12 @@ type verifySigError struct {
 	eventID string
 	err     error
 }
+
+// errUnusableMissingEvents is returned when a server answered
+// /get_missing_events without the prev events it was asked for, for example
+// because it does not have them or they are malformed.
+var errUnusableMissingEvents = errors.New("unusable /get_missing_events response")
+
 type missingPrevEventsError struct {
 	eventID string
 	err     error
@@ -1248,4 +1254,8 @@ func (e verifySigError) Error() string {
 
 func (e missingPrevEventsError) Error() string {
 	return fmt.Sprintf("unable to get prev_events for event %q: %s", e.eventID, e.err)
+}
+
+func (e missingPrevEventsError) Unwrap() error {
+	return e.err
 }

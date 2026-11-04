@@ -91,6 +91,10 @@ type Inputer struct {
 	// transaction by repeatedly loading and discarding thousands of state events.
 	missingStateCooldown sync.Map // room ID (string) -> time.Time
 
+	// unusableMissingEvents counts the /get_missing_events answers of a room
+	// that held nothing usable since its last cooldown or accepted event.
+	unusableMissingEvents sync.Map // room ID (string) -> int
+
 	// policyServerCache remembers policy server answers per event (MSC4284).
 	policyServerCache policyServerCache
 }
@@ -101,6 +105,23 @@ type Inputer struct {
 // transaction. After this duration, the next event will retry the full state
 // resolution.
 const missingStateCooldownDuration = 5 * time.Minute
+
+// unusableMissingEventsAllowance is how many unusable /get_missing_events
+// answers a room gets before the cooldown starts. Input of one room is
+// processed in order, so the count needs no lock.
+const unusableMissingEventsAllowance = 3
+
+// allowUnusableMissingEvents counts an unusable /get_missing_events answer and
+// reports whether the room is still within its allowance.
+func (r *Inputer) allowUnusableMissingEvents(roomID string) bool {
+	count := 1
+	if previous, ok := r.unusableMissingEvents.Load(roomID); ok {
+		count, _ = previous.(int)
+		count++
+	}
+	r.unusableMissingEvents.Store(roomID, count)
+	return count <= unusableMissingEventsAllowance
+}
 
 // errMissingStateCooldown fails an input deferred by the missing-state
 // cooldown. It is expected for as long as a room is broken, so it is logged

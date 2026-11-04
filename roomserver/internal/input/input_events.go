@@ -494,6 +494,13 @@ func (r *Inputer) processRoomEvent(
 				// really do anything with the event other than reject it at this point.
 				isRejected = true
 				rejectionErr = fmt.Errorf("missingState.processEventWithMissingState: %w", err)
+				// The remote answered with nothing usable: that took one
+				// request and no state was loaded, which is what the cooldown
+				// guards against. The next events of the room may ask again,
+				// but a remote must not be able to keep this up for free.
+				if errors.Is(err, errUnusableMissingEvents) && r.allowUnusableMissingEvents(stateResolutionRoomID) {
+					didStateResolution = false
+				}
 				var e gomatrixserverlib.EventValidationError
 				if errors.As(err, &e) {
 					if e.Persistable && stateSnapshot != nil {
@@ -673,9 +680,11 @@ func (r *Inputer) processRoomEvent(
 	if didStateResolution && stateResolutionRoomID != "" {
 		if isRejected {
 			r.missingStateCooldown.Store(stateResolutionRoomID, time.Now())
+			r.unusableMissingEvents.Delete(stateResolutionRoomID)
 			logger.Warnf("State resolution for room %s resulted in rejection, entering %s cooldown", stateResolutionRoomID, missingStateCooldownDuration)
 		} else {
 			r.missingStateCooldown.Delete(stateResolutionRoomID)
+			r.unusableMissingEvents.Delete(stateResolutionRoomID)
 		}
 	}
 
