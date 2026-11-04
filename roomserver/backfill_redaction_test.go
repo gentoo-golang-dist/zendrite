@@ -7,6 +7,8 @@ package roomserver_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -129,5 +131,97 @@ func TestBackfillAppliesRedactionOfEventInSameBatch(t *testing.T) {
 		stored, err := db.Events(ctx, room.Version, []types.EventNID{nids[message.EventID()].EventNID})
 		require.NoError(t, err)
 		require.Equal(t, redaction.EventID(), gjson.GetBytes(stored[0].Unsigned(), "redacted_by").Str)
+	})
+}
+
+// authFetchingServer additionally serves single events.
+type authFetchingServer struct {
+	backfillServer
+	byID    map[string]*types.HeaderedEvent
+	fetched []string
+}
+
+func (b *authFetchingServer) GetEvent(
+	_ context.Context, _, _ spec.ServerName, eventID string,
+) (gomatrixserverlib.Transaction, error) {
+	b.fetched = append(b.fetched, eventID)
+	ev, ok := b.byID[eventID]
+	if !ok {
+		return gomatrixserverlib.Transaction{}, errors.New("not found")
+	}
+	return gomatrixserverlib.Transaction{PDUs: []json.RawMessage{ev.JSON()}}, nil
+}
+
+// A message's auth events include its sender's membership. A server that
+// joined later only got the auth chain of the current state, which lacks the
+// membership of anyone who has since left. If the membership is older than
+// what the other server sends in the backfill, the message can only be
+// verified by fetching it. Dropping the message would leave the gap open and
+// every later backfill would ask for the same events again.
+func TestBackfillFetchesAuthEventsItDoesNotHave(t *testing.T) {
+	alice := test.NewUser(t)
+	bob := test.NewUser(t)
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeRig := testrig.CreateConfig(t, dbType)
+		defer closeRig()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		db, err := storage.Open(processCtx.Context(), cm, &cfg.RoomServer.Database, caches) //nolint:contextcheck
+		require.NoError(t, err)
+
+		natsInstance := jetstream.NATSInstance{}
+		jsCtx, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
+		defer jetstream.DeleteAllStreams(jsCtx, &cfg.Global.JetStream)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		room := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV10))
+		initial := room.Events()
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, initial, "test", "test", "test", nil, false))
+
+		join := room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": "join"}, test.WithStateKey(bob.ID))
+		message := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"body": "hello"})
+
+		stateIDs := []string{join.EventID()}
+		for _, ev := range initial {
+			stateIDs = append(stateIDs, ev.EventID())
+		}
+		server := &authFetchingServer{
+			backfillServer: backfillServer{events: []*types.HeaderedEvent{message}, stateIDs: stateIDs},
+			byID:           map[string]*types.HeaderedEvent{join.EventID(): join},
+		}
+		backfiller := &perform.Backfiller{
+			IsLocalServerName: func(s spec.ServerName) bool { return s == "local" },
+			DB:                db,
+			FSAPI:             server,
+			KeyRing:           &test.NopJSONVerifier{},
+			Querier:           rsAPI,
+		}
+		request := &api.PerformBackfillRequest{
+			RoomID:               room.ID,
+			BackwardsExtremities: map[string][]string{initial[len(initial)-1].EventID(): {message.EventID()}},
+			Limit:                100,
+			ServerName:           "local",
+			VirtualHost:          "local",
+		}
+		var res api.PerformBackfillResponse
+		require.NoError(t, backfiller.PerformBackfill(ctx, request, &res))
+
+		returned := make([]string, 0, len(res.Events))
+		for _, ev := range res.Events {
+			returned = append(returned, ev.EventID())
+		}
+		require.Equal(t, []string{message.EventID()}, returned, "the message must not be dropped")
+
+		// The membership is stored, so that the next backfill finds it.
+		nids, err := db.EventNIDs(ctx, []string{join.EventID()})
+		require.NoError(t, err)
+		require.Contains(t, nids, join.EventID())
+
+		res = api.PerformBackfillResponse{}
+		require.NoError(t, backfiller.PerformBackfill(ctx, request, &res))
+		require.Equal(t, []string{join.EventID()}, server.fetched)
 	})
 }

@@ -6,6 +6,8 @@ package perform
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 
@@ -119,7 +121,7 @@ func TestStateBeforeEventRemembersFetchedEvents(t *testing.T) {
 	}
 
 	server := &stateServer{events: events}
-	requester := newBackfillRequester(&fakePurgedRoomDB{}, server, nil, "local", func(spec.ServerName) bool { return false },
+	requester := newBackfillRequester(&fakePurgedRoomDB{}, server, nil, nil, "", "local", func(spec.ServerName) bool { return false },
 		nil, nil, room.Version)
 	requester.servers = []spec.ServerName{"remote"}
 
@@ -147,7 +149,7 @@ func TestCalculateNewStateIDsKeepsPrevEventState(t *testing.T) {
 	newerName := room.CreateAndInsert(t, alice, "m.room.name", map[string]any{"name": "b"}, test.WithStateKey(""))
 	next := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "hello"})
 
-	requester := newBackfillRequester(&fakePurgedRoomDB{}, nil, nil, "local", func(spec.ServerName) bool { return false },
+	requester := newBackfillRequester(&fakePurgedRoomDB{}, nil, nil, nil, "", "local", func(spec.ServerName) bool { return false },
 		nil, nil, room.Version)
 	before := make([]string, 0, len(events)+1)
 	for _, ev := range events {
@@ -165,5 +167,116 @@ func TestCalculateNewStateIDsKeepsPrevEventState(t *testing.T) {
 	}
 	if !slices.Equal(requester.eventIDToBeforeStateIDs[newerName.EventID()], want) {
 		t.Errorf("the state before the new name changed: %v", requester.eventIDToBeforeStateIDs[newerName.EventID()])
+	}
+}
+
+// eventServer answers requests for single events.
+type eventServer struct {
+	federationAPI.RoomserverFederationAPI
+	pdu   gomatrixserverlib.PDU
+	calls int
+}
+
+func (s *eventServer) GetEvent(
+	_ context.Context, _, _ spec.ServerName, _ string,
+) (gomatrixserverlib.Transaction, error) {
+	s.calls++
+	if s.pdu == nil {
+		return gomatrixserverlib.Transaction{}, errors.New("not found")
+	}
+	return gomatrixserverlib.Transaction{PDUs: []json.RawMessage{s.pdu.JSON()}}, nil
+}
+
+// senderQuerier resolves senders without a room server.
+type senderQuerier struct {
+	api.QuerySenderIDAPI
+}
+
+func (senderQuerier) QueryUserIDForSender(_ context.Context, _ spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
+	return senderID.ToUserID(), nil
+}
+
+// failingVerifier refuses every signature.
+type failingVerifier struct{}
+
+func (failingVerifier) VerifyJSONs(
+	_ context.Context, requests []gomatrixserverlib.VerifyJSONRequest,
+) ([]gomatrixserverlib.VerifyJSONResult, error) {
+	results := make([]gomatrixserverlib.VerifyJSONResult, len(requests))
+	for i := range results {
+		results[i].Error = errors.New("bad signature")
+	}
+	return results, nil
+}
+
+// An auth event decides whether other events are accepted, so what a server
+// sends for it must be that event, and must be signed. An event that no server
+// can provide is only asked for once.
+func TestFetchAuthEvent(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV10))
+	other := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV10))
+	event := room.Events()[0]
+
+	for name, tc := range map[string]struct {
+		roomID  string
+		wantID  string
+		sent    gomatrixserverlib.PDU
+		keyRing gomatrixserverlib.JSONVerifier
+		valid   bool
+	}{
+		"valid":         {roomID: room.ID, wantID: event.EventID(), sent: event, keyRing: &test.NopJSONVerifier{}, valid: true},
+		"bad signature": {roomID: room.ID, wantID: event.EventID(), sent: event, keyRing: failingVerifier{}},
+		"other event":   {roomID: room.ID, wantID: event.EventID(), sent: room.Events()[1], keyRing: &test.NopJSONVerifier{}},
+		"other room":    {roomID: other.ID, wantID: event.EventID(), sent: event, keyRing: &test.NopJSONVerifier{}},
+		"not found":     {roomID: room.ID, wantID: event.EventID(), keyRing: &test.NopJSONVerifier{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := &eventServer{pdu: tc.sent}
+			requester := newBackfillRequester(&fakePurgedRoomDB{}, server, senderQuerier{}, tc.keyRing, tc.roomID, "local",
+				func(spec.ServerName) bool { return false }, nil, nil, room.Version)
+			requester.servers = []spec.ServerName{"remote"}
+
+			for range 2 {
+				got := requester.fetchAuthEvent(tc.wantID)
+				if tc.valid && (got == nil || got.EventID() != tc.wantID) {
+					t.Fatalf("expected the event, got %v", got)
+				}
+				if !tc.valid && got != nil {
+					t.Fatalf("expected no event, got %s", got.EventID())
+				}
+			}
+			if server.calls != 1 {
+				t.Errorf("the event was requested %d times, want once", server.calls)
+			}
+		})
+	}
+}
+
+// Only auth events of accepted events are kept, each before those that need it.
+func TestFetchedAuthEventsOf(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV10))
+	events := gomatrixserverlib.ToPDUs(room.Events())
+	create, member := events[0], events[1]
+	message := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "hello"})
+	unrelated := room.Events()[2]
+
+	requester := newBackfillRequester(&fakePurgedRoomDB{}, nil, nil, nil, room.ID, "local",
+		func(spec.ServerName) bool { return false }, nil, nil, room.Version)
+	requester.fetchedAuthEvents = map[string]gomatrixserverlib.PDU{
+		create.EventID():               create,
+		member.EventID():               member,
+		"$no-server-had-this-one":      nil,
+		"$fetched-for-a-refused-event": unrelated,
+	}
+
+	got := requester.fetchedAuthEventsOf([]gomatrixserverlib.PDU{message})
+	if len(got) != 2 || got[0].EventID() != create.EventID() || got[1].EventID() != member.EventID() {
+		ids := make([]string, len(got))
+		for i, ev := range got {
+			ids[i] = ev.EventID()
+		}
+		t.Fatalf("expected the create event then the membership, got %v", ids)
 	}
 }
