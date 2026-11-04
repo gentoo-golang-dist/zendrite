@@ -18,6 +18,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 
 	appserviceAPI "codefloe.com/pat-s/zendrite/appservice/api"
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
@@ -232,6 +233,22 @@ func createRoom(
 		createEventJSON = createEvent.JSON()
 		r := createEvent.RoomID()
 		roomID = &r
+
+		// A client that asks for this room version knows that creators cannot
+		// be listed in the power levels. Clients which leave the version to the
+		// server may predate that rule, so the roomserver drops creators for
+		// them instead.
+		if createRequest.RoomVersion != "" && verImpl.PrivilegedCreators() {
+			overrideUsers := gjson.GetBytes(createRequest.PowerLevelContentOverride, "users")
+			for _, creator := range gomatrixserverlib.CreatorsFromCreateEvent(createEvent) {
+				if overrideUsers.Get(gjson.Escape(creator)).Exists() {
+					return util.JSONResponse{
+						Code: http.StatusBadRequest,
+						JSON: spec.InvalidParam("power_level_content_override must not contain room creators in this room version"),
+					}
+				}
+			}
+		}
 	}
 
 	req := roomserverAPI.PerformCreateRoomRequest{

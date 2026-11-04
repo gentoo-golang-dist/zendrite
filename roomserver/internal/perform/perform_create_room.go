@@ -172,6 +172,7 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 		// power level and must not appear in the users map. Clients written
 		// for earlier room versions, such as Element Call, still put the
 		// creator there, so drop creators, as Synapse does on room upgrades.
+		// Requests which name the room version were refused before this.
 		if verImpl.PrivilegedCreators() {
 			for _, creator := range gomatrixserverlib.CreatorsFromCreateEvent(createEvent) {
 				delete(powerLevelContent.Users, creator)

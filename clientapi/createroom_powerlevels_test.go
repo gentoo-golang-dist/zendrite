@@ -74,8 +74,9 @@ func TestCreateRoomInvitePowerLevel(t *testing.T) {
 
 // Room versions with privileged creators (MSC4289) forbid creators in the
 // power levels' users map. Clients written for earlier versions, such as
-// Element Call, still put the creator there, so createRoom drops creators
-// from power_level_content_override, as Synapse does for room upgrades.
+// Element Call, still put the creator there without naming a room version, so
+// createRoom drops creators from power_level_content_override for them, as
+// Synapse does for room upgrades. Requests naming the version are refused.
 func TestCreateRoomOverrideWithCreatorsInUsers(t *testing.T) {
 	alice := test.NewUser(t)
 	bob := test.NewUser(t)
@@ -98,13 +99,13 @@ func TestCreateRoomOverrideWithCreatorsInUsers(t *testing.T) {
 	tests := map[string]struct {
 		body      map[string]any
 		wantUsers map[string]int64
+		wantCode  int
 	}{
 		// The request Element Call sends when it creates a call room.
-		"v12, creator in users": {
+		"default version, creator in users": {
 			body: map[string]any{
-				"room_version": "12",
-				"preset":       "public_chat",
-				"visibility":   "private",
+				"preset":     "public_chat",
+				"visibility": "private",
 				"power_level_content_override": map[string]any{
 					"invite": 100,
 					"users":  map[string]any{alice.ID: 100, bob.ID: 50},
@@ -112,12 +113,39 @@ func TestCreateRoomOverrideWithCreatorsInUsers(t *testing.T) {
 			},
 			wantUsers: map[string]int64{bob.ID: 50},
 		},
+		"default version, additional creator in users": {
+			body: map[string]any{
+				"creation_content": map[string]any{"additional_creators": []string{charlie.ID}},
+				"power_level_content_override": map[string]any{
+					"users": map[string]any{alice.ID: 100, charlie.ID: 100, bob.ID: 50},
+				},
+			},
+			wantUsers: map[string]int64{bob.ID: 50},
+		},
+		"v12, creator in users": {
+			body: map[string]any{
+				"room_version": "12",
+				"power_level_content_override": map[string]any{
+					"users": map[string]any{alice.ID: 100, bob.ID: 50},
+				},
+			},
+			wantCode: http.StatusBadRequest,
+		},
 		"v12, additional creator in users": {
 			body: map[string]any{
 				"room_version":     "12",
 				"creation_content": map[string]any{"additional_creators": []string{charlie.ID}},
 				"power_level_content_override": map[string]any{
-					"users": map[string]any{alice.ID: 100, charlie.ID: 100, bob.ID: 50},
+					"users": map[string]any{charlie.ID: 100},
+				},
+			},
+			wantCode: http.StatusBadRequest,
+		},
+		"v12, other users": {
+			body: map[string]any{
+				"room_version": "12",
+				"power_level_content_override": map[string]any{
+					"users": map[string]any{bob.ID: 50},
 				},
 			},
 			wantUsers: map[string]int64{bob.ID: 50},
@@ -138,6 +166,10 @@ func TestCreateRoomOverrideWithCreatorsInUsers(t *testing.T) {
 			routers.Client.ServeHTTP(rec, test.NewRequest(t, http.MethodPost, "/_matrix/client/v3/createRoom",
 				test.WithJSONBody(t, tc.body),
 				test.WithQueryParams(map[string]string{"access_token": accessTokens[alice].accessToken})))
+			if tc.wantCode != 0 {
+				require.Equal(t, tc.wantCode, rec.Code, rec.Body.String())
+				return
+			}
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			roomID, err := spec.NewRoomID(gjson.GetBytes(rec.Body.Bytes(), "room_id").Str)
 			require.NoError(t, err)
