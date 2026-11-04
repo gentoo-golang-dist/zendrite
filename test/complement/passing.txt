@@ -18,6 +18,7 @@ tests/TestComplementCanCreateValidV12Rooms
 tests/TestContentMediaV1
 tests/TestCorruptedAuthChain
 tests/TestDeviceListsUpdateOverFederation
+tests/TestDeviceListsUpdateOverFederationOnRoomJoin
 tests/TestEventAuth
 tests/TestFederatedClientSpaces
 tests/TestFederationKeyUploadQuery

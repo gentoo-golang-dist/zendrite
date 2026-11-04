@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -22,6 +23,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
+	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // FederationInternalAPI is an implementation of api.FederationInternalAPI.
@@ -37,6 +39,21 @@ type FederationInternalAPI struct {
 	partialStateWorker *PartialStateWorker // MSC3706: worker for background state resync
 	rateLimitMutex     sync.Mutex
 	rateLimits         map[spec.ServerName]time.Time
+	userAPI            atomic.Pointer[userapi.FederationUserAPI]
+}
+
+// SetUserAPI gives the federation API access to the user API, which starts
+// after it.
+func (a *FederationInternalAPI) SetUserAPI(userAPI userapi.FederationUserAPI) {
+	a.userAPI.Store(&userAPI)
+}
+
+// UserAPI returns the user API, or nil as long as it has not started.
+func (a *FederationInternalAPI) UserAPI() userapi.FederationUserAPI {
+	if userAPI := a.userAPI.Load(); userAPI != nil {
+		return *userAPI
+	}
+	return nil
 }
 
 func NewFederationInternalAPI(

@@ -29,6 +29,7 @@ import (
 	"codefloe.com/pat-s/zendrite/setup/jetstream"
 	"codefloe.com/pat-s/zendrite/setup/process"
 	syncAPITypes "codefloe.com/pat-s/zendrite/syncapi/types"
+	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // OutputRoomEventConsumer consumes events that originated in the room server.
@@ -44,6 +45,8 @@ type OutputRoomEventConsumer struct {
 	topic         string
 	topicPresence string
 	sticky        *stickyTracker
+	// userAPI returns the user API, or nil as long as it has not started.
+	userAPI func() userapi.FederationUserAPI
 }
 
 // NewOutputRoomEventConsumer creates a new OutputRoomEventConsumer. Call Start() to begin consuming from room servers.
@@ -55,6 +58,7 @@ func NewOutputRoomEventConsumer(
 	queues *queue.OutgoingQueues,
 	store storage.Database,
 	rsAPI api.FederationRoomserverAPI,
+	userAPI func() userapi.FederationUserAPI,
 ) *OutputRoomEventConsumer {
 	return &OutputRoomEventConsumer{
 		ctx:           process.Context(),
@@ -68,6 +72,7 @@ func NewOutputRoomEventConsumer(
 		topic:         cfg.Matrix.JetStream.Prefixed(jetstream.OutputRoomEvent),
 		topicPresence: cfg.Matrix.JetStream.Prefixed(jetstream.RequestPresence),
 		sticky:        newStickyTracker(),
+		userAPI:       userAPI,
 	}
 }
 
@@ -267,6 +272,8 @@ func (s *OutputRoomEventConsumer) processMessage(ore api.OutputNewRoomEvent, rew
 		// persisting the stream position.
 		return nil
 	}
+
+	s.sendDeviceLists(ore)
 
 	// Servers that have just joined learn of the sticky events we sent before
 	// (MSC4354). After a state rewrite, the hosts are not newly joined.
