@@ -691,7 +691,7 @@ func TestRedaction(t *testing.T) {
 					stateKeyNID, err := db.GetOrCreateEventStateKeyNID(ctx, ev.StateKey())
 					assert.NoError(t, err)
 
-					eventNID, stateAtEvent, err := db.StoreEvent(ctx, ev.PDU, roomInfo, evTypeNID, stateKeyNID, authEvents, false)
+					eventNID, stateAtEvent, err := db.StoreEvent(ctx, ev.PDU, roomInfo, evTypeNID, stateKeyNID, authEvents, false, false)
 					assert.NoError(t, err)
 					if ev.StateKey() != nil {
 						authEvents = append(authEvents, eventNID)
@@ -831,7 +831,7 @@ func TestRedactionNoPowerLevels(t *testing.T) {
 					stateKeyNID, err := db.GetOrCreateEventStateKeyNID(ctx, ev.StateKey())
 					assert.NoError(t, err)
 
-					eventNID, stateAtEvent, err := db.StoreEvent(ctx, ev.PDU, roomInfo, evTypeNID, stateKeyNID, authEvents, false)
+					eventNID, stateAtEvent, err := db.StoreEvent(ctx, ev.PDU, roomInfo, evTypeNID, stateKeyNID, authEvents, false, false)
 					assert.NoError(t, err)
 					if ev.StateKey() != nil {
 						authEvents = append(authEvents, eventNID)

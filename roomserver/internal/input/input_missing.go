@@ -457,6 +457,9 @@ func (t *missingStateReq) lookupStateAfterEvent(ctx context.Context, roomVersion
 		for i := range respState.StateEvents {
 			se := respState.StateEvents[i]
 			if se.Type() == h.Type() && se.StateKeyEquals(*h.StateKey()) {
+				// The event likely has what it replaces among its auth
+				// events, which must still be stored before it.
+				respState.AuthEvents = append(respState.AuthEvents, se)
 				respState.StateEvents[i] = h
 				addedToState = true
 				break
@@ -785,7 +788,7 @@ func (t *missingStateReq) lookupMissingStateViaState(
 	authEvents, stateEvents, err := gomatrixserverlib.CheckStateResponse(ctx, &fclient.RespState{
 		StateEvents: state.GetStateEvents(),
 		AuthEvents:  state.GetAuthEvents(),
-	}, roomVersion, t.keys, nil, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
+	}, roomVersion, t.keys, t.storedAuthEvents(ctx), func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 		return t.inputer.Queryer.QueryUserIDForSender(ctx, roomID, senderID)
 	})
 	if err != nil {
@@ -795,6 +798,33 @@ func (t *missingStateReq) lookupMissingStateViaState(
 		AuthEvents:  authEvents,
 		StateEvents: stateEvents,
 	}, nil
+}
+
+// storedAuthEvents provides the events we hold to the auth checks of a state
+// response. A server may leave out of its auth chain what it expects us to
+// have, and without them an event's auth check sees none of its earlier state.
+// Rejected events are left out, as they cannot authorize anything.
+func (t *missingStateReq) storedAuthEvents(ctx context.Context) gomatrixserverlib.EventProvider {
+	return func(_ gomatrixserverlib.RoomVersion, eventIDs []string) ([]gomatrixserverlib.PDU, error) {
+		events, err := t.db.EventsFromIDs(ctx, t.roomInfo, eventIDs)
+		if err != nil {
+			return nil, err
+		}
+		found := make([]gomatrixserverlib.PDU, 0, len(events))
+		for _, event := range events {
+			if event.PDU == nil {
+				continue
+			}
+			rejected, err := t.db.IsEventRejected(ctx, t.roomInfo.RoomNID, event.EventID())
+			if err != nil {
+				return nil, err
+			}
+			if !rejected {
+				found = append(found, event.PDU)
+			}
+		}
+		return found, nil
+	}
 }
 
 // fetchAndStoreStateInChunks fetches missing state events in batches via

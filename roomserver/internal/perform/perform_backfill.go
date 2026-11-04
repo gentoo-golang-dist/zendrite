@@ -682,7 +682,7 @@ func persistEvents(ctx context.Context, db storage.Database, events []gomatrixse
 			continue
 		}
 
-		eventNID, _, err = db.StoreEvent(ctx, ev, roomInfo, eventTypeNID, eventStateKeyNID, authNids, false)
+		eventNID, _, err = db.StoreEvent(ctx, ev, roomInfo, eventTypeNID, eventStateKeyNID, authNids, false, false)
 		if err != nil {
 			logrus.WithError(err).WithField("event_id", ev.EventID()).Error("Failed to persist event")
 			continue

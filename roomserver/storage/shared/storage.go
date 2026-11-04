@@ -799,7 +799,7 @@ func (d *Database) GetOrCreateEventStateKeyNID(ctx context.Context, eventStateKe
 func (d *EventDatabase) StoreEvent(
 	ctx context.Context, event gomatrixserverlib.PDU,
 	roomInfo *types.RoomInfo, eventTypeNID types.EventTypeNID, eventStateKeyNID types.EventStateKeyNID,
-	authEventNIDs []types.EventNID, isRejected bool,
+	authEventNIDs []types.EventNID, isRejected, isOutlier bool,
 ) (types.EventNID, types.StateAtEvent, error) {
 	var (
 		eventNID types.EventNID
@@ -834,7 +834,12 @@ func (d *EventDatabase) StoreEvent(
 			return fmt.Errorf("d.EventJSONTable.InsertEventJSON: %w", err)
 		}
 
-		if prevEvents := event.PrevEventIDs(); len(prevEvents) > 0 {
+		// Outliers aren't part of the room DAG here, so their prev events stay
+		// forward extremities. Otherwise fetching the state of a gap would drop
+		// our own forward extremities, and with them the state which has to be
+		// resolved against what the other server told us. The prev events are
+		// recorded if the event arrives again as a regular event.
+		if prevEvents := event.PrevEventIDs(); len(prevEvents) > 0 && !isOutlier {
 			// Create an updater - NB: on sqlite this WILL create a txn as we are directly calling the shared DB form of
 			// GetLatestEventsForUpdate - not via the SQLiteDatabase form which has `nil` txns. This
 			// function only does SELECTs though so the created txn (at this point) is just a read txn like

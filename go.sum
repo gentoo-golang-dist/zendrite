@@ -1,5 +1,7 @@
 codefloe.com/pat-s/gomatrixserverlib v1.4.0 h1:eUXFpuyTUNwazK9yLf+0ZU8O/9EDDY+xzURPKDzk/Uo=
 codefloe.com/pat-s/gomatrixserverlib v1.4.0/go.mod h1:J1iMkxE1Slm54vZSqYQdOuxrZiP6LixZs6Y77W8Lk5E=
+codefloe.com/pat-s/gomatrixserverlib v1.4.1-0.20261103212712-856805963f12 h1:DPbHea6E7WxlHaHafjDFIhr5Wnay5WHcOpg88yfa2Q0=
+codefloe.com/pat-s/gomatrixserverlib v1.4.1-0.20261103212712-856805963f12/go.mod h1:qt6ZYm33i3w5qlVzBNAMuQZxrwnyiClqn/ltL2pvXuM=
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=

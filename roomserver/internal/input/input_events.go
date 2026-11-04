@@ -642,7 +642,7 @@ func (r *Inputer) processRoomEvent(
 	}
 
 	// Store the event.
-	eventNID, stateAtEvent, err := r.DB.StoreEvent(ctx, event, roomInfo, eventTypeNID, eventStateKeyNID, authEventNIDs, isRejected)
+	eventNID, stateAtEvent, err := r.DB.StoreEvent(ctx, event, roomInfo, eventTypeNID, eventStateKeyNID, authEventNIDs, isRejected, input.Kind == api.KindOutlier)
 	if err != nil {
 		return fmt.Errorf("updater.StoreEvent: %w", err)
 	}
@@ -1273,7 +1273,7 @@ nextAuthEvent:
 		}
 
 		// Finally, store the event in the database.
-		eventNID, _, err := r.DB.StoreEvent(ctx, authEvent, roomInfo, eventTypeNID, eventStateKeyNID, authEventNIDs, isRejected)
+		eventNID, _, err := r.DB.StoreEvent(ctx, authEvent, roomInfo, eventTypeNID, eventStateKeyNID, authEventNIDs, isRejected, true)
 		if err != nil {
 			return fmt.Errorf("updater.StoreEvent: %w", err)
 		}

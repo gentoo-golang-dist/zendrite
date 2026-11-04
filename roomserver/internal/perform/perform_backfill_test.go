@@ -56,7 +56,7 @@ func (f *fakePurgedRoomDB) GetOrCreateEventStateKeyNID(ctx context.Context, even
 	return 1, nil
 }
 
-func (f *fakePurgedRoomDB) StoreEvent(ctx context.Context, event gomatrixserverlib.PDU, roomInfo *types.RoomInfo, eventTypeNID types.EventTypeNID, eventStateKeyNID types.EventStateKeyNID, authEventNIDs []types.EventNID, isRejected bool) (types.EventNID, types.StateAtEvent, error) {
+func (f *fakePurgedRoomDB) StoreEvent(ctx context.Context, event gomatrixserverlib.PDU, roomInfo *types.RoomInfo, eventTypeNID types.EventTypeNID, eventStateKeyNID types.EventStateKeyNID, authEventNIDs []types.EventNID, isRejected, isOutlier bool) (types.EventNID, types.StateAtEvent, error) {
 	f.storeEventCalled = true
 	return 1, types.StateAtEvent{}, nil
 }

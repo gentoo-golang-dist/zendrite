@@ -81,7 +81,7 @@ type Database interface {
 	SnapshotNIDFromEventID(ctx context.Context, eventID string) (types.StateSnapshotNID, error)
 	BulkSelectSnapshotsFromEventIDs(ctx context.Context, eventIDs []string) (map[types.StateSnapshotNID][]string, error)
 	// Stores a matrix room event in the database. Returns the room NID, the state snapshot or an error.
-	StoreEvent(ctx context.Context, event gomatrixserverlib.PDU, roomInfo *types.RoomInfo, eventTypeNID types.EventTypeNID, eventStateKeyNID types.EventStateKeyNID, authEventNIDs []types.EventNID, isRejected bool) (types.EventNID, types.StateAtEvent, error)
+	StoreEvent(ctx context.Context, event gomatrixserverlib.PDU, roomInfo *types.RoomInfo, eventTypeNID types.EventTypeNID, eventStateKeyNID types.EventStateKeyNID, authEventNIDs []types.EventNID, isRejected, isOutlier bool) (types.EventNID, types.StateAtEvent, error)
 	// Look up the state entries for a list of string event IDs
 	// Returns an error if the there is an error talking to the database
 	// Returns a types.MissingEventError if the event IDs aren't in the database.
@@ -372,7 +372,7 @@ type EventDatabase interface {
 	MaybeRedactEvent(
 		ctx context.Context, roomInfo *types.RoomInfo, eventNID types.EventNID, event gomatrixserverlib.PDU, plResolver state.PowerLevelResolver, querier api.QuerySenderIDAPI,
 	) (gomatrixserverlib.PDU, gomatrixserverlib.PDU, error)
-	StoreEvent(ctx context.Context, event gomatrixserverlib.PDU, roomInfo *types.RoomInfo, eventTypeNID types.EventTypeNID, eventStateKeyNID types.EventStateKeyNID, authEventNIDs []types.EventNID, isRejected bool) (types.EventNID, types.StateAtEvent, error)
+	StoreEvent(ctx context.Context, event gomatrixserverlib.PDU, roomInfo *types.RoomInfo, eventTypeNID types.EventTypeNID, eventStateKeyNID types.EventStateKeyNID, authEventNIDs []types.EventNID, isRejected, isOutlier bool) (types.EventNID, types.StateAtEvent, error)
 }
 
 type ReportedEvents interface {
