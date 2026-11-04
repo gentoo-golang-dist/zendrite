@@ -358,9 +358,22 @@ func (r *Inputer) processRoomEvent(
 	// Check if the event is allowed by its auth events. If it isn't then
 	// we consider the event to be "rejected" — it will still be persisted.
 	// Skip this check for admin operations that set SkipEventAuth.
+	var authCheckErr error
 	checkAuth := func() {
 		if input.SkipEventAuth || isRejected {
 			return
+		}
+		if roomInfo != nil && !hasPartialState {
+			var rejectedID string
+			if rejectedID, authCheckErr = r.rejectedAuthEvent(ctx, r.DB, roomInfo, event); authCheckErr != nil {
+				return
+			}
+			if rejectedID != "" {
+				isRejected = true
+				rejectionErr = fmt.Errorf("event %s cites the rejected auth event %s", event.EventID(), rejectedID)
+				logger.WithError(rejectionErr).Warnf("Event %s not allowed by auth events", event.EventID())
+				return
+			}
 		}
 		if err = gomatrixserverlib.Allowed(event, authEvents, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 			return r.Queryer.QueryUserIDForSender(ctx, roomID, senderID)
@@ -379,6 +392,9 @@ func (r *Inputer) processRoomEvent(
 	}
 	if !deferredAuth {
 		checkAuth()
+		if authCheckErr != nil {
+			return fmt.Errorf("r.rejectedAuthEvent: %w", authCheckErr)
+		}
 	}
 
 	// At this point we are checking whether we know all of the prev events, and
@@ -520,6 +536,9 @@ func (r *Inputer) processRoomEvent(
 			return fmt.Errorf("r.fetchAuthEvents: %w", err)
 		}
 		checkAuth()
+		if authCheckErr != nil {
+			return fmt.Errorf("r.rejectedAuthEvent: %w", authCheckErr)
+		}
 	}
 
 	// Accumulate the auth event NIDs.
@@ -1253,6 +1272,14 @@ nextAuthEvent:
 		})
 		if isRejected = err != nil; isRejected {
 			logger.WithError(err).Warnf("Auth event %s rejected", authEvent.EventID())
+		} else if roomInfo != nil {
+			rejectedID, rerr := r.rejectedAuthEvent(ctx, r.DB, roomInfo, authEvent)
+			if rerr != nil {
+				return fmt.Errorf("r.rejectedAuthEvent: %w", rerr)
+			}
+			if isRejected = rejectedID != ""; isRejected {
+				logger.Warnf("Auth event %s rejected, it cites the rejected event %s", authEvent.EventID(), rejectedID)
+			}
 		}
 
 		if roomInfo == nil {

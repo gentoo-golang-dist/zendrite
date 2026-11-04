@@ -16,6 +16,7 @@ tests/TestClientSpacesSummary
 tests/TestClientSpacesSummaryJoinRules
 tests/TestComplementCanCreateValidV12Rooms
 tests/TestContentMediaV1
+tests/TestCorruptedAuthChain
 tests/TestDeviceListsUpdateOverFederation
 tests/TestEventAuth
 tests/TestFederatedClientSpaces
@@ -26,6 +27,7 @@ tests/TestGetMissingEventsGapFilling
 tests/TestInboundCanReturnMissingEvents
 tests/TestInboundFederationKeys
 tests/TestInboundFederationProfile
+tests/TestInboundFederationRejectsEventsWithRejectedAuthEvents
 tests/TestIsDirectFlagFederation
 tests/TestIsDirectFlagLocal
 tests/TestJoinFederatedRoomFailOver

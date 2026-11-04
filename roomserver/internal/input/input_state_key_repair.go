@@ -417,6 +417,10 @@ func (r *Inputer) recheckRejectedMemberships(
 		if err != nil || !hasState {
 			return false, err
 		}
+		rejectedID, err := r.rejectedAuthEvent(ctx, updater, roomInfo, ev.PDU)
+		if err != nil || rejectedID != "" {
+			return false, err
+		}
 		authEvents, err := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)
 		if err != nil {
 			return false, err
@@ -1028,6 +1032,10 @@ func (r *Inputer) recheckRejectedTimelineEvents(
 		// Outliers have no state of their own to check them against.
 		_, hasState, err := stateAtEvents(ctx, updater, []string{ev.EventID()})
 		if err != nil || !hasState {
+			return nil, false, err
+		}
+		rejectedID, err := r.rejectedAuthEvent(ctx, updater, roomInfo, ev.PDU)
+		if err != nil || rejectedID != "" {
 			return nil, false, err
 		}
 		authEvents, err := acceptedAuthEvents(ctx, updater, roomInfo, ev.PDU)
