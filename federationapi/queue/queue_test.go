@@ -247,6 +247,20 @@ func TestSendEDUOnFailStoredInDB(t *testing.T) {
 	poll.WaitOn(t, check, poll.WithTimeout(5*time.Second), poll.WithDelay(100*time.Millisecond))
 }
 
+// endOfBackoffCheck returns when to stop checking that a backoff was not
+// interrupted: a second from now, or just before the backoff ends by itself,
+// as the send that follows it is no interruption. A slow runner can reach the
+// check with little of the backoff left.
+func endOfBackoffCheck(queues *OutgoingQueues, destination spec.ServerName) time.Time {
+	end := time.Now().Add(time.Second)
+	if until := queues.statistics.ForServer(destination).BackoffInfo(); until != nil {
+		if beforeSend := until.Add(-200 * time.Millisecond); beforeSend.Before(end) {
+			return beforeSend
+		}
+	}
+	return end
+}
+
 func TestSendPDUAgainDoesntInterruptBackoff(t *testing.T) {
 	t.Parallel()
 	failuresUntilBlacklist := uint32(16)
@@ -281,17 +295,17 @@ func TestSendPDUAgainDoesntInterruptBackoff(t *testing.T) {
 	err = queues.SendEvent(ev, "localhost", []spec.ServerName{destination})
 	assert.NoError(t, err)
 
-	pollEnd := time.Now().Add(1 * time.Second)
+	pollEnd := endOfBackoffCheck(queues, destination)
 	immediateCheck := func(log poll.LogT) poll.Result {
-		data, dbErr := db.GetPendingPDUs(pc.Context(), destination, 100)
-		assert.NoError(t, dbErr)
-		if len(data) == 0 {
-			return poll.Error(fmt.Errorf("The backoff was interrupted early"))
-		}
 		if time.Now().After(pollEnd) {
 			// Allow more than enough time for the backoff to be interrupted before
 			// reporting that it wasn't.
 			return poll.Success()
+		}
+		data, dbErr := db.GetPendingPDUs(pc.Context(), destination, 100)
+		assert.NoError(t, dbErr)
+		if len(data) == 0 {
+			return poll.Error(fmt.Errorf("The backoff was interrupted early"))
 		}
 		return poll.Continue("waiting for events to be removed from database. Currently present PDU: %d", len(data))
 	}
@@ -332,17 +346,17 @@ func TestSendEDUAgainDoesntInterruptBackoff(t *testing.T) {
 	err = queues.SendEDU(ev, "localhost", []spec.ServerName{destination})
 	assert.NoError(t, err)
 
-	pollEnd := time.Now().Add(1 * time.Second)
+	pollEnd := endOfBackoffCheck(queues, destination)
 	immediateCheck := func(log poll.LogT) poll.Result {
-		data, dbErr := db.GetPendingEDUs(pc.Context(), destination, 100)
-		assert.NoError(t, dbErr)
-		if len(data) == 0 {
-			return poll.Error(fmt.Errorf("The backoff was interrupted early"))
-		}
 		if time.Now().After(pollEnd) {
 			// Allow more than enough time for the backoff to be interrupted before
 			// reporting that it wasn't.
 			return poll.Success()
+		}
+		data, dbErr := db.GetPendingEDUs(pc.Context(), destination, 100)
+		assert.NoError(t, dbErr)
+		if len(data) == 0 {
+			return poll.Error(fmt.Errorf("The backoff was interrupted early"))
 		}
 		return poll.Continue("waiting for events to be removed from database. Currently present EDU: %d", len(data))
 	}
