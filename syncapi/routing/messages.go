@@ -186,6 +186,11 @@ func OnIncomingMessagesRequest(
 		}
 	}
 
+	// Only a backward first page uses the stream position of a prev_batch.
+	if !backwardOrdering {
+		from.StreamBound = 0
+	}
+
 	// Pagination tokens. To is optional, and its default value depends on the
 	// direction ("b" or "f").
 	var to types.TopologyToken

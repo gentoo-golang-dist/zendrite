@@ -54,6 +54,13 @@ const selectEventIDsInRangeDESCSQL = "" +
 	"(topological_position = $4 AND stream_position <= $5)" +
 	") ORDER BY topological_position DESC, stream_position DESC LIMIT $6"
 
+const selectEventIDsBeforeStreamSQL = "" +
+	"SELECT t.event_id, t.topological_position, t.stream_position FROM syncapi_output_room_events_topology t" +
+	" JOIN syncapi_output_room_events e ON e.event_id = t.event_id" +
+	" WHERE t.room_id = $1 AND t.topological_position > $2" +
+	" AND (t.stream_position <= $3 OR e.exclude_from_sync)" +
+	" ORDER BY t.topological_position DESC, t.stream_position DESC LIMIT $4"
+
 const selectPositionInTopologySQL = "" +
 	"SELECT topological_position, stream_position FROM syncapi_output_room_events_topology" +
 	" WHERE event_id = $1"
@@ -68,6 +75,7 @@ const purgeEventsTopologySQL = "" +
 	"DELETE FROM syncapi_output_room_events_topology WHERE room_id = $1"
 
 type outputRoomEventsTopologyStatements struct {
+	db                                        *sql.DB
 	insertEventInTopologyStmt                 *sql.Stmt
 	selectEventIDsInRangeASCStmt              *sql.Stmt
 	selectEventIDsInRangeDESCStmt             *sql.Stmt
@@ -78,7 +86,7 @@ type outputRoomEventsTopologyStatements struct {
 }
 
 func NewPostgresTopologyTable(db *sql.DB) (tables.Topology, error) {
-	s := &outputRoomEventsTopologyStatements{}
+	s := &outputRoomEventsTopologyStatements{db: db}
 	_, err := db.Exec(outputRoomEventsTopologySchema)
 	if err != nil {
 		return nil, err
@@ -153,6 +161,41 @@ func (s *outputRoomEventsTopologyStatements) SelectEventIDsInRange(
 		end = tokens[len(tokens)-1]
 	}
 
+	return eventIDs, start, end, rows.Err()
+}
+
+// SelectEventIDsBeforeStream selects the events of a room that the stream
+// delivered up to streamBound or that never came down it, latest depth first.
+func (s *outputRoomEventsTopologyStatements) SelectEventIDsBeforeStream(
+	ctx context.Context, txn *sql.Tx, roomID string, minDepth, streamBound types.StreamPosition, limit int,
+) (eventIDs []string, start, end types.TopologyToken, err error) {
+	// Not prepared with the others, as it reads a table that may not exist
+	// yet when this one is set up.
+	var rows *sql.Rows
+	if txn != nil {
+		rows, err = txn.QueryContext(ctx, selectEventIDsBeforeStreamSQL, roomID, minDepth, streamBound, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, selectEventIDsBeforeStreamSQL, roomID, minDepth, streamBound, limit)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return []string{}, start, end, nil
+	} else if err != nil {
+		return
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "selectEventIDsBeforeStream: rows.close() failed")
+
+	var eventID string
+	var token types.TopologyToken
+	for rows.Next() {
+		if err = rows.Scan(&eventID, &token.Depth, &token.PDUPosition); err != nil {
+			return
+		}
+		if len(eventIDs) == 0 {
+			start = token
+		}
+		eventIDs = append(eventIDs, eventID)
+		end = token
+	}
 	return eventIDs, start, end, rows.Err()
 }
 

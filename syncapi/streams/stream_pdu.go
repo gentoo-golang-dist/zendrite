@@ -430,6 +430,33 @@ func (p *PDUStreamProvider) getRecentEvents(ctx context.Context, stateDeltas []t
 // Limit the recent events to X when going backwards.
 const recentEventBackwardsLimit = 100
 
+// latestDelivered returns the given events without those the stream delivered
+// before the latest `limit`, keeping their order. The events are in DAG order,
+// which puts an event that arrived late before older ones. Cutting them by that
+// order would lose it, as the prev_batch of the timeline continues before the
+// first event the stream delivered. The stream events must be in stream order.
+func latestDelivered(
+	events []*rstypes.HeaderedEvent, stream []types.StreamEvent, limit int,
+) []*rstypes.HeaderedEvent {
+	shown := make(map[string]struct{}, len(events))
+	for _, ev := range events {
+		shown[ev.EventID()] = struct{}{}
+	}
+	kept := make(map[string]struct{}, limit)
+	for i := len(stream) - 1; i >= 0 && len(kept) < limit; i-- {
+		if _, ok := shown[stream[i].EventID()]; ok {
+			kept[stream[i].EventID()] = struct{}{}
+		}
+	}
+	latest := make([]*rstypes.HeaderedEvent, 0, limit)
+	for _, ev := range events {
+		if _, ok := kept[ev.EventID()]; ok {
+			latest = append(latest, ev)
+		}
+	}
+	return latest
+}
+
 //nolint:gocyclo
 func (p *PDUStreamProvider) addRoomDeltaToResponse(
 	ctx context.Context,
@@ -564,8 +591,8 @@ func (p *PDUStreamProvider) addRoomDeltaToResponse(
 	}
 
 	if r.Backwards && len(events) > eventFilter.Limit {
-		// We're going backwards and the events are ordered chronologically, so take the last `limit` events
-		events = events[len(events)-eventFilter.Limit:]
+		// We're going backwards and the events are ordered chronologically, so take the latest `limit` events
+		events = latestDelivered(events, recentStreamEvents, eventFilter.Limit)
 		limited = true
 	}
 

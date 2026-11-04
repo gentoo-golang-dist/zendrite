@@ -294,6 +294,15 @@ func (d *DatabaseTransaction) GetEventsInTopologicalRange(
 		// know which of the 5 the client has seen. This is done by using the PDU position.
 		// Events with the same maxDepth but less than this PDU position will be returned.
 		maxStreamPosForMaxDepth = from.PDUPosition
+		if from.StreamBound > 0 {
+			var eIDs []string
+			eIDs, start, end, err = d.Topology.SelectEventIDsBeforeStream(ctx, d.txn, roomID, minDepth, from.StreamBound, filter.Limit)
+			if err != nil {
+				return
+			}
+			events, err = d.OutputEvents.SelectEvents(ctx, d.txn, eIDs, filter, true)
+			return
+		}
 	} else {
 		// Forward ordering means the 'from' token has a lower depth than the 'to' token.
 		minDepth = from.Depth
@@ -366,6 +375,7 @@ func (d *DatabaseTransaction) GetBackwardTopologyPos(
 	}
 	tok := types.TopologyToken{Depth: pos, PDUPosition: spos}
 	tok.Decrement()
+	tok.StreamBound = tok.PDUPosition
 	return tok, nil
 }
 

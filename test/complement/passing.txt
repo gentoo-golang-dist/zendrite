@@ -59,6 +59,7 @@ tests/TestMSC4311StrippedStateClientAPI
 tests/TestMediaFilenames
 tests/TestMediaWithoutFileName
 tests/TestMediaWithoutFileNameCSMediaV1
+tests/TestNetworkPartitionOrdering
 tests/TestOutboundFederationEventSizeGetMissingEvents
 tests/TestOutboundFederationProfile
 tests/TestOutboundFederationSend

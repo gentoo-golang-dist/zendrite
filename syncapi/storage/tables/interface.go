@@ -100,6 +100,10 @@ type Topology interface {
 	// `maxStreamPos` is only used when events have the same depth as `maxDepth`, which results in events less than `maxStreamPos` being returned.
 	// Returns an empty slice if no events match the given range.
 	SelectEventIDsInRange(ctx context.Context, txn *sql.Tx, roomID string, minDepth, maxDepth, maxStreamPos types.StreamPosition, limit int, chronologicalOrder bool) (eventIDs []string, start, end types.TopologyToken, err error)
+	// SelectEventIDsBeforeStream selects, latest depth first, the events of a room above `minDepth`
+	// that the stream delivered up to `streamBound`, and events that never came down the stream,
+	// such as backfilled ones, whose stream position says nothing about when they were sent.
+	SelectEventIDsBeforeStream(ctx context.Context, txn *sql.Tx, roomID string, minDepth, streamBound types.StreamPosition, limit int) (eventIDs []string, start, end types.TopologyToken, err error)
 	// SelectPositionInTopology returns the depth and stream position of a given event in the topology of the room it belongs to.
 	SelectPositionInTopology(ctx context.Context, txn *sql.Tx, eventID string) (depth, spos types.StreamPosition, err error)
 	// SelectStreamToTopologicalPosition converts a stream position to a topological position by finding the nearest topological position in the room.

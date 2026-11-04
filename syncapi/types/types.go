@@ -242,6 +242,11 @@ func (t *StreamingToken) ApplyUpdates(other StreamingToken) {
 type TopologyToken struct {
 	Depth       StreamPosition
 	PDUPosition StreamPosition
+	// StreamBound is set on the prev_batch of a timeline in stream order. Going
+	// backwards, the first page then holds what the stream delivered before
+	// that timeline, whatever its depth: an event that arrived late has a low
+	// depth, and everything sent before it would be skipped otherwise.
+	StreamBound StreamPosition
 }
 
 // This will be used as a fallback by json.Marshal.
@@ -264,6 +269,9 @@ func (t *TopologyToken) StreamToken() StreamingToken {
 func (t TopologyToken) String() string {
 	if t.Depth <= 0 && t.PDUPosition <= 0 {
 		return ""
+	}
+	if t.StreamBound > 0 {
+		return fmt.Sprintf("t%d_%d_%d", t.Depth, t.PDUPosition, t.StreamBound)
 	}
 	return fmt.Sprintf("t%d_%d", t.Depth, t.PDUPosition)
 }
@@ -296,9 +304,9 @@ func NewTopologyTokenFromString(tok string) (token TopologyToken, err error) {
 		return
 	}
 	parts := strings.Split(tok[1:], "_")
-	var positions [2]StreamPosition
+	var positions [3]StreamPosition
 	for i, p := range parts {
-		if i > len(positions) {
+		if i >= len(positions) {
 			break
 		}
 		var pos int64
@@ -311,6 +319,7 @@ func NewTopologyTokenFromString(tok string) (token TopologyToken, err error) {
 	token = TopologyToken{
 		Depth:       positions[0],
 		PDUPosition: positions[1],
+		StreamBound: positions[2],
 	}
 	return
 }

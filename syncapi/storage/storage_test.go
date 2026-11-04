@@ -12,6 +12,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
@@ -259,6 +260,42 @@ func TestGetEventsInRangeWithTopologyToken(t *testing.T) {
 
 // The purpose of this test is to ensure that backfilling returns no start/end if a given filter removes
 // all events.
+// The first page from the prev_batch of a timeline in stream order holds what
+// the stream delivered before that timeline, and events that never came down
+// the stream, such as backfilled ones, whatever their stream position.
+func TestGetEventsInRangeWithStreamBound(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := MustCreateDatabase(t, dbType)
+		defer close()
+		alice := test.NewUser(t)
+		r := test.NewRoom(t, alice)
+		var sent []*rstypes.HeaderedEvent
+		for i := 0; i < 3; i++ {
+			sent = append(sent, r.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": fmt.Sprintf("hi %d", i)}))
+		}
+		first := r.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "first of the timeline"})
+		later := r.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "later in the timeline"})
+		backfilled := r.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "backfilled"})
+		_ = MustWriteEvents(t, db, r.Events())
+		positions := MustWriteEvents(t, db, []*rstypes.HeaderedEvent{first, later})
+		_, err := db.WriteEvent(ctx, backfilled, nil, nil, nil, nil, true, gomatrixserverlib.HistoryVisibilityShared)
+		require.NoError(t, err)
+
+		WithSnapshot(t, db, func(snapshot storage.DatabaseTransaction) {
+			from, err := snapshot.GetBackwardTopologyPos(ctx, []*rstypes.HeaderedEvent{first})
+			require.NoError(t, err)
+			require.Equal(t, positions[0]-1, from.StreamBound)
+
+			to := types.TopologyToken{}
+			filter := &synctypes.RoomEventFilter{Limit: 4}
+			paginated, _, _, err := snapshot.GetEventsInTopologicalRange(ctx, &from, &to, r.ID, filter, true)
+			require.NoError(t, err)
+			gots := snapshot.StreamEventsToEvents(context.Background(), nil, paginated, nil)
+			test.AssertEventsEqual(t, gots, []*rstypes.HeaderedEvent{backfilled, sent[2], sent[1], sent[0]})
+		})
+	})
+}
+
 func TestGetEventsInRangeWithTopologyTokenNoEventsForFilter(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		db, close := MustCreateDatabase(t, dbType)
