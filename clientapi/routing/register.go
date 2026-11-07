@@ -783,6 +783,14 @@ func handleRegistrationFlow(
 		}
 	}
 
+	// Refuse a taken username before any auth stage, as Synapse does, so
+	// that a client is not asked to complete a flow that cannot succeed.
+	if !callGuestRegistration(cfg, r.ServerName) {
+		if resErr := checkLocalpartAvailable(req.Context(), userAPI, r.Username, r.ServerName); resErr != nil {
+			return *resErr
+		}
+	}
+
 	switch r.Auth.Type {
 	case authtypes.LoginTypeRecaptcha:
 		// Check given captcha response (reCAPTCHA or hCaptcha).
@@ -1351,7 +1359,11 @@ func checkLocalpartRegistrable(ctx context.Context, cfg *config.ClientAPI, userA
 	if errRes := validateLocalpartNamespace(cfg, localpart, domain); errRes != nil {
 		return errRes
 	}
+	return checkLocalpartAvailable(ctx, userAPI, localpart, domain)
+}
 
+// checkLocalpartAvailable verifies that no account owns the localpart yet.
+func checkLocalpartAvailable(ctx context.Context, userAPI userapi.ClientUserAPI, localpart string, domain spec.ServerName) *util.JSONResponse {
 	res := &userapi.QueryAccountAvailabilityResponse{}
 	err := userAPI.QueryAccountAvailability(ctx, &userapi.QueryAccountAvailabilityRequest{
 		Localpart:  localpart,
@@ -1367,7 +1379,7 @@ func checkLocalpartRegistrable(ctx context.Context, cfg *config.ClientAPI, userA
 	if !res.Available {
 		return &util.JSONResponse{
 			Code: http.StatusBadRequest,
-			JSON: spec.UserInUse("Desired User ID is already taken."),
+			JSON: spec.UserInUse("Desired user ID is already taken."),
 		}
 	}
 	return nil

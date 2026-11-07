@@ -405,6 +405,7 @@ func Test_register(t *testing.T) {
 		},
 		{
 			name:              "captcha invalid from remote",
+			username:          "captcharemote", // "valid" is taken by now
 			enableRecaptcha:   true,
 			loginType:         authtypes.LoginTypeRecaptcha,
 			captchaBody:       `i should fail for other reasons`,

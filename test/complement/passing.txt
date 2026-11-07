@@ -115,6 +115,7 @@ tests/csapi/TestFetchHistoricalInvitedEventFromBetweenInvite
 tests/csapi/TestFetchHistoricalJoinedEventDenied
 tests/csapi/TestFetchHistoricalSharedEvent
 tests/csapi/TestFetchMessagesFromNonExistentRoom
+tests/csapi/TestFilter
 tests/csapi/TestGappedSyncLeaveSection
 tests/csapi/TestGetFilteredRoomMembers
 tests/csapi/TestGetRoomMembers
@@ -150,8 +151,10 @@ tests/csapi/TestRelationsPaginationSync
 tests/csapi/TestRequestEncodingFails
 tests/csapi/TestRoomAlias
 tests/csapi/TestRoomCanonicalAlias
+tests/csapi/TestRoomCreate
 tests/csapi/TestRoomCreationReportsEventsToMyself
 tests/csapi/TestRoomDeleteAlias
+tests/csapi/TestRoomForget
 tests/csapi/TestRoomImageRoundtrip
 tests/csapi/TestRoomMembers
 tests/csapi/TestRoomMessagesLazyLoading
@@ -181,6 +184,7 @@ tests/csapi/TestTxnIdempotencyScopedToDevice
 tests/csapi/TestTxnInEvent
 tests/csapi/TestTxnScopeOnLocalEcho
 tests/csapi/TestTyping
+tests/csapi/TestUploadKey
 tests/csapi/TestUploadKeyIdempotency
 tests/csapi/TestUploadKeyIdempotencyOverlap
 tests/csapi/TestUrlPreview

@@ -8,6 +8,8 @@ package synctypes
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 )
 
 // Filter is used by clients to specify how the server should filter responses to e.g. sync requests
@@ -80,7 +82,65 @@ func (filter *Filter) Validate() error {
 	if filter.EventFormat != "" && filter.EventFormat != EventFormatClient && filter.EventFormat != EventFormatFederation {
 		return errors.New("bad event_format value. Must be one of [\"client\", \"federation\"]")
 	}
+	for name, ids := range map[string]*[]string{
+		"room.rooms":                  filter.Room.Rooms,
+		"room.not_rooms":              filter.Room.NotRooms,
+		"room.state.rooms":            filter.Room.State.Rooms,
+		"room.state.not_rooms":        filter.Room.State.NotRooms,
+		"room.timeline.rooms":         filter.Room.Timeline.Rooms,
+		"room.timeline.not_rooms":     filter.Room.Timeline.NotRooms,
+		"room.ephemeral.rooms":        filter.Room.Ephemeral.Rooms,
+		"room.ephemeral.not_rooms":    filter.Room.Ephemeral.NotRooms,
+		"room.account_data.rooms":     filter.Room.AccountData.Rooms,
+		"room.account_data.not_rooms": filter.Room.AccountData.NotRooms,
+	} {
+		if err := validateIDs(name, ids, isRoomID); err != nil {
+			return err
+		}
+	}
+	for name, ids := range map[string]*[]string{
+		"presence.senders":              filter.Presence.Senders,
+		"presence.not_senders":          filter.Presence.NotSenders,
+		"account_data.senders":          filter.AccountData.Senders,
+		"account_data.not_senders":      filter.AccountData.NotSenders,
+		"room.state.senders":            filter.Room.State.Senders,
+		"room.state.not_senders":        filter.Room.State.NotSenders,
+		"room.timeline.senders":         filter.Room.Timeline.Senders,
+		"room.timeline.not_senders":     filter.Room.Timeline.NotSenders,
+		"room.ephemeral.senders":        filter.Room.Ephemeral.Senders,
+		"room.ephemeral.not_senders":    filter.Room.Ephemeral.NotSenders,
+		"room.account_data.senders":     filter.Room.AccountData.Senders,
+		"room.account_data.not_senders": filter.Room.AccountData.NotSenders,
+	} {
+		if err := validateIDs(name, ids, isUserID); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateIDs reports the first entry of ids that valid rejects.
+// Like Synapse, it only checks the shape of each ID, so that a filter never
+// fails because of an ID the server would accept elsewhere.
+func validateIDs(name string, ids *[]string, valid func(string) bool) error {
+	if ids == nil {
+		return nil
+	}
+	for _, id := range *ids {
+		if !valid(id) {
+			return fmt.Errorf("%s contains an invalid ID %q", name, id)
+		}
+	}
+	return nil
+}
+
+func isRoomID(id string) bool {
+	return len(id) > 1 && id[0] == '!'
+}
+
+func isUserID(id string) bool {
+	localpart, domain, found := strings.Cut(id, ":")
+	return found && len(localpart) > 1 && localpart[0] == '@' && domain != ""
 }
 
 // DefaultFilter returns the default filter used by the Matrix server if no filter is provided in

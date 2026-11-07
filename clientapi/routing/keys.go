@@ -8,6 +8,7 @@ package routing
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -29,6 +30,13 @@ func UploadKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device) 
 	resErr := httputil.UnmarshalJSONRequest(req, &r)
 	if resErr != nil {
 		return *resErr
+	}
+
+	if err := validateDeviceKeys(r.DeviceKeys); err != nil {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("Invalid device_keys: " + err.Error()),
+		}
 	}
 
 	uploadReq := &api.PerformUploadKeysRequest{
@@ -86,6 +94,37 @@ func UploadKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device) 
 			OTKCounts any `json:"one_time_key_counts"`
 		}{keyCount},
 	}
+}
+
+// validateDeviceKeys checks that device_keys, when given, has the fields
+// the spec requires: user_id, device_id, algorithms, keys and signatures.
+func validateDeviceKeys(deviceKeys json.RawMessage) error {
+	if len(deviceKeys) == 0 || string(deviceKeys) == "null" {
+		return nil
+	}
+	var keys struct {
+		UserID     *string                      `json:"user_id"`
+		DeviceID   *string                      `json:"device_id"`
+		Algorithms *[]string                    `json:"algorithms"`
+		Keys       map[string]string            `json:"keys"`
+		Signatures map[string]map[string]string `json:"signatures"`
+	}
+	if err := json.Unmarshal(deviceKeys, &keys); err != nil {
+		return err
+	}
+	switch {
+	case keys.UserID == nil:
+		return errors.New("missing user_id")
+	case keys.DeviceID == nil:
+		return errors.New("missing device_id")
+	case keys.Algorithms == nil:
+		return errors.New("missing algorithms")
+	case keys.Keys == nil:
+		return errors.New("missing keys")
+	case keys.Signatures == nil:
+		return errors.New("missing signatures")
+	}
+	return nil
 }
 
 type queryKeysRequest struct {

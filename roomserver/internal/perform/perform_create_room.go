@@ -347,11 +347,16 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 		case spec.MRoomGuestAccess:
 			guestAccessEvent = &createRequest.InitialState[i]
 
+		// The name and topic keys of the request override initial_state.
 		case spec.MRoomName:
-			nameEvent = &createRequest.InitialState[i]
+			if createRequest.RoomName == "" {
+				nameEvent = &createRequest.InitialState[i]
+			}
 
 		case spec.MRoomTopic:
-			topicEvent = &createRequest.InitialState[i]
+			if createRequest.Topic == "" {
+				topicEvent = &createRequest.InitialState[i]
+			}
 
 		default:
 			initialStateEvents = append(initialStateEvents, createRequest.InitialState[i])
