@@ -98,6 +98,9 @@ type DatabaseTransaction interface {
 	// Returns an error if there was a problem talking with the database.
 	// Does not include any transaction IDs in the returned events.
 	Events(ctx context.Context, eventIDs []string) ([]*rstypes.HeaderedEvent, error)
+	// EventsForDevice is Events, but adds the transaction ID to the unsigned
+	// section of the events the given device sent.
+	EventsForDevice(ctx context.Context, device *userapi.Device, eventIDs []string, rsAPI api.SyncRoomserverAPI) ([]*rstypes.HeaderedEvent, error)
 	// GetStateEvent returns the Matrix state event of a given type for a given room with a given state key
 	// If no event could be found, returns nil
 	// If there was an issue during the retrieval, returns an error

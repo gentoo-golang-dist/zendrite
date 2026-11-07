@@ -66,6 +66,9 @@ const insertDeviceSQL = "" +
 	"INSERT INTO userapi_devices(device_id, localpart, server_name, access_token, created_ts, display_name, last_seen_ts, ip, user_agent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)" +
 	" RETURNING session_id"
 
+const insertDeviceWithSessionIDSQL = "" +
+	"INSERT INTO userapi_devices(device_id, localpart, server_name, access_token, created_ts, display_name, last_seen_ts, ip, user_agent, session_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+
 const selectDeviceByTokenSQL = "" +
 	"SELECT session_id, device_id, localpart, server_name, access_token_expires_ts, prev_refresh_token_hash IS NOT NULL FROM userapi_devices WHERE access_token = $1"
 
@@ -115,6 +118,7 @@ const updateDeviceLastSeen = "" +
 
 type devicesStatements struct {
 	insertDeviceStmt             *sql.Stmt
+	insertDeviceWithSessionStmt  *sql.Stmt
 	selectDeviceByTokenStmt      *sql.Stmt
 	selectDeviceByIDStmt         *sql.Stmt
 	selectDevicesByLocalpartStmt *sql.Stmt
@@ -155,6 +159,7 @@ func NewPostgresDevicesTable(db *sql.DB, serverName spec.ServerName) (tables.Dev
 	}
 	return s, sqlutil.StatementList{
 		{&s.insertDeviceStmt, insertDeviceSQL},
+		{&s.insertDeviceWithSessionStmt, insertDeviceWithSessionIDSQL},
 		{&s.selectDeviceByTokenStmt, selectDeviceByTokenSQL},
 		{&s.selectDeviceByIDStmt, selectDeviceByIDSQL},
 		{&s.selectDevicesByLocalpartStmt, selectDevicesByLocalpartSQL},
@@ -206,7 +211,24 @@ func (s *devicesStatements) InsertDeviceWithSessionID(ctx context.Context, txn *
 	accessToken string, displayName *string, ipAddr, userAgent string,
 	sessionID int64,
 ) (*api.Device, error) {
-	return s.InsertDevice(ctx, txn, id, localpart, serverName, accessToken, displayName, ipAddr, userAgent)
+	createdTimeMS := time.Now().UnixNano() / 1000000 //nolint:mnd
+	stmt := sqlutil.TxStmt(txn, s.insertDeviceWithSessionStmt)
+	if _, err := stmt.ExecContext(ctx, id, localpart, serverName, accessToken, createdTimeMS, displayName, createdTimeMS, ipAddr, userAgent, sessionID); err != nil {
+		return nil, fmt.Errorf("insertDeviceWithSessionStmt: %w", err)
+	}
+	dev := &api.Device{
+		ID:          id,
+		UserID:      userutil.MakeUserID(localpart, serverName),
+		AccessToken: accessToken,
+		SessionID:   sessionID,
+		LastSeenTS:  createdTimeMS,
+		LastSeenIP:  ipAddr,
+		UserAgent:   userAgent,
+	}
+	if displayName != nil {
+		dev.DisplayName = *displayName
+	}
+	return dev, nil
 }
 
 // deleteDevice removes a single device by id and user localpart.

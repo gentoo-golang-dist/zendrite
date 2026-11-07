@@ -7,7 +7,9 @@
 package routing
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
@@ -58,12 +60,33 @@ func GetEvent(
 		}
 	}
 
-	events, err := db.Events(ctx, []string{eventID})
+	events, err := db.EventsForDevice(ctx, device, []string{eventID}, rsAPI)
 	if err != nil {
-		logger.WithError(err).Error("GetEvent: syncDB.Events failed")
+		logger.WithError(err).Error("GetEvent: syncDB.EventsForDevice failed")
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
+		}
+	}
+
+	// A client may fetch an event it has just sent before the sync API has
+	// received it from the roomserver. Wait for it rather than answer 404.
+	if len(events) == 0 && waitForOwnEvent(ctx, syncDB, rsAPI, device, *roomID, eventID) {
+		db.Rollback() //nolint:errcheck
+		if db, err = syncDB.NewDatabaseSnapshot(ctx); err != nil {
+			logger.WithError(err).Error("GetEvent: syncDB.NewDatabaseSnapshot failed")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
+		}
+		defer db.Rollback() //nolint:errcheck
+		if events, err = db.EventsForDevice(ctx, device, []string{eventID}, rsAPI); err != nil {
+			logger.WithError(err).Error("GetEvent: syncDB.EventsForDevice failed")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
 		}
 	}
 
@@ -136,5 +159,49 @@ func GetEvent(
 	return util.JSONResponse{
 		Code: http.StatusOK,
 		JSON: *clientEvent,
+	}
+}
+
+// ownEventWait bounds how long GetEvent waits for an event the requester
+// sent to reach the sync API.
+const ownEventWait = 5 * time.Second
+
+// waitForOwnEvent waits until the sync API has the event, if the roomserver
+// has accepted it and the requester sent it, and reports whether it arrived.
+// Other events are not waited for, so a request for an event the server does
+// not have, or will never pass to the sync API, is answered at once.
+func waitForOwnEvent(
+	ctx context.Context, syncDB storage.Database, rsAPI api.SyncRoomserverAPI,
+	device *userapi.Device, roomID spec.RoomID, eventID string,
+) bool {
+	res := &api.QueryEventsByIDResponse{}
+	if err := rsAPI.QueryEventsByID(ctx, &api.QueryEventsByIDRequest{
+		RoomID: roomID.String(), EventIDs: []string{eventID}, ExcludeRejected: true,
+	}, res); err != nil || len(res.Events) != 1 {
+		return false
+	}
+	sender, err := rsAPI.QueryUserIDForSender(ctx, roomID, res.Events[0].SenderID())
+	if err != nil || sender == nil || sender.String() != device.UserID {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, ownEventWait)
+	defer cancel()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+		snapshot, err := syncDB.NewDatabaseSnapshot(ctx)
+		if err != nil {
+			return false
+		}
+		events, err := snapshot.Events(ctx, []string{eventID})
+		snapshot.Rollback() //nolint:errcheck
+		if err == nil && len(events) > 0 {
+			return true
+		}
 	}
 }

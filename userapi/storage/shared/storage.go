@@ -955,7 +955,8 @@ func (d *Database) GetDevicesByID(ctx context.Context, deviceIDs []string) ([]ap
 
 // CreateDevice makes a new device associated with the given user ID localpart.
 // If there is already a device with the same device ID for this user, that access token will be revoked
-// and replaced with the given accessToken. If the given accessToken is already in use for another device,
+// and replaced with the given accessToken, and the device keeps its session ID.
+// If the given accessToken is already in use for another device,
 // an error will be returned.
 // If no device ID is given one is generated.
 // Returns the device on success.
@@ -964,42 +965,41 @@ func (d *Database) CreateDevice(
 	deviceID *string, accessToken string, displayName *string, ipAddr, userAgent string,
 ) (dev *api.Device, returnErr error) {
 	if deviceID != nil {
-		_, ok := d.Writer.(*sqlutil.ExclusiveWriter)
-		if ok { // we're using most likely using SQLite, so do things a little different
-			returnErr = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-				var err error
+		// we're most likely using SQLite
+		_, isSQLite := d.Writer.(*sqlutil.ExclusiveWriter)
+		returnErr = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+			devices, err := d.Devices.SelectDevicesByLocalpart(ctx, txn, localpart, serverName, "")
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			// Logging in again with a device ID keeps the device's session ID,
+			// which scopes transaction IDs, so the device still sees the
+			// transaction IDs of the events it sent.
+			var sessionID int64
+			haveSessionID := false
+			for i := range devices {
+				if devices[i].ID == *deviceID {
+					sessionID, haveSessionID = devices[i].SessionID, true
+					break
+				}
+			}
+			// SQLite allocates session IDs by counting devices, so a new
+			// device of a user with devices gets one past the latest one.
+			if !haveSessionID && isSQLite && len(devices) > 0 {
+				sessionID, haveSessionID = devices[0].SessionID+1, true
+			}
 
-				devices, err := d.Devices.SelectDevicesByLocalpart(ctx, txn, localpart, serverName, "")
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return err
-				}
-				// No devices yet, only create a new one
-				if len(devices) == 0 {
-					dev, err = d.Devices.InsertDevice(ctx, txn, *deviceID, localpart, serverName, accessToken, displayName, ipAddr, userAgent)
-					return err
-				}
-				sessionID := devices[0].SessionID + 1
-
-				// Revoke existing tokens for this device
-				if err = d.Devices.DeleteDevice(ctx, txn, *deviceID, localpart, serverName); err != nil {
-					return err
-				}
-				// Create a new device with the session ID incremented
+			// Revoke existing tokens for this device
+			if err = d.Devices.DeleteDevice(ctx, txn, *deviceID, localpart, serverName); err != nil {
+				return err
+			}
+			if haveSessionID {
 				dev, err = d.Devices.InsertDeviceWithSessionID(ctx, txn, *deviceID, localpart, serverName, accessToken, displayName, ipAddr, userAgent, sessionID)
 				return err
-			})
-		} else {
-			returnErr = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-				var err error
-				// Revoke existing tokens for this device
-				if err = d.Devices.DeleteDevice(ctx, txn, *deviceID, localpart, serverName); err != nil {
-					return err
-				}
-
-				dev, err = d.Devices.InsertDevice(ctx, txn, *deviceID, localpart, serverName, accessToken, displayName, ipAddr, userAgent)
-				return err
-			})
-		}
+			}
+			dev, err = d.Devices.InsertDevice(ctx, txn, *deviceID, localpart, serverName, accessToken, displayName, ipAddr, userAgent)
+			return err
+		})
 	} else {
 		// We generate device IDs in a loop in case its already taken.
 		// We cap this at going round 5 times to ensure we don't spin forever

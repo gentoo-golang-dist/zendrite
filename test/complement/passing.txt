@@ -178,6 +178,8 @@ tests/csapi/TestToDeviceMessages
 tests/csapi/TestTxnIdWithRefreshToken
 tests/csapi/TestTxnIdempotency
 tests/csapi/TestTxnIdempotencyScopedToDevice
+tests/csapi/TestTxnInEvent
+tests/csapi/TestTxnScopeOnLocalEcho
 tests/csapi/TestTyping
 tests/csapi/TestUploadKeyIdempotency
 tests/csapi/TestUploadKeyIdempotencyOverlap

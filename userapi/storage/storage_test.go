@@ -251,6 +251,41 @@ func Test_Devices(t *testing.T) {
 	})
 }
 
+// Logging in again with an existing device ID replaces the access token but
+// keeps the session ID, which scopes transaction IDs to the device.
+func Test_CreateDeviceKeepsSessionID(t *testing.T) {
+	alice := test.NewUser(t)
+	localpart, domain, err := gomatrixserverlib.SplitID('@', alice.ID)
+	assert.NoError(t, err)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateUserDatabase(t, dbType)
+		defer close()
+
+		deviceID := util.RandomString(8)
+		otherDeviceID := util.RandomString(8)
+		firstToken := util.RandomString(16)
+		first, err := db.CreateDevice(ctx, localpart, domain, &deviceID, firstToken, nil, "", "")
+		assert.NoError(t, err)
+		other, err := db.CreateDevice(ctx, localpart, domain, &otherDeviceID, util.RandomString(16), nil, "", "")
+		assert.NoError(t, err)
+		assert.NotEqual(t, first.SessionID, other.SessionID)
+
+		secondToken := util.RandomString(16)
+		second, err := db.CreateDevice(ctx, localpart, domain, &deviceID, secondToken, nil, "", "")
+		assert.NoError(t, err)
+		assert.Equal(t, first.SessionID, second.SessionID)
+
+		got, err := db.GetDeviceByAccessToken(ctx, secondToken)
+		assert.NoError(t, err)
+		assert.Equal(t, deviceID, got.ID)
+		assert.Equal(t, first.SessionID, got.SessionID)
+
+		_, err = db.GetDeviceByAccessToken(ctx, firstToken)
+		assert.Error(t, err, "the old access token must be revoked")
+	})
+}
+
 func Test_KeyBackup(t *testing.T) {
 	alice := test.NewUser(t)
 	room := test.NewRoom(t, alice)

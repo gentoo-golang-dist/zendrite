@@ -231,6 +231,16 @@ func (d *DatabaseTransaction) Events(ctx context.Context, eventIDs []string) ([]
 	return d.StreamEventsToEvents(ctx, nil, streamEvents, nil), nil
 }
 
+// EventsForDevice is Events, but adds the transaction ID to the unsigned
+// section of the events the given device sent.
+func (d *DatabaseTransaction) EventsForDevice(ctx context.Context, device *userapi.Device, eventIDs []string, rsAPI api.SyncRoomserverAPI) ([]*rstypes.HeaderedEvent, error) {
+	streamEvents, err := d.OutputEvents.SelectEvents(ctx, d.txn, eventIDs, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	return d.StreamEventsToEvents(ctx, device, streamEvents, rsAPI), nil
+}
+
 func (d *DatabaseTransaction) AllJoinedUsersInRooms(ctx context.Context) (map[string][]string, error) {
 	return d.CurrentRoomState.SelectJoinedUsers(ctx, d.txn)
 }
