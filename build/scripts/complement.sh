@@ -24,8 +24,9 @@
 #   COMPLEMENT_REF            Complement commit to test with (required)
 #   COMPLEMENT_ARTIFACTS      output directory (default .complement/<backend>)
 #   COMPLEMENT_DOCKER_SOCKET  daemon socket path as the daemon sees it
-#                             (default: the socket of the current Docker
-#                             context, else /var/run/docker.sock)
+#                             (default: the first of the current Docker
+#                             context's socket, /var/run/docker.sock and
+#                             /run/user/1000/docker.sock that the daemon has)
 
 set -euo pipefail
 
@@ -52,17 +53,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 ARTIFACTS="${COMPLEMENT_ARTIFACTS:-.complement/${BACKEND}}"
-# A job that starts its own rootless daemon talks to it through DOCKER_HOST,
-# with a socket such as /run/user/1000/docker.sock and none at /var/run.
-# The daemon then runs in the job container and sees the same path.
 SOCKET="${COMPLEMENT_DOCKER_SOCKET:-}"
-if [[ -z "${SOCKET}" ]]; then
-  DOCKER_ENDPOINT="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
-  case "${DOCKER_ENDPOINT}" in
-    unix://*) SOCKET="${DOCKER_ENDPOINT#unix://}" ;;
-    *) SOCKET=/var/run/docker.sock ;;
-  esac
-fi
 LIST=test/complement/passing.txt
 FLAKY=test/complement/flaky.txt
 # Docker names allow [a-zA-Z0-9_.-]; keep the suffix short and plain.
@@ -90,13 +81,39 @@ trap cleanup EXIT
 rm -rf "${ARTIFACTS}"
 mkdir -p "${ARTIFACTS}"
 
-log "docker socket ${SOCKET}"
 log "building ${HS_IMAGE} and ${RUNNER_IMAGE} (Complement ${COMPLEMENT_REF})"
 SECONDS=0
 docker buildx build --load -t "${HS_IMAGE}" -f "${DOCKERFILE}" .
 docker buildx build --load -t "${RUNNER_IMAGE}" --build-arg "COMPLEMENT_REF=${COMPLEMENT_REF}" \
   -f build/scripts/ComplementRunner.Dockerfile build/scripts
 log "images built in ${SECONDS}s"
+
+# The Complement container drives the daemon through its socket, so the path
+# has to be one the daemon itself sees, which may not be the client's:
+#   - a job with its own rootless daemon reaches it through DOCKER_HOST, at
+#     a socket such as /run/user/1000/docker.sock, in the job container;
+#   - a job given a DinD daemon over TCP sees no socket at all, and the
+#     daemon has /var/run/docker.sock, or /run/user/1000/docker.sock when it
+#     is rootless.
+# Take the first candidate that the daemon can bind mount as a socket.
+if [[ -z "${SOCKET}" ]]; then
+  candidates=()
+  endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+  [[ "${endpoint}" == unix://* ]] && candidates+=("${endpoint#unix://}")
+  candidates+=(/var/run/docker.sock /run/user/1000/docker.sock)
+  for candidate in "${candidates[@]}"; do
+    if docker run --rm --mount "type=bind,source=${candidate},target=/probe.sock" \
+      "${RUNNER_IMAGE}" test -S /probe.sock >/dev/null 2>&1; then
+      SOCKET="${candidate}"
+      break
+    fi
+  done
+  if [[ -z "${SOCKET}" ]]; then
+    echo "[complement] no daemon socket among ${candidates[*]}; set COMPLEMENT_DOCKER_SOCKET" >&2
+    exit 1
+  fi
+fi
+log "docker socket ${SOCKET}"
 
 # run_package <package> <-run expression> <output> <dirty>
 run_package() {
