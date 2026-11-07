@@ -3,6 +3,7 @@ package receipts
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/tidwall/gjson"
 
@@ -30,6 +31,32 @@ func ThreadID(ctx context.Context, query EventQuerier, roomID, eventID string) (
 
 // EventThreadID classifies an event already available to the caller.
 func EventThreadID(ctx context.Context, query EventQuerier, event *types.HeaderedEvent) (string, error) {
+	threadID, _, err := relationChain(ctx, query, event)
+	return threadID, err
+}
+
+// RelatedToThread reports whether a receipt for threadID may acknowledge the event.
+// That is the case when the event is in the thread, or when it relates to the
+// thread root through other relations, like a reaction to a reference to the root.
+// The root itself is not part of its thread.
+func RelatedToThread(ctx context.Context, query EventQuerier, roomID, eventID, threadID string) (bool, error) {
+	event, err := queryEvent(ctx, query, roomID, eventID)
+	if err != nil {
+		return false, err
+	}
+	actual, parents, err := relationChain(ctx, query, event)
+	if err != nil {
+		return false, err
+	}
+	if actual == threadID {
+		return true, nil
+	}
+	return threadID != "main" && actual == "main" && slices.Contains(parents, threadID), nil
+}
+
+// relationChain follows an event's relations through at most three hops.
+// It returns the event's thread and the parents passed on the way.
+func relationChain(ctx context.Context, query EventQuerier, event *types.HeaderedEvent) (threadID string, parents []string, err error) {
 	roomID := event.RoomID().String()
 	seen := make(map[string]bool)
 	for range 3 {
@@ -43,18 +70,19 @@ func EventThreadID(ctx context.Context, query EventQuerier, event *types.Headere
 			break
 		}
 		if relation.Get("rel_type").Str == "m.thread" {
-			return parentID, nil
+			return parentID, parents, nil
 		}
+		parents = append(parents, parentID)
 		parent, err := queryEvent(ctx, query, roomID, parentID)
 		if errors.Is(err, ErrUnknownEvent) {
 			break
 		}
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		event = parent
 	}
-	return "main", nil
+	return "main", parents, nil
 }
 
 func queryEvent(ctx context.Context, query EventQuerier, roomID, eventID string) (*types.HeaderedEvent, error) {

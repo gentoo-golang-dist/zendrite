@@ -18,7 +18,8 @@ func TestActionsToTweaks(t *testing.T) {
 		{"zero", []*Action{{}}, UnknownAction, nil},
 		{"onlyPrimary", []*Action{{Kind: NotifyAction}}, NotifyAction, nil},
 		{"onlyPrimaryDontNotify", []*Action{}, UnknownAction, nil},
-		{"onlyTweak", []*Action{{Kind: SetTweakAction, Tweak: HighlightTweak}}, UnknownAction, map[string]any{"highlight": nil}},
+		{"onlyTweak", []*Action{{Kind: SetTweakAction, Tweak: HighlightTweak}}, UnknownAction, map[string]any{"highlight": true}},
+		{"highlightFalse", []*Action{{Kind: SetTweakAction, Tweak: HighlightTweak, Value: false}}, UnknownAction, map[string]any{"highlight": false}},
 		{"onlyTweakWithValue", []*Action{{Kind: SetTweakAction, Tweak: SoundTweak, Value: "default"}}, UnknownAction, map[string]any{"sound": "default"}},
 		{
 			"all",
@@ -27,7 +28,7 @@ func TestActionsToTweaks(t *testing.T) {
 				{Kind: SetTweakAction, Tweak: SoundTweak, Value: "default"},
 			},
 			UnknownAction,
-			map[string]any{"highlight": nil, "sound": "default"},
+			map[string]any{"highlight": true, "sound": "default"},
 		},
 	}
 	for _, tst := range tsts {

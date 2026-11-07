@@ -739,6 +739,10 @@ func (d *DatabaseTransaction) GetUserUnreadNotificationCountsForRooms(ctx contex
 	return d.NotificationData.SelectUserUnreadCountsForRooms(ctx, d.txn, userID, roomIDs)
 }
 
+func (d *DatabaseTransaction) RoomsWithUpdatedNotificationCounts(ctx context.Context, userID string, from, to types.StreamPosition) ([]string, error) {
+	return d.NotificationData.SelectUpdatedRooms(ctx, d.txn, userID, from, to)
+}
+
 func (d *DatabaseTransaction) GetPresences(ctx context.Context, userIDs []string) ([]*types.PresenceInternal, error) {
 	return d.Presence.GetPresenceForUsers(ctx, d.txn, userIDs)
 }

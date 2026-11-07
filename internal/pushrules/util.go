@@ -21,7 +21,12 @@ func ActionsToTweaks(as []*Action) (ActionKind, map[string]any, error) {
 			if tweaks == nil {
 				tweaks = map[string]any{}
 			}
-			tweaks[string(a.Tweak)] = a.Value
+			value := a.Value
+			if a.Tweak == HighlightTweak && value == nil {
+				// The spec defines a highlight tweak without a value as true.
+				value = true
+			}
+			tweaks[string(a.Tweak)] = value
 
 		default:
 			if kind != UnknownAction {

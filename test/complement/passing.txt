@@ -176,6 +176,7 @@ tests/csapi/TestSyncLeaveSection
 tests/csapi/TestSyncTimelineGap
 tests/csapi/TestTentativeEventualJoiningAfterRejecting
 tests/csapi/TestThreadReceiptsInSyncMSC4102
+tests/csapi/TestThreadedReceipts
 tests/csapi/TestThreadsEndpoint
 tests/csapi/TestToDeviceMessages
 tests/csapi/TestTxnIdWithRefreshToken

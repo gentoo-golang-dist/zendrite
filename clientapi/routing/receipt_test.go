@@ -45,7 +45,9 @@ func TestSetThreadedReceipt(t *testing.T) {
 	reply := room.CreateEvent(t, alice, "m.room.message", map[string]any{"m.relates_to": map[string]any{"rel_type": "m.thread", "event_id": root.EventID()}})
 	reaction := room.CreateEvent(t, alice, "m.reaction", map[string]any{"m.relates_to": map[string]any{"rel_type": "m.annotation", "event_id": reply.EventID(), "key": "x"}})
 	rootReaction := room.CreateEvent(t, alice, "m.reaction", map[string]any{"m.relates_to": map[string]any{"rel_type": "m.annotation", "event_id": root.EventID(), "key": "x"}})
-	query := receiptEventQuery{events: []*roomtypes.HeaderedEvent{root, reply, reaction, rootReaction}}
+	reference := room.CreateEvent(t, alice, "m.room.message", map[string]any{"m.relates_to": map[string]any{"rel_type": "m.reference", "event_id": root.EventID()}})
+	referenceReaction := room.CreateEvent(t, alice, "m.reaction", map[string]any{"m.relates_to": map[string]any{"rel_type": "m.annotation", "event_id": reference.EventID(), "key": "x"}})
+	query := receiptEventQuery{events: []*roomtypes.HeaderedEvent{root, reply, reaction, rootReaction, reference, referenceReaction}}
 	threadBody, err := json.Marshal(map[string]string{"thread_id": root.EventID()})
 	require.NoError(t, err)
 	for _, tc := range []struct{ name, body, receiptType, eventID, wantThread, wantError string }{
@@ -56,6 +58,9 @@ func TestSetThreadedReceipt(t *testing.T) {
 		{name: "private", body: string(threadBody), receiptType: "m.read.private", eventID: reply.EventID(), wantThread: root.EventID()},
 		{name: "indirect", body: string(threadBody), eventID: reaction.EventID(), wantThread: root.EventID()},
 		{name: "root relation", body: `{"thread_id":"main"}`, eventID: rootReaction.EventID(), wantThread: "main"},
+		{name: "root relation in thread", body: string(threadBody), eventID: rootReaction.EventID(), wantThread: root.EventID()},
+		{name: "indirect root relation in thread", body: string(threadBody), eventID: referenceReaction.EventID(), wantThread: root.EventID()},
+		{name: "root relation in other thread", body: `{"thread_id":"$other"}`, eventID: referenceReaction.EventID(), wantError: "M_INVALID_PARAM"},
 		{name: "null", body: `{"thread_id":null}`, wantError: "M_INVALID_PARAM"},
 		{name: "empty", body: `{"thread_id":""}`, wantError: "M_INVALID_PARAM"},
 		{name: "number", body: `{"thread_id":42}`, wantError: "M_INVALID_PARAM"},

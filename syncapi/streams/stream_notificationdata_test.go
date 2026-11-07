@@ -75,6 +75,42 @@ func TestThreadNotificationCounts(t *testing.T) {
 	})
 }
 
+func TestNotificationCountsWithoutActivity(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		ctx := t.Context()
+		conn, closeDB := test.PrepareDBConnectionString(t, dbType)
+		defer closeDB()
+		db, err := storage.NewSyncServerDatasource(ctx, sqlutil.NewConnectionManager(nil, config.DatabaseOptions{}), &config.DatabaseOptions{ConnectionString: config.DataSource(conn)})
+		require.NoError(t, err)
+		const user, old, changed, left, other = "@alice:test", "!old:test", "!changed:test", "!left:test", "!other:test"
+		from, err := db.UpsertRoomUnreadNotificationCounts(ctx, user, &eventutil.NotificationData{RoomID: old, UnreadNotificationCount: 1})
+		require.NoError(t, err)
+		_, err = db.UpsertRoomUnreadNotificationCounts(ctx, user, &eventutil.NotificationData{RoomID: changed, UnreadNotificationCount: 2, UnreadHighlightCount: 1})
+		require.NoError(t, err)
+		_, err = db.UpsertRoomUnreadNotificationCounts(ctx, user, &eventutil.NotificationData{RoomID: left, UnreadNotificationCount: 3})
+		require.NoError(t, err)
+		to, err := db.UpsertRoomUnreadNotificationCounts(ctx, "@bob:test", &eventutil.NotificationData{RoomID: other, UnreadNotificationCount: 4})
+		require.NoError(t, err)
+
+		snapshot, err := db.NewDatabaseSnapshot(ctx)
+		require.NoError(t, err)
+		defer snapshot.Rollback() //nolint:errcheck
+		req := &types.SyncRequest{
+			Device:   &userapi.Device{UserID: user},
+			Rooms:    map[string]string{old: "join", changed: "join", left: "leave", other: "join"},
+			Response: types.NewResponse(),
+			Filter:   synctypes.DefaultFilter(),
+		}
+		provider := &NotificationDataStreamProvider{DefaultStreamProvider{DB: db}}
+		require.Equal(t, to, provider.IncrementalSync(ctx, snapshot, req, from, to))
+
+		require.Len(t, req.Response.Rooms.Join, 1)
+		raw, err := json.Marshal(req.Response.Rooms.Join[changed])
+		require.NoError(t, err)
+		require.JSONEq(t, `{"highlight_count":1,"notification_count":2}`, field(t, raw, "unread_notifications"))
+	})
+}
+
 func field(t *testing.T, raw json.RawMessage, name string) string {
 	t.Helper()
 	var fields map[string]json.RawMessage

@@ -33,6 +33,7 @@ func NewPostgresNotificationDataTable(ctx context.Context, db *sql.DB) (tables.N
 		{&r.upsertRoomUnreadCounts, upsertRoomUnreadNotificationCountsSQL},
 		{&r.selectUserUnreadCountsForRooms, selectUserUnreadNotificationsForRooms},
 		{&r.selectMaxID, selectMaxNotificationIDSQL},
+		{&r.selectUpdatedRooms, selectUpdatedNotificationRoomsSQL},
 		{&r.purgeNotificationData, purgeNotificationDataSQL},
 	}.Prepare(db)
 }
@@ -41,6 +42,7 @@ type notificationDataStatements struct {
 	upsertRoomUnreadCounts         *sql.Stmt
 	selectUserUnreadCountsForRooms *sql.Stmt
 	selectMaxID                    *sql.Stmt
+	selectUpdatedRooms             *sql.Stmt
 	purgeNotificationData          *sql.Stmt
 }
 
@@ -67,6 +69,9 @@ const selectUserUnreadNotificationsForRooms = `SELECT room_id, notification_coun
 	      room_id = ANY($2)`
 
 const selectMaxNotificationIDSQL = `SELECT CASE COUNT(*) WHEN 0 THEN 0 ELSE MAX(id) END FROM syncapi_notification_data`
+
+const selectUpdatedNotificationRoomsSQL = `SELECT room_id FROM syncapi_notification_data
+	WHERE user_id = $1 AND id > $2 AND id <= $3`
 
 const purgeNotificationDataSQL = "" +
 	"DELETE FROM syncapi_notification_data WHERE room_id = $1"
@@ -111,6 +116,23 @@ func (r *notificationDataStatements) SelectMaxID(ctx context.Context, txn *sql.T
 	selectStmt := sqlutil.TxStmt(txn, r.selectMaxID)
 	err := selectStmt.QueryRowContext(ctx).Scan(&id)
 	return id, err
+}
+
+func (r *notificationDataStatements) SelectUpdatedRooms(ctx context.Context, txn *sql.Tx, userID string, from, to types.StreamPosition) ([]string, error) {
+	rows, err := sqlutil.TxStmt(txn, r.selectUpdatedRooms).QueryContext(ctx, userID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectUpdatedRooms: rows.close() failed")
+	var roomIDs []string
+	for rows.Next() {
+		var roomID string
+		if err = rows.Scan(&roomID); err != nil {
+			return nil, err
+		}
+		roomIDs = append(roomIDs, roomID)
+	}
+	return roomIDs, rows.Err()
 }
 
 func (s *notificationDataStatements) PurgeNotificationData(

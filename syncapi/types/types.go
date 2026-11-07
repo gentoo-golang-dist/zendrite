@@ -554,6 +554,9 @@ type JoinResponse struct {
 	// UnreadThreadNotifications holds per-thread counts, keyed by thread
 	// root, when the filter asks for them (MSC3773).
 	UnreadThreadNotifications map[string]*UnreadNotifications `json:"unread_thread_notifications,omitempty"`
+	// NotificationsChanged keeps the counts of a room with nothing else to
+	// send, because they changed since the last sync.
+	NotificationsChanged bool `json:"-"`
 }
 
 func (jr JoinResponse) MarshalJSON() ([]byte, error) {
@@ -590,7 +593,7 @@ func (jr JoinResponse) MarshalJSON() ([]byte, error) {
 			a.Summary = nil
 		}
 	}
-	if jr.UnreadNotifications != nil {
+	if jr.UnreadNotifications != nil && !jr.NotificationsChanged {
 		// if everything else is nil, also remove UnreadNotifications
 		if a.State == nil && a.StateAfter.isEmpty() && a.UnstableStateAfter.isEmpty() &&
 			len(ephemeral.Events) == 0 && a.AccountData == nil && a.Timeline == nil && a.Summary == nil && a.MSC4354Sticky == nil {

@@ -3,6 +3,8 @@ package streams
 import (
 	"context"
 
+	"codefloe.com/pat-s/gomatrixserverlib/spec"
+
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
@@ -39,8 +41,30 @@ func (p *NotificationDataStreamProvider) IncrementalSync(
 	ctx context.Context,
 	snapshot storage.DatabaseTransaction,
 	req *types.SyncRequest,
-	from, _ types.StreamPosition,
+	from, to types.StreamPosition,
 ) types.StreamPosition {
+	// Counts change without other activity, e.g. after a read receipt, which
+	// can reach the client before its effect on the counts.
+	// Such rooms are sent with only their counts.
+	if from > 0 {
+		updated, err := snapshot.RoomsWithUpdatedNotificationCounts(ctx, req.Device.UserID, from, to)
+		if err != nil {
+			req.Log.WithError(err).Error("RoomsWithUpdatedNotificationCounts failed")
+			return from
+		}
+		for _, roomID := range updated {
+			if req.Rooms[roomID] != spec.Join {
+				continue
+			}
+			jr, ok := req.Response.Rooms.Join[roomID]
+			if !ok {
+				jr = types.NewJoinResponse()
+			}
+			jr.NotificationsChanged = true
+			req.Response.Rooms.Join[roomID] = jr
+		}
+	}
+
 	// Get the unread notifications for rooms in our join response.
 	// This is to ensure clients always have an unread notification section
 	// and can display the correct numbers.
@@ -80,5 +104,6 @@ func (p *NotificationDataStreamProvider) IncrementalSync(
 		req.Response.Rooms.Join[roomID] = jr
 	}
 
-	return p.LatestPosition(ctx)
+	// Changes after to are found by the next sync.
+	return to
 }

@@ -248,6 +248,8 @@ type NotificationData interface {
 	UpsertRoomUnreadCounts(ctx context.Context, txn *sql.Tx, userID string, data *eventutil.NotificationData) (types.StreamPosition, error)
 	SelectUserUnreadCountsForRooms(ctx context.Context, txn *sql.Tx, userID string, roomIDs []string) (map[string]*eventutil.NotificationData, error)
 	SelectMaxID(ctx context.Context, txn *sql.Tx) (int64, error)
+	// SelectUpdatedRooms returns the user's rooms whose counts changed after from, up to to.
+	SelectUpdatedRooms(ctx context.Context, txn *sql.Tx, userID string, from, to types.StreamPosition) ([]string, error)
 	PurgeNotificationData(ctx context.Context, txn *sql.Tx, roomID string) error
 }
 
