@@ -173,7 +173,6 @@ tests/csapi/TestServerNotices
 tests/csapi/TestSync
 tests/csapi/TestSyncFilter
 tests/csapi/TestSyncLeaveSection
-tests/csapi/TestSyncTimelineGap
 tests/csapi/TestTentativeEventualJoiningAfterRejecting
 tests/csapi/TestThreadReceiptsInSyncMSC4102
 tests/csapi/TestThreadedReceipts

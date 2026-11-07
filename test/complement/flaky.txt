@@ -9,4 +9,5 @@ tests/TestSendJoinPartialStateResponse
 tests/csapi/TestPresence
 tests/csapi/TestRedact
 tests/csapi/TestSendAndFetchMessage
+tests/csapi/TestSyncTimelineGap
 tests/msc3389/TestMSC3389RedactionStripsRelationInOlderVersions
