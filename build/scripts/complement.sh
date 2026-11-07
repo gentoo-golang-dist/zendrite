@@ -24,7 +24,8 @@
 #   COMPLEMENT_REF            Complement commit to test with (required)
 #   COMPLEMENT_ARTIFACTS      output directory (default .complement/<backend>)
 #   COMPLEMENT_DOCKER_SOCKET  daemon socket path as the daemon sees it
-#                             (default /var/run/docker.sock)
+#                             (default: the socket of the current Docker
+#                             context, else /var/run/docker.sock)
 
 set -euo pipefail
 
@@ -51,7 +52,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 ARTIFACTS="${COMPLEMENT_ARTIFACTS:-.complement/${BACKEND}}"
-SOCKET="${COMPLEMENT_DOCKER_SOCKET:-/var/run/docker.sock}"
+# A job that starts its own rootless daemon talks to it through DOCKER_HOST,
+# with a socket such as /run/user/1000/docker.sock and none at /var/run.
+# The daemon then runs in the job container and sees the same path.
+SOCKET="${COMPLEMENT_DOCKER_SOCKET:-}"
+if [[ -z "${SOCKET}" ]]; then
+  DOCKER_ENDPOINT="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+  case "${DOCKER_ENDPOINT}" in
+    unix://*) SOCKET="${DOCKER_ENDPOINT#unix://}" ;;
+    *) SOCKET=/var/run/docker.sock ;;
+  esac
+fi
 LIST=test/complement/passing.txt
 FLAKY=test/complement/flaky.txt
 # Docker names allow [a-zA-Z0-9_.-]; keep the suffix short and plain.
@@ -79,6 +90,7 @@ trap cleanup EXIT
 rm -rf "${ARTIFACTS}"
 mkdir -p "${ARTIFACTS}"
 
+log "docker socket ${SOCKET}"
 log "building ${HS_IMAGE} and ${RUNNER_IMAGE} (Complement ${COMPLEMENT_REF})"
 SECONDS=0
 docker buildx build --load -t "${HS_IMAGE}" -f "${DOCKERFILE}" .
