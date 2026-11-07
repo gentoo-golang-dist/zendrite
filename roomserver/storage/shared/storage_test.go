@@ -43,6 +43,8 @@ func mustCreateRoomserverDatabase(t *testing.T, dbType test.DBType) (*shared.Dat
 		assert.NoError(t, err)
 		err = postgres.CreateMembershipTable(db)
 		assert.NoError(t, err)
+		err = postgres.CreatePublishedTable(db)
+		assert.NoError(t, err)
 		err = postgres.CreateUserRoomKeysTable(db)
 		assert.NoError(t, err)
 		roomsTable, err = postgres.PrepareRoomsTable(db)
@@ -58,6 +60,8 @@ func mustCreateRoomserverDatabase(t *testing.T, dbType test.DBType) (*shared.Dat
 		err = sqlite3.CreateEventStateKeysTable(db)
 		assert.NoError(t, err)
 		err = sqlite3.CreateMembershipTable(db)
+		assert.NoError(t, err)
+		err = sqlite3.CreatePublishedTable(db)
 		assert.NoError(t, err)
 		err = sqlite3.CreateUserRoomKeysTable(db)
 		assert.NoError(t, err)
@@ -121,6 +125,37 @@ func Test_GetLeftUsers(t *testing.T) {
 		leftUsers, err := db.GetLeftUsers(context.Background(), []string{alice.ID, bob.ID, charlie.ID}) //nolint:contextcheck
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, expectedUserIDs, leftUsers)
+	})
+}
+
+func Test_GetKnownUsersWithoutMemberships(t *testing.T) {
+	alice := test.NewUser(t)
+	bob := test.NewUser(t)
+
+	ctx := context.Background()
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateRoomserverDatabase(t, dbType) //nolint:contextcheck
+		defer close()
+
+		roomNID, err := db.RoomsTable.InsertRoomNID(ctx, nil, "!public:test", "10")
+		assert.NoError(t, err)
+		nid, err := db.EventStateKeysTable.InsertEventStateKeyNID(ctx, nil, alice.ID)
+		assert.NoError(t, err)
+		assert.NoError(t, db.MembershipTable.InsertMembership(ctx, nil, roomNID, nid, true))
+		_, err = db.MembershipTable.UpdateMembership(ctx, nil, roomNID, nid, nid, tables.MembershipStateJoin, 1, false)
+		assert.NoError(t, err)
+
+		// Bob has never been in a room, so he has no event state key NID.
+		knownUsers, err := db.GetKnownUsers(ctx, bob.ID, "", 10)
+		assert.NoError(t, err)
+		assert.Empty(t, knownUsers)
+
+		// Once the room is published, Bob can see its members.
+		_, err = db.DB.ExecContext(ctx, "INSERT INTO roomserver_published (room_id, appservice_id, network_id, published) VALUES ('!public:test', '', '', true)")
+		assert.NoError(t, err)
+		knownUsers, err = db.GetKnownUsers(ctx, bob.ID, "", 10)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{alice.ID}, knownUsers)
 	})
 }
 

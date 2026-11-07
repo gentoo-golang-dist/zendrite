@@ -29,6 +29,11 @@ func mustCreateMembershipTable(t *testing.T, dbType test.DBType) (tab tables.Mem
 		assert.NoError(t, err)
 		err = postgres.CreateMembershipTable(db)
 		assert.NoError(t, err)
+		// The known users query also reads the rooms and published tables.
+		err = postgres.CreateRoomsTable(db)
+		assert.NoError(t, err)
+		err = postgres.CreatePublishedTable(db)
+		assert.NoError(t, err)
 		tab, err = postgres.PrepareMembershipTable(db)
 		assert.NoError(t, err)
 		stateKeyTab, err = postgres.PrepareEventStateKeysTable(db)
@@ -36,6 +41,11 @@ func mustCreateMembershipTable(t *testing.T, dbType test.DBType) (tab tables.Mem
 		err = sqlite3.CreateEventStateKeysTable(db)
 		assert.NoError(t, err)
 		err = sqlite3.CreateMembershipTable(db)
+		assert.NoError(t, err)
+		// The known users query also reads the rooms and published tables.
+		err = sqlite3.CreateRoomsTable(db)
+		assert.NoError(t, err)
+		err = sqlite3.CreatePublishedTable(db)
 		assert.NoError(t, err)
 		tab, err = sqlite3.PrepareMembershipTable(db)
 		assert.NoError(t, err)
@@ -136,5 +146,83 @@ func TestMembershipTable(t *testing.T) {
 		assert.NoError(t, err)
 		// Only userNIDs[0] is actually joined, so we only expect this userNID
 		assert.Equal(t, userNIDs[:1], joinedUsers)
+	})
+}
+
+func TestSelectKnownUsersInPublishedRooms(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		connStr, closeDB := test.PrepareDBConnectionString(t, dbType)
+		defer closeDB()
+		db, err := sqlutil.Open(&config.DatabaseOptions{
+			ConnectionString: config.DataSource(connStr),
+		}, sqlutil.NewExclusiveWriter())
+		assert.NoError(t, err)
+
+		var (
+			tab         tables.Membership
+			stateKeyTab tables.EventStateKeys
+			roomsTab    tables.Rooms
+			publishTab  tables.Published
+		)
+		switch dbType {
+		case test.DBTypePostgres:
+			assert.NoError(t, postgres.CreateEventStateKeysTable(db))
+			assert.NoError(t, postgres.CreateMembershipTable(db))
+			assert.NoError(t, postgres.CreateRoomsTable(db))
+			assert.NoError(t, postgres.CreatePublishedTable(db))
+			tab, err = postgres.PrepareMembershipTable(db)
+			assert.NoError(t, err)
+			stateKeyTab, err = postgres.PrepareEventStateKeysTable(db)
+			assert.NoError(t, err)
+			roomsTab, err = postgres.PrepareRoomsTable(db)
+			assert.NoError(t, err)
+			publishTab, err = postgres.PreparePublishedTable(db)
+		case test.DBTypeSQLite:
+			assert.NoError(t, sqlite3.CreateEventStateKeysTable(db))
+			assert.NoError(t, sqlite3.CreateMembershipTable(db))
+			assert.NoError(t, sqlite3.CreateRoomsTable(db))
+			assert.NoError(t, sqlite3.CreatePublishedTable(db))
+			tab, err = sqlite3.PrepareMembershipTable(db)
+			assert.NoError(t, err)
+			stateKeyTab, err = sqlite3.PrepareEventStateKeysTable(db)
+			assert.NoError(t, err)
+			roomsTab, err = sqlite3.PrepareRoomsTable(db)
+			assert.NoError(t, err)
+			publishTab, err = sqlite3.PreparePublishedTable(db)
+		}
+		assert.NoError(t, err)
+		ctx := context.Background()
+
+		join := func(roomNID types.RoomNID, userNID types.EventStateKeyNID) {
+			t.Helper()
+			assert.NoError(t, tab.InsertMembership(ctx, nil, roomNID, userNID, true))
+			_, err = tab.UpdateMembership(ctx, nil, roomNID, userNID, userNID, tables.MembershipStateJoin, 1, false)
+			assert.NoError(t, err)
+		}
+
+		searcher, err := stateKeyTab.InsertEventStateKeyNID(ctx, nil, "@searcher:localhost")
+		assert.NoError(t, err)
+		publicUser, err := stateKeyTab.InsertEventStateKeyNID(ctx, nil, "@public:localhost")
+		assert.NoError(t, err)
+		privateUser, err := stateKeyTab.InsertEventStateKeyNID(ctx, nil, "@private:localhost")
+		assert.NoError(t, err)
+
+		publicRoom, err := roomsTab.InsertRoomNID(ctx, nil, "!public:localhost", "10")
+		assert.NoError(t, err)
+		privateRoom, err := roomsTab.InsertRoomNID(ctx, nil, "!private:localhost", "10")
+		assert.NoError(t, err)
+		join(publicRoom, publicUser)
+		join(privateRoom, privateUser)
+
+		// The searcher shares no room with anyone, and no room is published yet.
+		knownUsers, err := tab.SelectKnownUsers(ctx, nil, searcher, "", 10)
+		assert.NoError(t, err)
+		assert.Empty(t, knownUsers)
+
+		// Members of a room published in the room directory are visible to everyone.
+		assert.NoError(t, publishTab.UpsertRoomPublished(ctx, nil, "!public:localhost", "", "", true))
+		knownUsers, err = tab.SelectKnownUsers(ctx, nil, searcher, "", 10)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"@public:localhost"}, knownUsers)
 	})
 }

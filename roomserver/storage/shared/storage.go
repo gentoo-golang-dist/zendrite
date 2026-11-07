@@ -1763,7 +1763,12 @@ func (d *Database) GetServerInRoom(ctx context.Context, roomNID types.RoomNID, s
 // GetKnownUsers searches all users that userID knows about.
 func (d *Database) GetKnownUsers(ctx context.Context, userID, searchString string, limit int) ([]string, error) {
 	stateKeyNID, err := d.EventStateKeysTable.SelectEventStateKeyNID(ctx, nil, userID)
-	if err != nil {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The user has never been in a room, but can still see users in public rooms.
+		// No membership has the zero NID as its target, so this matches no shared rooms.
+		stateKeyNID = 0
+	case err != nil:
 		return nil, err
 	}
 	return d.MembershipTable.SelectKnownUsers(ctx, nil, stateKeyNID, searchString, limit)

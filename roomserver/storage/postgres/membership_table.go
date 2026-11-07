@@ -122,13 +122,16 @@ const selectRoomsWithMembershipSQL = "" +
 	"SELECT room_nid FROM roomserver_membership WHERE membership_nid = $1 AND target_nid = $2 and forgotten = false"
 
 // selectKnownUsersSQL uses a sub-select statement here to find rooms that the user is
-// joined to. Since this information is used to populate the user directory, we will
-// only return users that the user would ordinarily be able to see anyway.
+// joined to, plus rooms that are published in the room directory. Since this information
+// is used to populate the user directory, we will only return users that the user would
+// ordinarily be able to see anyway.
 var selectKnownUsersSQL = "" +
 	"SELECT DISTINCT event_state_key FROM roomserver_membership INNER JOIN roomserver_event_state_keys ON " +
 	"roomserver_membership.target_nid = roomserver_event_state_keys.event_state_key_nid" +
 	" WHERE room_nid = ANY(" +
 	"  SELECT DISTINCT room_nid FROM roomserver_membership WHERE target_nid=$1 AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateJoin) +
+	"  UNION SELECT roomserver_rooms.room_nid FROM roomserver_rooms INNER JOIN roomserver_published ON" +
+	"  roomserver_rooms.room_id = roomserver_published.room_id WHERE roomserver_published.published = true" +
 	") AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateJoin) + " AND event_state_key LIKE $2 LIMIT $3"
 
 // selectLocalServerInRoomSQL is an optimized case for checking if we, the local server,

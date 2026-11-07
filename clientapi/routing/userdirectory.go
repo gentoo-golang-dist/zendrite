@@ -44,6 +44,12 @@ func SearchUserDirectory(
 		limit = 10
 	}
 
+	// The spec requires the search to be case-insensitive on user IDs and display names.
+	searchString = strings.ToLower(searchString)
+	matches := func(s string) bool {
+		return strings.Contains(strings.ToLower(s), searchString)
+	}
+
 	results := map[string]authtypes.FullyQualifiedProfile{}
 	response := &UserDirectoryResponse{
 		Results: []authtypes.FullyQualifiedProfile{},
@@ -67,6 +73,10 @@ knownUsersLoop:
 			break
 		}
 		userID := profile.UserID
+		// The requester is not part of their own search results.
+		if userID == device.UserID {
+			continue
+		}
 		// get the full profile of the local user
 		localpart, serverName, _ := gomatrixserverlib.SplitID('@', userID)
 		if serverName == localServerName {
@@ -79,8 +89,11 @@ knownUsersLoop:
 				return util.ErrorResponse(fmt.Errorf("userAPI.QuerySearchProfiles: %w", err))
 			}
 			for _, p := range userRes.Profiles {
-				if strings.Contains(p.DisplayName, searchString) ||
-					strings.Contains(p.Localpart, searchString) {
+				// The profile search matches substrings, so skip profiles of other users.
+				if p.Localpart != localpart || p.ServerName != string(serverName) {
+					continue
+				}
+				if matches(p.DisplayName) || matches(userID) {
 					profile.DisplayName = p.DisplayName
 					profile.AvatarURL = p.AvatarURL
 					results[userID] = profile
@@ -93,7 +106,7 @@ knownUsersLoop:
 		} else {
 			// If the username already contains the search string, don't bother hitting federation.
 			// This will result in missing avatars and displaynames, but saves the federation roundtrip.
-			if strings.Contains(localpart, searchString) {
+			if matches(userID) {
 				results[userID] = profile
 				if len(results) == limit {
 					response.Limited = true
@@ -111,7 +124,7 @@ knownUsersLoop:
 					}
 				}
 			}
-			if strings.Contains(fedProfile.DisplayName, searchString) {
+			if matches(fedProfile.DisplayName) {
 				profile.DisplayName = fedProfile.DisplayName
 				profile.AvatarURL = fedProfile.AvatarURL
 				results[userID] = profile

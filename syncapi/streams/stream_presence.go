@@ -48,7 +48,7 @@ func (p *PresenceStreamProvider) CompleteSync(
 	snapshot storage.DatabaseTransaction,
 	req *types.SyncRequest,
 ) types.StreamPosition {
-	return p.IncrementalSync(ctx, snapshot, req, 0, p.LatestPosition(ctx))
+	return p.sync(ctx, snapshot, req, 0, p.LatestPosition(ctx), true)
 }
 
 func (p *PresenceStreamProvider) IncrementalSync(
@@ -56,6 +56,19 @@ func (p *PresenceStreamProvider) IncrementalSync(
 	snapshot storage.DatabaseTransaction,
 	req *types.SyncRequest,
 	from, to types.StreamPosition,
+) types.StreamPosition {
+	return p.sync(ctx, snapshot, req, from, to, false)
+}
+
+// sync adds the presence of users the device shares a room with to the response.
+// A complete sync sends every presence, because the client starts without any state,
+// whereas an incremental sync skips presence the device has already received.
+func (p *PresenceStreamProvider) sync(
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction,
+	req *types.SyncRequest,
+	from, to types.StreamPosition,
+	complete bool,
 ) types.StreamPosition {
 	// We pull out a larger number than the filter asks for, since we're filtering out events later
 	presences, err := snapshot.PresenceAfter(ctx, from, synctypes.EventFilter{Limit: 1000}) //nolint:mnd
@@ -96,7 +109,7 @@ func (p *PresenceStreamProvider) IncrementalSync(
 		}
 		cacheKey := req.Device.UserID + req.Device.ID + presence.UserID
 		pres, ok := p.cache.Load(cacheKey)
-		if ok {
+		if ok && !complete {
 			// skip already sent presence
 			prevPresence, presOk := pres.(*types.PresenceInternal)
 			if !presOk {

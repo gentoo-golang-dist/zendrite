@@ -131,6 +131,7 @@ tests/csapi/TestLeftRoomFixture
 tests/csapi/TestLogin
 tests/csapi/TestLogout
 tests/csapi/TestMediaConfig
+tests/csapi/TestMembersLocal
 tests/csapi/TestMembershipOnEvents
 tests/csapi/TestMessagesOverFederation
 tests/csapi/TestNotPresentUserCannotBanOthers
@@ -157,6 +158,8 @@ tests/csapi/TestRoomMessagesLazyLoading
 tests/csapi/TestRoomMessagesLazyLoadingLocalUser
 tests/csapi/TestRoomReadMarkers
 tests/csapi/TestRoomReceipts
+tests/csapi/TestRoomSpecificUsernameAtJoin
+tests/csapi/TestRoomSpecificUsernameChange
 tests/csapi/TestRoomState
 tests/csapi/TestRoomSummary
 tests/csapi/TestRoomsInvite
