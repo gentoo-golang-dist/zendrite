@@ -117,7 +117,10 @@ type ClientUserAPI interface {
 	PerformPasswordUpdate(ctx context.Context, req *PerformPasswordUpdateRequest, res *PerformPasswordUpdateResponse) error
 	PerformPusherDeletion(ctx context.Context, req *PerformPusherDeletionRequest, res *struct{}) error
 	PerformPusherSet(ctx context.Context, req *PerformPusherSetRequest, res *struct{}) error
-	PerformPushRulesPut(ctx context.Context, userID string, ruleSets *pushrules.AccountRuleSets) error
+	// PerformPushRulesUpdate applies update to the push rules of a local
+	// user, and stores them if update reports a change. Updates for the same
+	// user are applied one after another, so that none of them is lost.
+	PerformPushRulesUpdate(ctx context.Context, userID string, update func(*pushrules.AccountRuleSets) (bool, error)) error
 	PerformAccountDeactivation(ctx context.Context, req *PerformAccountDeactivationRequest, res *PerformAccountDeactivationResponse) error
 	PerformAccountReactivation(ctx context.Context, req *PerformAccountReactivationRequest, res *PerformAccountReactivationResponse) error
 	// PerformAccountLock locks or unlocks a local account (MSC3939) and

@@ -93,6 +93,10 @@ type AccountData interface {
 	// user, such as when the user is erased (MSC4025).
 	RemoveAllAccountData(ctx context.Context, localpart string, serverName spec.ServerName) error
 	QueryPushRules(ctx context.Context, localpart string, serverName spec.ServerName) (*pushrules.AccountRuleSets, error)
+	// UpdatePushRules applies update to the push rules of a user, and stores
+	// them if update reports a change. Concurrent updates for the same user
+	// are applied one after another. It reports whether the rules changed.
+	UpdatePushRules(ctx context.Context, localpart string, serverName spec.ServerName, update func(*pushrules.AccountRuleSets) (bool, error)) (bool, error)
 }
 
 type Device interface {

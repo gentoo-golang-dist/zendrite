@@ -101,6 +101,7 @@ tests/csapi/TestContent
 tests/csapi/TestContentCSAPIMediaV1
 tests/csapi/TestCumulativeJoinLeaveJoinSync
 tests/csapi/TestDeactivateAccount
+tests/csapi/TestDemotingUsersViaUsersDefault
 tests/csapi/TestDeviceListUpdates
 tests/csapi/TestDeviceManagement
 tests/csapi/TestDisplayNameUpdate
@@ -140,6 +141,7 @@ tests/csapi/TestProfileAvatarURL
 tests/csapi/TestProfileDisplayName
 tests/csapi/TestPublicRooms
 tests/csapi/TestPushRuleCacheHealth
+tests/csapi/TestPushRuleRoomUpgrade
 tests/csapi/TestPushSync
 tests/csapi/TestRelations
 tests/csapi/TestRelationsPagination

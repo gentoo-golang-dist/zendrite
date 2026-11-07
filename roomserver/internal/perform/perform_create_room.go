@@ -159,8 +159,7 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 	}
 
 	if createRequest.PowerLevelContentOverride != nil {
-		// Merge powerLevelContentOverride fields by unmarshalling it atop the defaults
-		err = json.Unmarshal(createRequest.PowerLevelContentOverride, &powerLevelContent)
+		err = applyPowerLevelContentOverride(&powerLevelContent, createRequest.PowerLevelContentOverride)
 		if err != nil {
 			util.GetLogger(ctx).WithError(err).Error("json.Unmarshal for power_level_content_override failed")
 			return "", &util.JSONResponse{
@@ -178,6 +177,10 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 				delete(powerLevelContent.Users, creator)
 			}
 		}
+	}
+
+	if powerLevelContent.Users == nil {
+		powerLevelContent.Users = map[string]int64{}
 	}
 
 	var guestsCanJoin bool
@@ -569,4 +572,26 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 	// Make sure this doesn't fall into an application service's namespace though!
 
 	return roomAlias, nil
+}
+
+// applyPowerLevelContentOverride merges a power_level_content_override atop
+// the default power levels.
+// As in Synapse, each top-level key of the override replaces the default
+// value, so a map such as "events" is replaced as a whole rather than merged
+// with the default entries.
+func applyPowerLevelContentOverride(content *gomatrixserverlib.PowerLevelContent, override json.RawMessage) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(override, &keys); err != nil {
+		return err
+	}
+	if _, ok := keys["users"]; ok {
+		content.Users = nil
+	}
+	if _, ok := keys["events"]; ok {
+		content.Events = nil
+	}
+	if _, ok := keys["notifications"]; ok {
+		content.Notifications = nil
+	}
+	return json.Unmarshal(override, content)
 }

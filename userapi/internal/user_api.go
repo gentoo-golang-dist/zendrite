@@ -1086,22 +1086,29 @@ func (a *UserInternalAPI) QueryPushers(ctx context.Context, req *api.QueryPusher
 	return err
 }
 
-func (a *UserInternalAPI) PerformPushRulesPut(
+func (a *UserInternalAPI) PerformPushRulesUpdate(
 	ctx context.Context,
 	userID string,
-	ruleSets *pushrules.AccountRuleSets,
+	update func(*pushrules.AccountRuleSets) (bool, error),
 ) error {
-	bs, err := json.Marshal(ruleSets)
+	localpart, domain, err := gomatrixserverlib.SplitID('@', userID)
 	if err != nil {
+		return fmt.Errorf("failed to split user ID %q for push rules", userID)
+	}
+	if !a.Config.Matrix.IsLocalServerName(domain) {
+		return fmt.Errorf("cannot update push rules of remote users (server name %s)", domain)
+	}
+	changed, err := a.DB.UpdatePushRules(ctx, localpart, domain, update)
+	if err != nil || !changed {
 		return err
 	}
-	userReq := api.InputAccountDataRequest{
-		UserID:      userID,
-		DataType:    pushRulesAccountDataType,
-		AccountData: json.RawMessage(bs),
+	if err = a.SyncProducer.SendAccountData(userID, eventutil.AccountData{
+		Type: pushRulesAccountDataType,
+	}); err != nil {
+		util.GetLogger(ctx).WithError(err).Error("a.SyncProducer.SendAccountData failed")
+		return fmt.Errorf("failed to send account data to output: %w", err)
 	}
-	var userRes api.InputAccountDataResponse // empty
-	return a.InputAccountData(ctx, &userReq, &userRes)
+	return nil
 }
 
 func (a *UserInternalAPI) QueryPushRules(ctx context.Context, userID string) (*pushrules.AccountRuleSets, error) {

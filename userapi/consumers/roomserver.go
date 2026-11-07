@@ -266,7 +266,7 @@ func (s *OutputRoomEventConsumer) handleRoomUpgrade(ctx context.Context, oldRoom
 		}
 		// Inform the SyncAPI about the updated push_rules
 		if changed {
-			if err = s.syncProducer.SendAccountData(membership.Localpart, eventutil.AccountData{
+			if err = s.syncProducer.SendAccountData(membership.UserID, eventutil.AccountData{
 				Type: "m.push_rules",
 			}); err != nil {
 				return err
@@ -280,7 +280,7 @@ func (s *OutputRoomEventConsumer) handleRoomUpgrade(ctx context.Context, oldRoom
 		}
 		// Inform the SyncAPI about the updated m.direct
 		if changed {
-			if err = s.syncProducer.SendAccountData(membership.Localpart, eventutil.AccountData{
+			if err = s.syncProducer.SendAccountData(membership.UserID, eventutil.AccountData{
 				Type: "m.direct",
 			}); err != nil {
 				return err
@@ -294,8 +294,9 @@ func (s *OutputRoomEventConsumer) handleRoomUpgrade(ctx context.Context, oldRoom
 		}
 		// Inform the SyncAPI about the updated m.tag
 		if changed {
-			if err = s.syncProducer.SendAccountData(membership.Localpart, eventutil.AccountData{
-				Type: "m.tag",
+			if err = s.syncProducer.SendAccountData(membership.UserID, eventutil.AccountData{
+				RoomID: newRoomID,
+				Type:   "m.tag",
 			}); err != nil {
 				return err
 			}
@@ -304,33 +305,11 @@ func (s *OutputRoomEventConsumer) handleRoomUpgrade(ctx context.Context, oldRoom
 	return nil
 }
 
+// copyPushrules copies the push rules of a user for oldRoomID to newRoomID.
 func (s *OutputRoomEventConsumer) copyPushrules(ctx context.Context, oldRoomID, newRoomID, localpart string, serverName spec.ServerName) (hasChanges bool, err error) {
-	pushRules, err := s.db.QueryPushRules(ctx, localpart, serverName)
-	if err != nil {
-		return false, err
-	}
-	if pushRules == nil {
-		return false, err
-	}
-
-	var rulesBytes []byte
-	for _, roomRule := range pushRules.Global.Room {
-		if roomRule.RuleID != oldRoomID {
-			continue
-		}
-		cpRool := *roomRule
-		cpRool.RuleID = newRoomID
-		pushRules.Global.Room = append(pushRules.Global.Room, &cpRool)
-		rulesBytes, err = json.Marshal(pushRules)
-		if err != nil {
-			return false, err
-		}
-		if err = s.db.SaveAccountData(ctx, localpart, serverName, "", "m.push_rules", rulesBytes); err != nil {
-			return false, err
-		}
-		hasChanges = true
-	}
-	return hasChanges, err
+	return s.db.UpdatePushRules(ctx, localpart, serverName, func(ruleSets *pushrules.AccountRuleSets) (bool, error) {
+		return pushrules.CopyRoomRules(&ruleSets.Global, oldRoomID, newRoomID), nil
+	})
 }
 
 // updateMDirect copies the "is_direct" flag from oldRoomID to newROomID.

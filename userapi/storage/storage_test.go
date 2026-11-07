@@ -1124,6 +1124,52 @@ func TestPushRulesMentionUpgrade(t *testing.T) {
 	})
 }
 
+// Concurrent changes to the push rules of a user must not lose each other,
+// nor be overwritten by the default rules stored on the first read.
+func TestUpdatePushRulesConcurrently(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateUserDatabase(t, dbType)
+		defer close()
+		const updates = 20
+		var wg sync.WaitGroup
+		for i := range updates {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_, err := db.QueryPushRules(ctx, "alice", "localhost")
+				assert.NoError(t, err)
+			}()
+			go func() {
+				defer wg.Done()
+				changed, err := db.UpdatePushRules(ctx, "alice", "localhost", func(rs *pushrules.AccountRuleSets) (bool, error) {
+					rs.Global.Room = append(rs.Global.Room, &pushrules.Rule{
+						RuleID:  fmt.Sprintf("!room%d:localhost", i),
+						Enabled: true,
+						Actions: []*pushrules.Action{{Kind: pushrules.DontNotifyAction}},
+					})
+					return true, nil
+				})
+				assert.NoError(t, err)
+				assert.True(t, changed)
+			}()
+		}
+		wg.Wait()
+		rules, err := db.QueryPushRules(ctx, "alice", "localhost")
+		assert.NoError(t, err)
+		assert.Len(t, rules.Global.Room, updates)
+
+		changed, err := db.UpdatePushRules(ctx, "alice", "localhost", func(rs *pushrules.AccountRuleSets) (bool, error) {
+			rs.Global.Room = nil
+			return false, nil
+		})
+		assert.NoError(t, err)
+		assert.False(t, changed)
+		rules, err = db.QueryPushRules(ctx, "alice", "localhost")
+		assert.NoError(t, err)
+		assert.Len(t, rules.Global.Room, updates, "an update without changes must not be stored")
+	})
+}
+
 func TestPushRulesAccountDataReadCompatibility(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		db, close := mustCreateUserDatabase(t, dbType)

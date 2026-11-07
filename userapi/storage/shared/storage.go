@@ -14,8 +14,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -61,7 +63,16 @@ type Database struct {
 	ServerName            spec.ServerName
 	BcryptCost            int
 	OpenIDTokenLifetimeMS int64
+
+	// pushRulesLocks serialize changes to the push rules of a user, which
+	// are stored as a single blob, so that they do not lose each other's
+	// updates. A user's lock is picked by hashing the user ID. Leader
+	// election allows a single active writer, so a lock inside the process
+	// is enough.
+	pushRulesLocks [pushRulesLockCount]sync.Mutex
 }
+
+const pushRulesLockCount = 64
 
 type KeyDatabase struct {
 	OneTimeKeysTable      tables.OneTimeKeys
@@ -331,6 +342,47 @@ func (d *Database) createAccount(
 	return account, nil
 }
 
+// lockPushRules locks the push rules of a user and returns the function
+// which unlocks them.
+func (d *Database) lockPushRules(localpart string, serverName spec.ServerName) func() {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(localpart + ":" + string(serverName)))
+	mu := &d.pushRulesLocks[h.Sum32()%pushRulesLockCount]
+	mu.Lock()
+	return mu.Unlock
+}
+
+// UpdatePushRules applies update to the push rules of a user and stores them
+// if update reports a change. Other changes to the push rules of the user
+// wait until it is done.
+func (d *Database) UpdatePushRules(
+	ctx context.Context,
+	localpart string, serverName spec.ServerName,
+	update func(*pushrules.AccountRuleSets) (bool, error),
+) (bool, error) {
+	defer d.lockPushRules(localpart, serverName)()
+	ruleSets, err := d.queryPushRulesLocked(ctx, localpart, serverName)
+	if err != nil {
+		return false, err
+	}
+	changed, err := update(ruleSets)
+	if err != nil || !changed {
+		return false, err
+	}
+	data, err := json.Marshal(ruleSets)
+	if err != nil {
+		return false, err
+	}
+	if err = d.SaveAccountData(ctx, localpart, serverName, "", "m.push_rules", data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// QueryPushRules returns the push rules of a user. Reading stored rules takes
+// no lock: they are written in a single statement, so a read sees either the
+// old or the new rules. Only storing the default rules for a user without
+// rules takes the lock, so that it cannot overwrite a concurrent update.
 func (d *Database) QueryPushRules(
 	ctx context.Context,
 	localpart string, serverName spec.ServerName,
@@ -339,25 +391,44 @@ func (d *Database) QueryPushRules(
 	if err != nil {
 		return nil, err
 	}
+	if len(data) == 0 {
+		defer d.lockPushRules(localpart, serverName)()
+		return d.queryPushRulesLocked(ctx, localpart, serverName)
+	}
+	return parsePushRules(data, localpart, serverName)
+}
+
+// queryPushRulesLocked returns the push rules of a user, and stores the
+// default rules if the user has none. The caller holds the user's lock.
+func (d *Database) queryPushRulesLocked(
+	ctx context.Context,
+	localpart string, serverName spec.ServerName,
+) (*pushrules.AccountRuleSets, error) {
+	data, err := d.AccountDatas.SelectAccountDataByType(ctx, localpart, serverName, "", "m.push_rules")
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 0 {
+		return parsePushRules(data, localpart, serverName)
+	}
 
 	// If we didn't find any default push rules then we should just generate some
 	// fresh ones.
-	if len(data) == 0 {
-		pushRuleSets := pushrules.DefaultAccountRuleSets(localpart, serverName)
-		prbs, err := json.Marshal(pushRuleSets)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal default push rules: %w", err)
-		}
-		err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-			if dbErr := d.AccountDatas.InsertAccountData(ctx, txn, localpart, serverName, "", "m.push_rules", prbs); dbErr != nil {
-				return fmt.Errorf("failed to save default push rules: %w", dbErr)
-			}
-			return nil
-		})
-
-		return pushRuleSets, err
+	pushRuleSets := pushrules.DefaultAccountRuleSets(localpart, serverName)
+	prbs, err := json.Marshal(pushRuleSets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal default push rules: %w", err)
 	}
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		if dbErr := d.AccountDatas.InsertAccountData(ctx, txn, localpart, serverName, "", "m.push_rules", prbs); dbErr != nil {
+			return fmt.Errorf("failed to save default push rules: %w", dbErr)
+		}
+		return nil
+	})
+	return pushRuleSets, err
+}
 
+func parsePushRules(data json.RawMessage, localpart string, serverName spec.ServerName) (*pushrules.AccountRuleSets, error) {
 	var pushRules pushrules.AccountRuleSets
 	if err := json.Unmarshal(data, &pushRules); err != nil {
 		return nil, err
