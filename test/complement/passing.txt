@@ -89,6 +89,7 @@ tests/TestUnrejectRejectedEvents
 tests/TestUserAppearsInChangedDeviceListOnJoinOverFederation
 tests/TestWriteMDirectAccountData
 tests/csapi/TestAddAccountData
+tests/csapi/TestArchivedRoomsHistory
 tests/csapi/TestAsyncUpload
 tests/csapi/TestAvatarUrlUpdate
 tests/csapi/TestCanRegisterAdmin
@@ -163,6 +164,8 @@ tests/csapi/TestServerCapabilities
 tests/csapi/TestServerNotices
 tests/csapi/TestSync
 tests/csapi/TestSyncFilter
+tests/csapi/TestSyncLeaveSection
+tests/csapi/TestSyncTimelineGap
 tests/csapi/TestTentativeEventualJoiningAfterRejecting
 tests/csapi/TestThreadReceiptsInSyncMSC4102
 tests/csapi/TestThreadsEndpoint

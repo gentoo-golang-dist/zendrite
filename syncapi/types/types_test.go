@@ -363,6 +363,40 @@ func TestJoinResponse_MarshalJSON(t *testing.T) {
 	}
 }
 
+func TestLeaveResponse_MarshalJSON(t *testing.T) {
+	t.Parallel()
+	prevBatch := TopologyToken{Depth: 3, PDUPosition: 7}
+	tests := []struct {
+		name     string
+		timeline *Timeline
+		want     string
+	}{
+		{
+			name:     "empty timeline is removed",
+			timeline: &Timeline{Events: []synctypes.ClientEvent{}},
+			want:     `{}`,
+		},
+		{
+			// A timeline filter with a limit of 0 leaves only the prev_batch.
+			name:     "empty timeline with a prev_batch is kept",
+			timeline: &Timeline{Events: []synctypes.ClientEvent{}, Limited: true, PrevBatch: &prevBatch},
+			want:     `{"timeline":{"events":[],"limited":true,"prev_batch":"t3_7"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := json.Marshal(LeaveResponse{State: &ClientEvents{}, Timeline: tt.timeline})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got %s want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResponseMoveStateToStateAfter(t *testing.T) {
 	t.Parallel()
 	state := []synctypes.ClientEvent{{Type: "m.room.topic", Content: []byte("{}")}}

@@ -43,6 +43,10 @@ func (s failoverSnapshot) RecentEvents(context.Context, []string, types.Range, *
 	return map[string]types.RecentEvents{s.roomID: {Events: streamEvents}}, nil
 }
 
+func (s failoverSnapshot) BackwardExtremitiesForRoom(context.Context, string) (map[string][]string, error) {
+	return nil, nil
+}
+
 func (s failoverSnapshot) StreamEventsToEvents(_ context.Context, _ *userapi.Device, in []types.StreamEvent, _ roomserverAPI.SyncRoomserverAPI) []*rstypes.HeaderedEvent {
 	out := make([]*rstypes.HeaderedEvent, len(in))
 	for i := range in {

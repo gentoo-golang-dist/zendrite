@@ -344,5 +344,32 @@ func testSyncStateAfter(t *testing.T, dbType test.DBType) {
 		if gjson.Get(res, leftPath+".state").Exists() {
 			t.Fatalf("left room has state with use_state_after: %s", gjson.Get(res, leftPath).Raw)
 		}
+
+		// Without state_after, the timeline and the state end at the leave too.
+		checkLeft := func(t *testing.T, res string) {
+			t.Helper()
+			timeline := eventIDs(res, leftPath, "timeline")
+			if len(timeline) == 0 || timeline[len(timeline)-1] != leave.EventID() {
+				t.Fatalf("left timeline does not end at the leave: %s", gjson.Get(res, leftPath).Raw)
+			}
+			if hasMessage(res, leftPath, "after leave") || slices.Contains(eventIDs(res, leftPath, "state"), afterLeave.EventID()) {
+				t.Fatalf("left room holds events from after the leave: %s", gjson.Get(res, leftPath).Raw)
+			}
+		}
+		t.Run("incremental", func(t *testing.T) {
+			checkLeft(t, r.sync(map[string]string{"since": since}))
+		})
+		t.Run("complete with include_leave", func(t *testing.T) {
+			res := r.sync(map[string]string{"filter": `{"room":{"include_leave":true,"timeline":{"limit":1}}}`})
+			checkLeft(t, res)
+			if !slices.Contains(stateKeys(res, leftPath, "state"), "m.room.create|") {
+				t.Fatalf("left room lacks the state at the leave: %s", gjson.Get(res, leftPath).Raw)
+			}
+		})
+		t.Run("complete without include_leave", func(t *testing.T) {
+			if res := r.sync(nil); gjson.Get(res, leftPath).Exists() {
+				t.Fatalf("left room without include_leave: %s", gjson.Get(res, leftPath).Raw)
+			}
+		})
 	})
 }

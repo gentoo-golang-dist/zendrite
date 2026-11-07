@@ -241,7 +241,111 @@ func (p *PDUStreamProvider) CompleteSync(
 		}
 	}
 
+	if req.Filter.Room.IncludeLeave {
+		leftFilter := eventFilter
+		leftFilter.Limit = limit
+		if err = p.addLeftRooms(ctx, snapshot, req, to, &stateFilter, &leftFilter, bundler); err != nil {
+			if req.Context.Err() != nil || abandonsSync(err) {
+				logAbandoned(req, err, "", "complete")
+				return from
+			}
+			req.Log.WithError(err).Error("p.addLeftRooms failed")
+		}
+	}
+
 	return to
+}
+
+// addLeftRooms adds the rooms the user has left or was banned from to the
+// leave section of a complete sync, for a filter with include_leave. The
+// timeline and state of each room end at the user's leave, as the user cannot
+// see what happened in the room after it. Forgotten rooms are left out.
+func (p *PDUStreamProvider) addLeftRooms(
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction,
+	req *types.SyncRequest,
+	to types.StreamPosition,
+	stateFilter *synctypes.StateFilter,
+	eventFilter *synctypes.RoomEventFilter,
+	bundler *syncBundler,
+) error {
+	userID, err := spec.NewUserID(req.Device.UserID, true)
+	if err != nil {
+		return err
+	}
+	for _, membership := range []string{spec.Leave, spec.Ban} {
+		var roomIDs []string
+		roomIDs, err = snapshot.RoomIDsWithMembership(ctx, req.Device.UserID, membership)
+		if err != nil {
+			return fmt.Errorf("snapshot.RoomIDsWithMembership: %w", err)
+		}
+		for _, roomID := range roomIDs {
+			if err = req.Context.Err(); err != nil {
+				return err
+			}
+			var res roomserverAPI.QueryMembershipForUserResponse
+			err = p.rsAPI.QueryMembershipForUser(ctx, &roomserverAPI.QueryMembershipForUserRequest{
+				RoomID: roomID, UserID: *userID,
+			}, &res)
+			if err != nil {
+				req.Log.WithError(err).WithField("room_id", roomID).Warn("Failed to query the membership of a left room")
+				continue
+			}
+			if res.IsRoomForgotten || res.Membership != membership || res.EventID == "" {
+				continue
+			}
+			var leavePos types.StreamPosition
+			_, leavePos, err = snapshot.PositionInTopology(ctx, res.EventID)
+			if err != nil {
+				if abandonsSync(err) {
+					return err
+				}
+				req.Log.WithError(err).WithField("room_id", roomID).Debug("Leaving out a left room whose leave is not known")
+				continue
+			}
+			if leavePos > to {
+				// The next incremental sync returns it.
+				continue
+			}
+			delta := types.StateDelta{
+				RoomID:        roomID,
+				Membership:    membership,
+				MembershipPos: leavePos,
+			}
+			delta.StateEvents, err = snapshot.RoomStateDelta(
+				ctx, req.Device, roomID, types.Range{From: 0, To: leavePos}, stateFilter, p.rsAPI,
+			)
+			if err != nil {
+				return fmt.Errorf("snapshot.RoomStateDelta: %w", err)
+			}
+			r := types.Range{From: leavePos, To: 0, Backwards: true}
+			var recent map[string]types.RecentEvents
+			recent, err = snapshot.RecentEvents(ctx, []string{roomID}, r, eventFilter, true, true)
+			if err != nil {
+				return fmt.Errorf("snapshot.RecentEvents: %w", err)
+			}
+			if _, err = p.addRoomDeltaToResponse(
+				ctx, snapshot, req.Device, r, delta, eventFilter, stateFilter, req, recent, bundler,
+			); err != nil {
+				if abandonsSync(err) {
+					return err
+				}
+				req.Log.WithError(err).WithField("room_id", roomID).Error("d.addRoomDeltaToResponse failed")
+			}
+		}
+	}
+	return nil
+}
+
+// leftInRange returns the range of an incremental sync that a room the user
+// left within it covers: up to and including the leave, as the user cannot see
+// what happened in the room after it.
+func leftInRange(delta types.StateDelta, r types.Range) (types.Range, bool) {
+	if r.Backwards || (delta.Membership != spec.Leave && delta.Membership != spec.Ban) ||
+		delta.MembershipPos <= r.Low() || delta.MembershipPos >= r.High() {
+		return r, false
+	}
+	return types.Range{From: r.From, To: delta.MembershipPos}, true
 }
 
 //nolint:gocyclo
@@ -344,6 +448,25 @@ func (p *PDUStreamProvider) IncrementalSync(
 				Backwards: true,
 			}
 		}
+		leftRange, left := leftInRange(delta, r)
+		if left {
+			// The state section ends at the leave too, without the changes the
+			// rest of the range holds.
+			stateRange := leftRange
+			if req.WantFullState {
+				stateRange.From = 0
+			}
+			delta.StateEvents, err = snapshot.RoomStateDelta(ctx, req.Device, delta.RoomID, stateRange, &stateFilter, p.rsAPI)
+			if err != nil {
+				if req.Context.Err() != nil || abandonsSync(err) {
+					logAbandoned(req, err, delta.RoomID, "incremental")
+					return from
+				}
+				req.Log.WithError(err).WithField("room_id", delta.RoomID).Error("snapshot.RoomStateDelta failed")
+				continue
+			}
+			newRange = leftRange
+		}
 		var pos types.StreamPosition
 		if pos, err = p.addRoomDeltaToResponse(ctx, snapshot, req.Device, newRange, delta, &eventFilter, &stateFilter, req, dbEvents, bundler); err != nil {
 			if req.Context.Err() != nil || abandonsSync(err) {
@@ -362,6 +485,11 @@ func (p *PDUStreamProvider) IncrementalSync(
 				req.NewlyJoinedRooms[delta.RoomID] = struct{}{}
 			}
 		}
+		// The events after the leave are left out on purpose, so they must
+		// not hold the position back.
+		if left {
+			pos = r.To
+		}
 		switch {
 		case r.Backwards && pos < newPos:
 			fallthrough
@@ -376,14 +504,23 @@ func (p *PDUStreamProvider) IncrementalSync(
 func (p *PDUStreamProvider) getRecentEvents(ctx context.Context, stateDeltas []types.StateDelta, r types.Range, eventFilter synctypes.RoomEventFilter, snapshot storage.DatabaseTransaction) (map[string]types.RecentEvents, error) {
 	var roomIDs []string
 	var newlyJoinedRoomIDs []string
+	dbEvents := make(map[string]types.RecentEvents)
 	for _, delta := range stateDeltas {
+		if leftRange, left := leftInRange(delta, r); left {
+			// The timeline of a room the user left ends at the leave.
+			events, err := snapshot.RecentEvents(ctx, []string{delta.RoomID}, leftRange, &eventFilter, true, true)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			dbEvents[delta.RoomID] = events[delta.RoomID]
+			continue
+		}
 		if delta.NewlyJoined {
 			newlyJoinedRoomIDs = append(newlyJoinedRoomIDs, delta.RoomID)
 		} else {
 			roomIDs = append(roomIDs, delta.RoomID)
 		}
 	}
-	dbEvents := make(map[string]types.RecentEvents)
 	if len(roomIDs) > 0 {
 		events, err := snapshot.RecentEvents(
 			ctx, roomIDs, r,
@@ -396,6 +533,13 @@ func (p *PDUStreamProvider) getRecentEvents(ctx context.Context, stateDeltas []t
 		}
 		for k, v := range events {
 			dbEvents[k] = v
+		}
+	}
+	// The timeline of a newly joined room is limited anyway.
+	for roomID, recent := range dbEvents {
+		var err error
+		if dbEvents[roomID], err = afterGap(ctx, snapshot, roomID, recent); err != nil {
+			return nil, err
 		}
 	}
 	if len(newlyJoinedRoomIDs) > 0 {
@@ -431,6 +575,32 @@ func (p *PDUStreamProvider) getRecentEvents(ctx context.Context, stateDeltas []t
 	}
 
 	return dbEvents, nil
+}
+
+// afterGap returns the events of an incremental timeline from the last one
+// whose prev events the sync API does not have, limited. That is a gap in the
+// room, as when /get_missing_events could not reach back to the events the
+// server already had. The events before the gap are not followed by those
+// after it, so the client pages back for them instead. The events must be in
+// stream order.
+func afterGap(
+	ctx context.Context, snapshot storage.DatabaseTransaction, roomID string, recent types.RecentEvents,
+) (types.RecentEvents, error) {
+	if len(recent.Events) == 0 {
+		return recent, nil
+	}
+	extremities, err := snapshot.BackwardExtremitiesForRoom(ctx, roomID)
+	if err != nil {
+		return recent, fmt.Errorf("snapshot.BackwardExtremitiesForRoom: %w", err)
+	}
+	for i := len(recent.Events) - 1; i >= 0 && len(extremities) > 0; i-- {
+		if _, ok := extremities[recent.Events[i].EventID()]; ok {
+			recent.Events = recent.Events[i:]
+			recent.Limited = true
+			break
+		}
+	}
+	return recent, nil
 }
 
 // Limit the recent events to X when going backwards.
@@ -542,18 +712,6 @@ func (p *PDUStreamProvider) addRoomDeltaToResponse(
 			case !r.Backwards && pos > latestPosition:
 				latestPosition = pos
 			}
-		}
-	}
-
-	// MSC4222: the state after the timeline of a room the user left is the
-	// state at their leave, without the changes the rest of the range holds.
-	if req.UseStateAfter() && (delta.Membership == spec.Leave || delta.Membership == spec.Ban) &&
-		delta.MembershipPos > r.Low() && delta.MembershipPos < r.High() {
-		delta.StateEvents, err = snapshot.RoomStateDelta(
-			ctx, device, delta.RoomID, types.Range{From: r.Low(), To: delta.MembershipPos}, stateFilter, p.rsAPI,
-		)
-		if err != nil {
-			return r.From, fmt.Errorf("snapshot.RoomStateDelta: %w", err)
 		}
 	}
 

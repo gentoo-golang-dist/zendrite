@@ -754,7 +754,9 @@ func (lr LeaveResponse) MarshalJSON() ([]byte, error) {
 	if lr.State != nil && len(lr.State.Events) == 0 {
 		a.State = nil
 	}
-	if lr.Timeline != nil && len(lr.Timeline.Events) == 0 {
+	// An empty timeline with a prev_batch stays, so that the client can
+	// still page through the history of the room from before the leave.
+	if lr.Timeline != nil && len(lr.Timeline.Events) == 0 && lr.Timeline.PrevBatch == nil && !lr.Timeline.Limited {
 		a.Timeline = nil
 	}
 	return json.Marshal(a)

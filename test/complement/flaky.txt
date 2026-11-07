@@ -9,5 +9,4 @@ tests/TestSendJoinPartialStateResponse
 tests/csapi/TestPresence
 tests/csapi/TestRedact
 tests/csapi/TestSendAndFetchMessage
-tests/csapi/TestSyncLeaveSection
 tests/msc3389/TestMSC3389RedactionStripsRelationInOlderVersions
