@@ -176,6 +176,7 @@ tests/csapi/TestTxnIdempotencyScopedToDevice
 tests/csapi/TestTyping
 tests/csapi/TestUploadKeyIdempotency
 tests/csapi/TestUploadKeyIdempotencyOverlap
+tests/csapi/TestUrlPreview
 tests/csapi/TestVersionStructure
 tests/msc3757/TestWithoutOwnedState
 tests/msc3967/TestMSC3967

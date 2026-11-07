@@ -89,6 +89,12 @@ func main() {
 			cfg.FederationAPI.KeyPerspectives = config.KeyPerspectives{}
 			cfg.MediaAPI.Storage.Type = "local"
 			cfg.MediaAPI.Storage.Local.BasePath = config.Path(filepath.Join(*dirPath, "media"))
+			// Complement serves the pages to preview from the Docker host,
+			// which has a private address.
+			cfg.MediaAPI.URLPreview = config.URLPreview{
+				Enabled:          true,
+				IPRangeWhitelist: []string{"0.0.0.0/0", "::/0"},
+			}
 			cfg.MSCs.MSCs = []string{"msc2836", "msc2444", "msc2753"}
 			cfg.Logging[0].Level = "trace"
 			cfg.Logging[0].Type = "std"
