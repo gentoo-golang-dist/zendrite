@@ -316,22 +316,39 @@ func MASProvisionUser(req *http.Request, cfg *config.ClientAPI, userAPI userapi.
 
 	// Apply the profile fields. On creation only the set variants are
 	// meaningful; on update the unset variants clear the stored value.
-	if body.SetDisplayname != nil {
-		if _, _, err := userAPI.SetDisplayName(req.Context(), body.Localpart, cfg.Matrix.ServerName, *body.SetDisplayname); err != nil {
+	// A failed write fails the request: MAS only retries a provisioning job
+	// that was not acknowledged, and the call is idempotent, so it can be
+	// repeated against this process or an HA successor.
+	var displayName, avatarURL *string
+	empty := ""
+	switch {
+	case body.SetDisplayname != nil:
+		displayName = body.SetDisplayname
+	case body.UnsetDisplayname && !createRes.AccountCreated:
+		displayName = &empty
+	}
+	switch {
+	case body.SetAvatarURL != nil:
+		avatarURL = body.SetAvatarURL
+	case body.UnsetAvatarURL && !createRes.AccountCreated:
+		avatarURL = &empty
+	}
+	if displayName != nil {
+		if _, _, err := userAPI.SetDisplayName(req.Context(), body.Localpart, cfg.Matrix.ServerName, *displayName); err != nil {
 			logrus.WithError(err).Error("MAS admin: failed to set display name")
-		}
-	} else if body.UnsetDisplayname && !createRes.AccountCreated {
-		if _, _, err := userAPI.SetDisplayName(req.Context(), body.Localpart, cfg.Matrix.ServerName, ""); err != nil {
-			logrus.WithError(err).Error("MAS admin: failed to unset display name")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
 		}
 	}
-	if body.SetAvatarURL != nil {
-		if _, _, err := userAPI.SetAvatarURL(req.Context(), body.Localpart, cfg.Matrix.ServerName, *body.SetAvatarURL); err != nil {
+	if avatarURL != nil {
+		if _, _, err := userAPI.SetAvatarURL(req.Context(), body.Localpart, cfg.Matrix.ServerName, *avatarURL); err != nil {
 			logrus.WithError(err).Error("MAS admin: failed to set avatar URL")
-		}
-	} else if body.UnsetAvatarURL && !createRes.AccountCreated {
-		if _, _, err := userAPI.SetAvatarURL(req.Context(), body.Localpart, cfg.Matrix.ServerName, ""); err != nil {
-			logrus.WithError(err).Error("MAS admin: failed to unset avatar URL")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
 		}
 	}
 
@@ -606,9 +623,19 @@ func MASSyncDevices(req *http.Request, cfg *config.ClientAPI, userAPI userapi.Cl
 
 	// The dehydrated device is managed through its own MSC3814 API and must
 	// survive the reconciliation.
+	// A failed lookup must fail the request rather than leave the device
+	// unprotected: after a transient database error, such as a PostgreSQL
+	// failover, the deletion below would otherwise remove it for good.
 	dehydratedID := ""
 	var dehydRes userapi.QueryDehydratedDeviceResponse
-	if err := userAPI.QueryDehydratedDevice(req.Context(), &userapi.QueryDehydratedDeviceRequest{UserID: userID}, &dehydRes); err == nil && dehydRes.Found {
+	if err := userAPI.QueryDehydratedDevice(req.Context(), &userapi.QueryDehydratedDeviceRequest{UserID: userID}, &dehydRes); err != nil {
+		logrus.WithError(err).WithField("user_id", userID).Error("MAS admin: failed to query the dehydrated device")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	if dehydRes.Found {
 		dehydratedID = dehydRes.DeviceID
 	}
 

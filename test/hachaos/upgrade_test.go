@@ -206,7 +206,7 @@ func verifyUninterrupted(r *result, w *workload, e *environment, s *run) {
 	}
 	report := &upgradeReport{Window: until.Sub(from), Requests: map[string]int{}, Failed: map[string]int{}, MaxLatency: map[string]time.Duration{}, P99Latency: map[string]time.Duration{}}
 	overlaps := func(o outcome) bool { return o.Start.Before(until) && o.End.After(from) }
-	for _, kind := range []string{kindWrite, kindSync, kindMSCReply} {
+	for _, kind := range []string{kindWrite, kindSync, kindMSCReply, kindOIDCLogin} {
 		var latencies []time.Duration
 		for _, o := range w.outcomes(kind) {
 			if !overlaps(o) {

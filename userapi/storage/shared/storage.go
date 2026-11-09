@@ -326,7 +326,13 @@ func (d *Database) createAccount(
 		}
 	}
 	if account, err = d.Accounts.InsertAccount(ctx, txn, localpart, serverName, hash, appserviceID, accountType); err != nil {
-		return nil, sqlutil.ErrUserExists
+		// Only a unique violation means the account exists. Any other
+		// failure, such as a connection terminated by an HA successor or a
+		// PostgreSQL failover, must not be mistaken for an existing account.
+		if sqlutil.IsUniqueConstraintViolationErr(err) {
+			return nil, sqlutil.ErrUserExists
+		}
+		return nil, err
 	}
 	if err = d.Profiles.InsertProfile(ctx, txn, localpart, serverName); err != nil {
 		return nil, fmt.Errorf("d.Profiles.InsertProfile: %w", err)

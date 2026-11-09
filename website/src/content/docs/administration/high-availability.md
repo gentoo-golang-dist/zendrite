@@ -269,7 +269,7 @@ Every build declares an upgrade contract instead of pinning its exact executable
 | `rollback_to` | The oldest level that may take over from state this build has written. |
 
 Each candidate logs its contract at startup as `HA upgrade contract`, and exports it as `zendrite_ha_build_info`.
-Candidates must still agree on the deployment's identity: signing keys, server name, database, broker and media targets and namespaces, search settings, and enabled MSCs.
+Candidates must still agree on the deployment's identity: signing keys, server name, database, broker and media targets and namespaces, search settings, and enabled MSCs, including the OIDC issuer and client of `msc3861`.
 Changing any of those remains an [offline upgrade](#offline-upgrades).
 
 The deployment records, in `zendrite_ha_compatibility`, the level of the build that activated last and a floor.
@@ -338,6 +338,7 @@ Some state is process-local and does not survive a handover, as after any takeov
 
 - Search answers HTTP 503 with `Retry-After` until the successor has rebuilt its index, which takes time in proportion to the searchable history.
 - Sliding-sync connections start over, typing notifications are dropped, and a login, SSO or user-interactive authentication flow in progress must be restarted.
+  With delegated authentication (`msc3861`), that includes a legacy SSO login whose login token was not yet redeemed, and a cross-signing reset the provider confirmed but the client had not yet completed: the user confirms the reset again.
 - Outbound federation, appservice and push deliveries in flight when the owner stops are retried by the successor with their original transaction IDs.
 
 A rollout under `maxSurge: 0` may stop the active candidate before the standbys, so it can hand over twice: once to an old standby and once to a new one.

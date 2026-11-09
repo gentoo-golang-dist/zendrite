@@ -136,7 +136,7 @@ func seedReference(ctx context.Context, e *environment, users, rooms int) error 
 	e.timeline.add(eventNote, "seed", "creating %d users and %d rooms", users, rooms)
 	clients := make([]*mxClient, users)
 	for i := range users {
-		c, err := register(ctx, e.router.url(), fmt.Sprintf("seed%03d", i))
+		c, err := e.localUser(ctx, fmt.Sprintf("seed%03d", i))
 		if err != nil {
 			return err
 		}
@@ -199,7 +199,7 @@ func seedReference(ctx context.Context, e *environment, users, rooms int) error 
 func seedSearchHistory(ctx context.Context, e *environment, n int) error {
 	e.timeline.add(eventNote, "seed", "sending %d searchable messages", n)
 	started := time.Now()
-	c, err := registerRetrying(ctx, e.router.url(), "historian")
+	c, err := e.localUser(ctx, "historian")
 	if err != nil {
 		return err
 	}

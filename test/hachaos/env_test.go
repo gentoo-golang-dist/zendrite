@@ -130,6 +130,9 @@ type environment struct {
 
 	haKey     string
 	remoteKey string
+	// mas is the OIDC provider the HA server delegates authentication to,
+	// when MSC3861 is enabled.
+	mas *mockMAS
 
 	observer *observer
 	stopOnce sync.Once
@@ -181,6 +184,10 @@ func newEnvironment(t *testing.T, ctx context.Context, s settings, name string) 
 	must(err, "start Kubernetes API")
 	e.fed, err = startGateway(e.owners, tl)
 	must(err, "start federation gateway")
+	if s.delegatedAuth() {
+		e.mas, err = startMockMAS()
+		must(err, "start the OIDC provider")
+	}
 
 	for i := range s.candidates {
 		sl := &slot{index: i, name: fmt.Sprintf("cand-%d", i), dir: filepath.Join(dir, fmt.Sprintf("cand-%d", i)), logs: logs, owners: e.owners, timeline: tl, bin: s.zendrite, restartIn: time.Second}
@@ -335,6 +342,9 @@ func (e *environment) stop() {
 		}
 		if e.router != nil {
 			e.router.stop()
+		}
+		if e.mas != nil {
+			e.mas.stop()
 		}
 		if e.fed != nil {
 			e.fed.stop()

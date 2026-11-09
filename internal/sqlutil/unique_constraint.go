@@ -9,18 +9,25 @@
 package sqlutil
 
 import (
+	"errors"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"modernc.org/sqlite"
 	lib "modernc.org/sqlite/lib"
 )
 
-// IsUniqueConstraintViolationErr returns true if the error is an unique_violation error
+// IsUniqueConstraintViolationErr returns true if the error is an unique_violation error.
+// Like the cgo variant, it also recognizes a wrapped error.
 func IsUniqueConstraintViolationErr(err error) bool {
-	switch e := err.(type) {
-	case *pgconn.PgError:
-		return e.Code == "23505"
-	case *sqlite.Error:
-		return e.Code() == lib.SQLITE_CONSTRAINT
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) {
+		// Code is the extended result code, e.g. SQLITE_CONSTRAINT_UNIQUE;
+		// its low byte is the primary one.
+		return sqliteErr.Code()&0xff == lib.SQLITE_CONSTRAINT
 	}
 	return false
 }

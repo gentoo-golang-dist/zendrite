@@ -17,9 +17,10 @@ import (
 )
 
 // haMSCs are the experimental MSCs qualified for HA. Every scenario runs with
-// them enabled on the candidates and the remote server, so every fault is
-// also a fault for their consumers, tables and federation traffic.
-var haMSCs = []string{"msc2444", "msc2753", "msc2836"}
+// them enabled on the candidates and, except MSC3861, the remote server, so
+// every fault is also a fault for their consumers, tables, federation
+// traffic and, with MSC3861, the authentication of every request.
+var haMSCs = []string{"msc2444", "msc2753", "msc2836", msc3861}
 
 const (
 	kindMSCReply       = "msc-reply"
@@ -145,7 +146,7 @@ func startMSCProbe(ctx context.Context, w *workload) (*mscProbe, error) {
 	e := w.e
 	p := &mscProbe{w: w, e: e, parents: map[string]string{}, peekerSeen: map[string]time.Time{}, remoteSeen: map[string]time.Time{}, since: map[string]string{}}
 	var err error
-	if p.peeker, err = registerRetrying(ctx, e.router.url(), "petra"); err != nil {
+	if p.peeker, err = e.localUser(ctx, "petra"); err != nil {
 		return nil, err
 	}
 	if p.remote, err = registerRetrying(ctx, e.remote.httpURL(), "remy"); err != nil {

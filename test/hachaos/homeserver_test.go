@@ -275,6 +275,9 @@ func haConfig(e *environment, s *slot) ([]byte, error) {
 	}
 	commonConfig(cfg)
 	cfg.MSCs.MSCs = e.settings.mscs
+	if e.mas != nil {
+		cfg.MSCs.MSC3861 = e.mas.config()
+	}
 	cfg.MediaAPI.Storage.Type = "s3"
 	cfg.MediaAPI.Storage.S3 = config.S3Storage{Endpoint: e.s3.endpoint(), Region: "us-east-1", Bucket: s3Bucket, AccessKeyID: "hachaos", SecretAccessKey: "hachaos", PathStyle: true}
 	cfg.SyncAPI.Fulltext = config.Fulltext{Enabled: true, RebuildOnStartup: true, IndexPath: config.Path(filepath.Join(s.dir, "searchindex")), Language: "en"}
@@ -299,7 +302,7 @@ func remoteConfig(e *environment, dir string) ([]byte, error) {
 	cfg.Global.JetStream.StoragePath = config.Path(dir)
 	cfg.Global.JetStream.TopicPrefix = "Remote"
 	commonConfig(cfg)
-	cfg.MSCs.MSCs = e.settings.mscs
+	cfg.MSCs.MSCs = e.settings.remoteMSCs()
 	cfg.MediaAPI.Storage.Type = "local"
 	cfg.MediaAPI.Storage.Local.BasePath = config.Path(filepath.Join(dir, "media"))
 	cfg.SyncAPI.Fulltext = config.Fulltext{Enabled: false, IndexPath: config.Path(filepath.Join(dir, "searchindex")), Language: "en"}

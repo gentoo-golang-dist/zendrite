@@ -58,6 +58,8 @@ type workload struct {
 	gapFills int
 	// msc is the MSC probe, when MSCs are enabled.
 	msc *mscProbe
+	// oidc is the delegated authentication probe, when MSC3861 is enabled.
+	oidc *oidcProbe
 	// setupNotes record setup steps slow enough to report.
 	setupNotes []string
 	// unavailable counts HTTP 503 responses to the local clients.
@@ -120,10 +122,10 @@ func startWorkload(ctx context.Context, e *environment) (*workload, error) {
 		toDeviceDeliveries: map[string]int{}, since: map[string]string{},
 	}
 	var err error
-	if w.alice, err = registerRetrying(ctx, e.router.url(), "alice"); err != nil {
+	if w.alice, err = e.localUser(ctx, "alice"); err != nil {
 		return nil, err
 	}
-	if w.bob, err = registerRetrying(ctx, e.router.url(), "bob"); err != nil {
+	if w.bob, err = e.localUser(ctx, "bob"); err != nil {
 		return nil, err
 	}
 	w.alice.unavailable, w.bob.unavailable = &w.unavailable, &w.unavailable
@@ -172,6 +174,9 @@ func startWorkload(ctx context.Context, e *environment) (*workload, error) {
 			w.halt()
 			return nil, fmt.Errorf("start the MSC probe: %w", err)
 		}
+	}
+	if e.mas != nil {
+		w.oidc = startOIDCProbe(w) //nolint:contextcheck // Traffic runs on the workload's context.
 	}
 	return w, nil
 }

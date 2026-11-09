@@ -68,6 +68,13 @@ var haQualifiedMSCs = map[string]struct{}{
 	"msc2753": {},
 	// Threading; its relationship index lives in mscs.database.
 	"msc2836": {},
+	// Delegated OIDC authentication. Its accounts, devices, external ID
+	// mappings and login tokens live in the user API database. What it holds
+	// in process memory (introspection and discovery caches, legacy SSO
+	// sessions and the provider-issued tokens behind their login tokens,
+	// cross-signing reset confirmations) is lost on takeover, and every one
+	// of them fails closed: the client retries or starts the flow again.
+	"msc3861": {},
 }
 
 func sortedKeys(m map[string]struct{}) []string {
@@ -141,10 +148,37 @@ func (c *Zendrite) HACompatibility() (string, error) {
 	// Candidates must agree on the enabled MSCs: they change the routes served,
 	// the JetStream consumers and the tables written. Their storage is the
 	// global database, which VerifyHAStorage enforces and targets covers.
-	data, err := json.Marshal([]any{haIdentityFormat, identities, targets, db.User, db.Database, db.RuntimeParams, addresses, c.Global.JetStream.TopicPrefix, c.Global.JetStream.JetStreamDomain, c.Global.JetStream.Replicas, c.MediaAPI.StorageType(), c.MediaAPI.Storage.Local, c.MediaAPI.BasePath, s3.Endpoint, s3.Region, s3.Bucket, s3.Prefix, c.SyncAPI.Fulltext.Enabled, c.SyncAPI.Fulltext.Language, c.MSCs.normalized()})
+	fields := []any{haIdentityFormat, identities, targets, db.User, db.Database, db.RuntimeParams, addresses, c.Global.JetStream.TopicPrefix, c.Global.JetStream.JetStreamDomain, c.Global.JetStream.Replicas, c.MediaAPI.StorageType(), c.MediaAPI.Storage.Local, c.MediaAPI.BasePath, s3.Endpoint, s3.Region, s3.Bucket, s3.Prefix, c.SyncAPI.Fulltext.Enabled, c.SyncAPI.Fulltext.Language, c.MSCs.normalized()}
+	// Appended only when enabled, so that deployments without it keep the
+	// identity they already recorded.
+	if c.MSCs.Enabled("msc3861") {
+		fields = append(fields, c.MSCs.MSC3861.haIdentity())
+	}
+	data, err := json.Marshal(fields)
 	if err != nil {
 		return "", fmt.Errorf("encode HA compatibility: %w", err)
 	}
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// msc3861HAIdentity is the part of the MSC3861 configuration that candidates
+// must agree on. The issuer keys every stored external ID mapping, the client
+// is who this deployment is to the provider, and whether the MAS provisioning
+// API is enabled decides how a new subject's localpart is chosen and whether
+// the provider can call back at all. Secrets are never included: rotating the
+// client secret or the admin token is not a change of identity.
+type msc3861HAIdentity struct {
+	Issuer          string `json:"issuer"`
+	ClientID        string `json:"client_id"`
+	MASProvisioning bool   `json:"mas_provisioning"`
+}
+
+func (c *MSC3861Config) haIdentity() msc3861HAIdentity {
+	return msc3861HAIdentity{
+		// Mappings are stored under the issuer without its trailing slash.
+		Issuer:          strings.TrimSuffix(c.Issuer, "/"),
+		ClientID:        c.ClientID,
+		MASProvisioning: c.AdminToken != "",
+	}
 }

@@ -2,6 +2,8 @@ package config
 
 import (
 	"crypto/ed25519"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -40,7 +42,8 @@ func TestHAStorageValidation(t *testing.T) {
 		{"rebuild search", func(c *Zendrite) { c.SyncAPI.Fulltext.Enabled = true; c.SyncAPI.Fulltext.RebuildOnStartup = true }, false},
 		{"experimental", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc-test"} }, true},
 		{"qualified MSCs", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc2836", "msc2444", "msc2753"} }, false},
-		{"unqualified MSC", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc2836", "msc3861"} }, true},
+		{"unqualified MSC", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc2836", "msc3814"} }, true},
+		{"delegated authentication", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc2444", "msc2753", "msc2836", "msc3861"} }, false},
 		{"dehydrated devices", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc3814"} }, true},
 		{"MSC name that enables nothing", func(c *Zendrite) { c.MSCs.MSCs = []string{"MSC2836"} }, true},
 		{"MSC database is global", func(c *Zendrite) {
@@ -145,6 +148,87 @@ func TestHACompatibilityMSCs(t *testing.T) {
 	for _, mscs := range [][]string{nil, {"msc2836"}, {"msc2836", "msc2753", "msc2444"}} {
 		if compatibility(mscs...) == original {
 			t.Fatalf("MSCs %v accepted alongside %v", mscs, []string{"msc2836", "msc2753"})
+		}
+	}
+}
+
+// Qualifying MSC3861 must not change the identity a deployment without it
+// already recorded, or every running HA deployment would refuse the upgrade.
+func TestHACompatibilityUnchangedWithoutMSC3861(t *testing.T) {
+	// pgx fills unset connection parameters from the PG* environment, which
+	// would otherwise change the recorded target.
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
+			t.Setenv(name, "")
+		}
+	}
+	for _, tc := range []struct {
+		mscs []string
+		want string
+	}{
+		{nil, "bb1347728525a4615e06da55633172481fa4eb0e02a5dfb8953842da6b536899"},
+		{[]string{"msc2444", "msc2753", "msc2836"}, "b7d72a404fa1078a343767e238030ea953d4ace19725f0aceac761a86d9f0209"},
+	} {
+		c := haStorageConfig()
+		c.Global.PrivateKey = ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+		c.MSCs.MSCs = tc.mscs
+		// Configured but disabled: it must not count.
+		c.MSCs.MSC3861 = MSC3861Config{Issuer: "https://auth.example.com/", ClientID: "client", ClientSecret: "secret", AdminToken: "admin"}
+		got, err := c.HACompatibility()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("MSCs %v: compatibility changed to %s", tc.mscs, got)
+		}
+	}
+}
+
+// Candidates must agree on who the OIDC provider is, who they are to it and
+// whether it provisions accounts through the MAS API, but not on secrets.
+func TestHACompatibilityMSC3861(t *testing.T) {
+	base := MSC3861Config{Issuer: "https://auth.example.com/", ClientID: "client", ClientSecret: "secret", AdminToken: "admin", AccountManagementURL: "https://auth.example.com/account"}
+	compatibility := func(change func(*MSC3861Config)) string {
+		t.Helper()
+		c := haStorageConfig()
+		c.Global.PrivateKey = ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+		c.MSCs.MSCs = []string{"msc3861"}
+		c.MSCs.MSC3861 = base
+		change(&c.MSCs.MSC3861)
+		got, err := c.HACompatibility()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	original := compatibility(func(*MSC3861Config) {})
+	for name, change := range map[string]func(*MSC3861Config){
+		"client secret rotated":         func(m *MSC3861Config) { m.ClientSecret = "rotated" },
+		"admin token rotated":           func(m *MSC3861Config) { m.AdminToken = "rotated" },
+		"issuer without slash":          func(m *MSC3861Config) { m.Issuer = "https://auth.example.com" },
+		"account management URL":        func(m *MSC3861Config) { m.AccountManagementURL = "https://auth.example.com/manage" },
+		"introspection endpoint pinned": func(m *MSC3861Config) { m.IntrospectionEndpoint = "https://auth.example.com/oauth2/introspect" },
+	} {
+		if compatibility(change) != original {
+			t.Errorf("%s changed the compatibility", name)
+		}
+	}
+	for name, change := range map[string]func(*MSC3861Config){
+		"other issuer":        func(m *MSC3861Config) { m.Issuer = "https://other.example.com/" },
+		"other client":        func(m *MSC3861Config) { m.ClientID = "other" },
+		"no MAS provisioning": func(m *MSC3861Config) { m.AdminToken = "" },
+	} {
+		if compatibility(change) == original {
+			t.Errorf("%s accepted alongside the original", name)
+		}
+	}
+	data, err := json.Marshal(base.haIdentity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{base.ClientSecret, base.AdminToken} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("the HA identity %s contains a secret", data)
 		}
 	}
 }

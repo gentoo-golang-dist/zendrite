@@ -497,6 +497,7 @@ func scenarios() []scenario {
 		successorFailsScenario(),
 		brokerLossScenario(),
 		mscIndexFailureScenario(),
+		msc3861TakeoverScenario(),
 		brokerHostFrozenScenario(),
 		brokerReplacedEmptyScenario(),
 		publishAcksLostScenario(),
@@ -525,6 +526,7 @@ var scenarioGroups = map[string]string{
 	"rolling-upgrade-successor-fails":    "lifecycle",
 	"rolling-upgrade-broker-leader-lost": "dependency",
 	"msc-relationship-index-failure":     "dependency",
+	"msc3861-takeover-intermediates":     "crash",
 	"nats-broker-host-frozen":            "broker",
 	"nats-broker-replaced-empty":         "broker",
 	"nats-publish-acks-lost":             "broker",
@@ -664,6 +666,7 @@ func runScenario(t *testing.T, s settings, sc scenario) (r result) {
 	verifyClientState(ctx, &r, w, e, settle)
 	verifyFederatedDelivery(ctx, &r, w, e, settle)
 	verifyMSCs(ctx, &r, w.msc, settle)
+	verifyOIDC(ctx, &r, w.oidc, settle)
 	verifyMedia(ctx, &r, w, before)
 	verifySearch(ctx, &r, w, settle)
 	verifyOwnership(ctx, &r, e, sr.pauses)

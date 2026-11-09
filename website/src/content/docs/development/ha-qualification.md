@@ -32,9 +32,11 @@ While a fault is injected, clients keep working the way a careful client does:
 - To-device messages, read receipts, media uploads and downloads, and search run alongside.
 - A user on the remote server writes to the same room, and syncs to receive local messages over federation.
   The remote user also sends to-device messages and read receipts to the local user, which reach the HA server only as EDUs in federation transactions.
-- Every server runs with the HA-qualified MSCs `msc2444`, `msc2753` and `msc2836` enabled; `HACHAOS_MSCS=none` turns them off.
+- Every server runs with the HA-qualified MSCs `msc2444`, `msc2753` and `msc2836` enabled, and the HA candidates also with `msc3861`; `HACHAOS_MSCS=none` turns them off.
+  With `msc3861`, the candidates delegate authentication to a mock MAS in the harness, and the HA server's users get their tokens from it instead of registering.
   An MSC probe sends thread replies into world-readable room version 11 and 12 rooms, which a local user peeks into via `/sync` and a remote user peeks into over federation.
   The local user also peeks into a room on the remote server, in which the remote user writes.
+  An OIDC probe signs new users in, half provisioned through the MAS API first and half on demand by their first request, and rotates signed-in users' tokens.
 
 ## What is checked
 
@@ -45,6 +47,7 @@ After the fault heals, the harness compares what clients were told with what the
 - Every acknowledged write reaches the syncing client with the token it held before the fault, and reaches the remote server.
 - Every acknowledged thread reply is returned by `/event_relationships`, and reaches the local and remote peekers with the tokens they held before the fault.
   Every acknowledged write in the remote room reaches the local peeker.
+- Every acknowledged OIDC sign-in still authenticates as its user and device, and left exactly one account, subject mapping and device, with the display name MAS provisioned.
 - Every acknowledged to-device message is delivered, the newest acknowledged receipt (or one still in flight when the workload stopped) is visible, media uploaded before the fault is intact, and search finds messages from before and after it.
 - The same holds for the remote user's to-device messages and receipts, which arrive over federation.
   Receipts coalesce, so only the newest acknowledged one must be visible; to-device messages delivered twice are counted and reported, since delivery is at least once.
@@ -95,6 +98,7 @@ The report lists them separately, with the maximum and 99th percentile write lat
 | `rolling-upgrade-successor-fails` | The candidate taking over during a rolling upgrade is killed while it activates. |
 | `rolling-upgrade-broker-leader-lost` | The broker leading the room input stream is killed while the owner hands over during a rolling upgrade. |
 | `msc-relationship-index-failure` | PostgreSQL rejects MSC2836 relationship index writes, and the active candidate is replaced before they are allowed again. |
+| `msc3861-takeover-intermediates` | With delegated authentication, the active candidate is frozen and replaced while a confirmed cross-signing reset, an unredeemed SSO login token and MAS provisioning are in flight. The successor must challenge the reset and refuse the login token, retried flows must succeed, and the resumed old owner must act on neither. |
 | `nats-broker-host-frozen` | The broker the active candidate uses stops responding without closing connections, as on a host that goes NotReady, and is replaced on its storage after an extended absence. |
 | `nats-broker-replaced-empty` | The receipt stream leader is killed and replaced, after an extended absence, by a broker with empty storage that must catch up. |
 | `nats-publish-acks-lost` | Broker traffic towards the active candidate is held for 15 seconds, so every publication is ambiguous until it is retried. |

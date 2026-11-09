@@ -220,14 +220,15 @@ func (a *UserInternalAPI) PerformAccountCreation(ctx context.Context, req *api.P
 	}
 	acc, err := a.DB.CreateAccount(ctx, req.Localpart, serverName, req.Password, req.AppServiceID, req.AccountType)
 	if err != nil {
-		if errors.Is(err, sqlutil.ErrUserExists) { // This account already exists
-			switch req.OnConflict {
-			case api.ConflictUpdate:
-				break
-			case api.ConflictAbort:
-				return &api.ErrorConflict{
-					Message: err.Error(),
-				}
+		// Any other failure leaves the account uncreated. Reporting it as an
+		// existing account would let a caller such as the MAS provisioning API
+		// acknowledge an account that was never written.
+		if !errors.Is(err, sqlutil.ErrUserExists) {
+			return fmt.Errorf("a.DB.CreateAccount: %w", err)
+		}
+		if req.OnConflict == api.ConflictAbort {
+			return &api.ErrorConflict{
+				Message: err.Error(),
 			}
 		}
 		// account already exists

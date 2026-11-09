@@ -3,6 +3,7 @@ package storage_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1276,5 +1277,28 @@ func Test_GetActiveAccountsCreatedBefore(t *testing.T) {
 		accounts, err = db.GetActiveAccountsCreatedBefore(ctx, api.AccountTypeCallGuest, time.Now().Add(-time.Hour), 10)
 		assert.NoError(t, err)
 		assert.Empty(t, accounts)
+	})
+}
+
+// Only a unique violation reports an existing account. A failed insert, such
+// as one on a connection an HA successor terminated, must not be mistaken
+// for one, or a caller acknowledges an account that was never written.
+func Test_CreateAccountFailureIsNotAnExistingAccount(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateUserDatabase(t, dbType)
+		defer close()
+
+		_, err := db.CreateAccount(ctx, "existing", "test", "", "", api.AccountTypeUser)
+		assert.NoError(t, err)
+		_, err = db.CreateAccount(ctx, "existing", "test", "", "", api.AccountTypeUser)
+		assert.ErrorIs(t, err, sqlutil.ErrUserExists)
+
+		canceled, cancel := context.WithCancelCause(ctx)
+		cancel(errors.New("connection lost"))
+		_, err = db.CreateAccount(canceled, "unwritten", "test", "", "", api.AccountTypeUser)
+		assert.Error(t, err)
+		assert.NotErrorIs(t, err, sqlutil.ErrUserExists)
+		_, err = db.GetAccountByLocalpart(ctx, "unwritten", "test")
+		assert.ErrorIs(t, err, sql.ErrNoRows)
 	})
 }

@@ -262,11 +262,33 @@ Enabling MSC3861 on a server that already has password accounts is a one-way doo
 
 Plan the identity mapping before you flip this on, and test it on a staging server.
 
+## High availability
+
+Delegated authentication is qualified for [active-passive HA](/administration/high-availability/).
+Everything it provisions is written through the fenced database connections of the active candidate: accounts and devices created from a token's first request, the mapping from the provider's subject to a localpart, login tokens, and the changes made through the `/_synapse/mas/*` provisioning API.
+A former owner cannot write any of it once a successor has taken over.
+Provisioning is idempotent, so MAS retrying a call against the successor, or a token's first request reaching the successor after the old owner had already provisioned part of the account, does not create a second account, mapping or device.
+
+Some state is kept in process memory and is lost when the active candidate changes, as after any takeover:
+
+| State | After a takeover |
+| --- | --- |
+| Token introspection results, cached for 30 seconds | The successor introspects each token again. Expect a burst of introspection requests to the provider. |
+| Discovery and JWKS caches | Fetched again from the provider. |
+| Legacy SSO sessions, and the provider tokens behind a login token not yet redeemed | `POST /login` with that login token answers `403`; the user starts the SSO login again. |
+| A cross-signing reset confirmation from the provider not yet used | The upload is challenged again with `m.oauth`; the user confirms the reset in the account management UI again. |
+
+Each of these fails closed: a successor never honors a confirmation or login token it did not issue, and a former owner refuses requests once it has been replaced.
+
+All candidates must use the same `issuer` and `client_id`, and either all or none must set `admin_token`; the HA deployment identity covers them, so changing one is an offline upgrade.
+Rotating `client_secret` or `admin_token` is not.
+
 ## Known limitations
 
 The legacy SSO compatibility layer keeps its in-flight state in process memory: SSO sessions, the login tokens issued by the callback, and pending cross-signing reset confirmations.
 The `/login/sso/redirect`, `/login/sso/callback` and `POST /login` requests belonging to one login must therefore all reach the same Zendrite process.
-Running several instances behind a load balancer breaks the flow unless the balancer pins a client's requests to one instance.
+This holds in active-passive HA, where only the active candidate serves requests, except across a takeover; see [High availability](#high-availability).
+Several instances that serve requests at the same time behind a load balancer break the flow unless the balancer pins a client's requests to one instance.
 
 Clients with native OIDC support are unaffected, since they never touch the compatibility layer.
 

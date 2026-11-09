@@ -13,9 +13,11 @@ These checks add storage and recovery prerequisites to that qualification.
 
 - Configure one global PostgreSQL database and leave component connection strings empty or identical to the global connection string.
   Separate component databases and SQLite are not supported in HA mode.
-- Enable only the experimental MSCs qualified for HA: `msc2444`, `msc2753`, and `msc2836`.
-  Startup refuses any other MSC, including `msc3814` and `msc3861`.
+- Enable only the experimental MSCs qualified for HA: `msc2444`, `msc2753`, `msc2836`, and `msc3861`.
+  Startup refuses any other MSC, including `msc3814`.
   With `msc2836`, leave `mscs.database.connection_string` empty or identical to the global connection string, so the relationship index is fenced like every other table.
+  With `msc3861` (delegated authentication, for example through MAS), accounts, devices, external ID mappings and login tokens it provisions are stored in the global database like every other write.
+  What it keeps in process memory is lost on takeover, and the client retries; see [Delegated authentication](/administration/oidc/#high-availability).
 - Configure external JetStream addresses, a nonempty homeserver-specific topic prefix, and `global.jetstream.replicas: 3` or `5`.
   HA uses file storage for every stream, including typing and presence streams.
   Startup waits up to 30 seconds per stream for every configured replica to become current and online.
@@ -64,6 +66,7 @@ Do not delete occupied streams or consumers to make validation pass.
 ## Candidate compatibility and upgrades
 
 Candidates compute a deployment identity from the public signing identities, effective PostgreSQL target and session parameters, broker endpoints/domain/prefix/replication, media namespace, search settings, and the set of enabled MSCs.
+With `msc3861` it also includes the issuer, the client ID, and whether `admin_token` is set, because they decide which account an OIDC subject is mapped to; the client secret and the admin token are not included.
 Every candidate must present the same identity; enabling or disabling an MSC is therefore an offline upgrade.
 The executable is not part of it: which builds may take over from each other is declared by their [upgrade contract](/administration/high-availability/#upgrade-contract).
 Disabling `msc2836` leaves its `MSC2836RoomServerConsumerPull` durable, named with the topic prefix, on the roomserver output stream, which HA will not delete; remove it during the same maintenance window, or it retains every roomserver output message.
@@ -112,6 +115,7 @@ Before opening public listeners, startup waits for the sync consumers to apply t
 The presence consumer participates only when inbound or outbound presence is enabled.
 Cancellation, broker errors, or a 120-second sync recovery timeout prevent readiness.
 Typing state, login/SSO intermediates, and sliding-sync sessions remain transient process state; clients may need to retry or establish a fresh session after promotion.
+With `msc3861`, that includes the token introspection cache, legacy SSO compatibility sessions and the provider tokens behind their login tokens, and cross-signing reset confirmations from the provider.
 Client transaction IDs are recorded in the database, so retrying a message after promotion does not store it twice.
 
 When search is enabled, set `sync_api.search.rebuild_on_startup: true`.
