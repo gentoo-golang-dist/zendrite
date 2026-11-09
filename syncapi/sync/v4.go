@@ -409,41 +409,11 @@ func (rp *RequestPool) recordDeliveredReceipts(ctx context.Context, connectionKe
 		return false
 	}
 	logrus.WithField("count", len(receipts)).Debug("[RECEIPTS] Updating connection state for delivered receipts")
-	txn, err := rp.db.NewDatabaseTransaction(ctx)
-	if err != nil {
+	if err := rp.db.RecordConnectionReceipts(ctx, connectionKey, receipts); err != nil {
 		if ctx.Err() != nil {
 			return false
 		}
-		logrus.WithError(err).Error("[RECEIPTS] Failed to create write transaction")
-		return true
-	}
-	defer func() { _ = txn.Rollback() }()
-	for _, receipt := range receipts {
-		if err = txn.UpsertConnectionReceipt(
-			ctx, connectionKey,
-			receipt.RoomID, receipt.Type, receipt.UserID,
-			receipt.EventID, receipt.ThreadID, receipt.Timestamp,
-		); err != nil {
-			if ctx.Err() != nil {
-				return false
-			}
-			logrus.WithError(err).WithFields(logrus.Fields{
-				"room_id": receipt.RoomID,
-				"type":    receipt.Type,
-			}).Error("[RECEIPTS] Failed to update connection receipt")
-			// Keep the receipts already recorded.
-			break
-		}
-	}
-	// Checked last so that a cancellation during the upserts commits nothing.
-	if ctx.Err() != nil {
-		return false
-	}
-	if err := txn.Commit(); err != nil {
-		if ctx.Err() != nil {
-			return false
-		}
-		logrus.WithError(err).Error("[RECEIPTS] Failed to commit connection receipt updates")
+		logrus.WithError(err).Error("[RECEIPTS] Failed to record delivered receipts")
 	}
 	return true
 }

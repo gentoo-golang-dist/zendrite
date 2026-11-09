@@ -84,9 +84,6 @@ type DatabaseTransaction interface {
 	RoomReceiptsAfter(ctx context.Context, roomIDs []string, streamPos types.StreamPosition) (types.StreamPosition, []types.OutputReceiptEvent, error)
 	// Per-connection receipt tracking for sliding sync (MSC4186)
 	SelectLatestUserReceiptsForConnection(ctx context.Context, connectionKey int64, roomIDs []string, userID string) ([]types.OutputReceiptEvent, error)
-	UpsertConnectionReceipt(ctx context.Context, connectionKey int64, roomID, receiptType, userID, eventID, threadID string, timestamp spec.Timestamp) error
-	DeleteConnectionReceipts(ctx context.Context, connectionKey int64) error
-	DeleteConnectionReceiptsForRoom(ctx context.Context, connectionKey int64, roomID string) error
 	// AllJoinedUsersInRooms returns a map of room ID to a list of all joined user IDs.
 	AllJoinedUsersInRooms(ctx context.Context) (map[string][]string, error)
 	// AllJoinedUsersInRoom returns a map of room ID to a list of all joined user IDs for a given room.
@@ -306,6 +303,10 @@ type SlidingSync interface {
 	UpdateConnectionStream(ctx context.Context, connectionPosition int64, roomID, stream, roomStatus, lastToken string) error
 	// DeleteOtherConnectionPositions removes all positions except the specified one (cleanup like Synapse)
 	DeleteOtherConnectionPositions(ctx context.Context, connectionKey int64, keepPosition int64) error
+	// RecordConnectionReceipts records the receipts a response delivers on a
+	// connection, in one transaction through the database's writer. It
+	// records nothing once the context is done.
+	RecordConnectionReceipts(ctx context.Context, connectionKey int64, receipts []types.OutputReceiptEvent) error
 	// DeleteConnectionReceipts removes all delivered receipt state for a connection
 	// This should be called on fresh sync (no pos token) to ensure receipts are re-delivered
 	DeleteConnectionReceipts(ctx context.Context, connectionKey int64) error

@@ -868,6 +868,27 @@ func (d *Database) DeleteOtherConnectionPositions(ctx context.Context, connectio
 	})
 }
 
+// RecordConnectionReceipts records the receipts a response delivers on a
+// connection, in one transaction through the writer. On SQLite a write
+// outside the writer can take the database lock while a writer transaction
+// is open, which then fails at once with "database is locked". It records
+// nothing once the context is done.
+func (d *Database) RecordConnectionReceipts(ctx context.Context, connectionKey int64, receipts []types.OutputReceiptEvent) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		for _, receipt := range receipts {
+			if err := d.Receipts.UpsertConnectionReceipt(
+				ctx, txn, connectionKey,
+				receipt.RoomID, receipt.Type, receipt.UserID,
+				receipt.EventID, receipt.ThreadID, receipt.Timestamp,
+			); err != nil {
+				return fmt.Errorf("d.Receipts.UpsertConnectionReceipt: %w", err)
+			}
+		}
+		// Checked last so that a cancellation during the upserts commits nothing.
+		return ctx.Err()
+	})
+}
+
 // DeleteConnectionReceipts removes all delivered receipt state for a connection.
 // This should be called on fresh sync (no pos token) to ensure receipts are re-delivered.
 func (d *Database) DeleteConnectionReceipts(ctx context.Context, connectionKey int64) error {

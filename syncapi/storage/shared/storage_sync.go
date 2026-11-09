@@ -207,14 +207,6 @@ func (d *DatabaseTransaction) SelectLatestUserReceiptsForConnection(ctx context.
 	return d.Receipts.SelectLatestUserReceiptsForConnection(ctx, d.txn, connectionKey, roomIDs, userID)
 }
 
-func (d *DatabaseTransaction) UpsertConnectionReceipt(ctx context.Context, connectionKey int64, roomID, receiptType, userID, eventID, threadID string, timestamp spec.Timestamp) error {
-	return d.Receipts.UpsertConnectionReceipt(ctx, d.txn, connectionKey, roomID, receiptType, userID, eventID, threadID, timestamp)
-}
-
-func (d *DatabaseTransaction) DeleteConnectionReceipts(ctx context.Context, connectionKey int64) error {
-	return d.Receipts.DeleteConnectionReceipts(ctx, d.txn, connectionKey)
-}
-
 // Events lookups a list of event by their event ID.
 // Returns a list of events matching the requested IDs found in the database.
 // If an event is not found in the database then it will be omitted from the list.
