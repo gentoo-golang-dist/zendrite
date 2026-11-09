@@ -99,7 +99,9 @@ func main() {
 			cfg.Logging[0].Level = "trace"
 			cfg.Logging[0].Type = "std"
 			cfg.UserAPI.BCryptCost = bcrypt.MinCost
-			cfg.Global.JetStream.InMemory = true
+			// JetStream keeps its streams on disk, as in production, so a
+			// server restarted mid-test still delivers the messages it
+			// published before it stopped, such as a device list update.
 			cfg.Global.JetStream.StoragePath = config.Path(*dirPath)
 			cfg.ClientAPI.RegistrationDisabled = false
 			cfg.ClientAPI.OpenRegistrationWithoutVerificationEnabled = true
