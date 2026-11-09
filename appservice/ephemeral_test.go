@@ -132,8 +132,11 @@ func TestEphemeralToAppservices(t *testing.T) {
 		now := strconv.FormatInt(int64(spec.AsTimestamp(time.Now())), 10)
 		messageID := room.Events()[len(room.Events())-1].EventID()
 
+		// The timeout runs from when the consumer reads the notification, and
+		// must outlast its room lookup on a busy runner, or the application
+		// services only see the typing stop.
 		publish(jetstream.OutputTypingEvent, map[string]string{
-			jetstream.RoomID: room.ID, jetstream.UserID: alice.ID, "typing": "true", "timeout_ms": "300",
+			jetstream.RoomID: room.ID, jetstream.UserID: alice.ID, "typing": "true", "timeout_ms": "2000",
 		})
 		publish(jetstream.OutputTypingEvent, map[string]string{
 			jetstream.RoomID: unrelated.ID, jetstream.UserID: stranger.ID, "typing": "true", "timeout_ms": "30000",

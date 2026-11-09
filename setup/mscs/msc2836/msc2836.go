@@ -111,7 +111,7 @@ func Enable(
 	}
 
 	routers.Client.Handle("/unstable/event_relationships",
-		httputil.MakeAuthAPI("eventRelationships", userAPI, eventRelationshipHandler(db, rsAPI, fsAPI)),
+		httputil.MakeAuthAPI("eventRelationships", userAPI, eventRelationshipHandler(db, rsAPI, fsAPI, cfg.Global.IsLocalServerName)),
 	).Methods(http.MethodPost, http.MethodOptions)
 
 	routers.Federation.Handle("/unstable/event_relationships", httputil.MakeExternalAPI(
@@ -122,7 +122,7 @@ func Enable(
 			if fedReq == nil {
 				return util.JSONResponse{Code: errResp.Code, JSON: errResp.JSON, Headers: errResp.Headers}
 			}
-			return federatedEventRelationship(req.Context(), fedReq, db, rsAPI, fsAPI)
+			return federatedEventRelationship(req.Context(), fedReq, db, rsAPI, fsAPI, cfg.Global.IsLocalServerName)
 		},
 	)).Methods(http.MethodPost, http.MethodOptions)
 	return nil
@@ -136,13 +136,20 @@ type reqCtx struct {
 	userID      spec.UserID
 	roomVersion gomatrixserverlib.RoomVersion
 
+	// localServer is the server name this request is handled as: the
+	// origin of the federation requests and roomserver input it causes.
+	localServer spec.ServerName
+	isLocal     func(spec.ServerName) bool
+
 	// federated request args
 	isFederatedRequest bool
 	serverName         spec.ServerName
 	fsAPI              fs.FederationInternalAPI
 }
 
-func eventRelationshipHandler(db Database, rsAPI roomserver.RoomserverInternalAPI, fsAPI fs.FederationInternalAPI) func(*http.Request, *userapi.Device) util.JSONResponse {
+func eventRelationshipHandler(
+	db Database, rsAPI roomserver.RoomserverInternalAPI, fsAPI fs.FederationInternalAPI, isLocal func(spec.ServerName) bool,
+) func(*http.Request, *userapi.Device) util.JSONResponse {
 	return func(req *http.Request, device *userapi.Device) util.JSONResponse {
 		relation, err := NewEventRelationshipRequest(req.Body)
 		if err != nil {
@@ -163,6 +170,8 @@ func eventRelationshipHandler(db Database, rsAPI roomserver.RoomserverInternalAP
 			ctx:                req.Context(),
 			req:                relation,
 			userID:             *userID,
+			localServer:        userID.Domain(),
+			isLocal:            isLocal,
 			rsAPI:              rsAPI,
 			fsAPI:              fsAPI,
 			isFederatedRequest: false,
@@ -182,6 +191,7 @@ func eventRelationshipHandler(db Database, rsAPI roomserver.RoomserverInternalAP
 
 func federatedEventRelationship(
 	ctx context.Context, fedReq *fclient.FederationRequest, db Database, rsAPI roomserver.RoomserverInternalAPI, fsAPI fs.FederationInternalAPI,
+	isLocal func(spec.ServerName) bool,
 ) util.JSONResponse {
 	relation, err := NewEventRelationshipRequest(bytes.NewBuffer(fedReq.Content()))
 	if err != nil {
@@ -192,10 +202,12 @@ func federatedEventRelationship(
 		}
 	}
 	rc := reqCtx{
-		ctx:   ctx,
-		req:   relation,
-		rsAPI: rsAPI,
-		db:    db,
+		ctx:         ctx,
+		req:         relation,
+		rsAPI:       rsAPI,
+		db:          db,
+		localServer: fedReq.Destination(),
+		isLocal:     isLocal,
 		// federation args
 		isFederatedRequest: true,
 		fsAPI:              fsAPI,
@@ -343,11 +355,7 @@ func (rc *reqCtx) fetchUnknownEvent(eventID, roomID string) *types.HeaderedEvent
 		logger.WithError(err).Error("failed to QueryJoinedHostServerNamesInRoom")
 		return nil
 	}
-	// query up to 5 servers
-	serversToQuery := queryRes.ServerNames
-	if len(serversToQuery) > 5 { //nolint:mnd
-		serversToQuery = serversToQuery[:5]
-	}
+	serversToQuery := rc.remoteServers(queryRes.ServerNames)
 
 	// fetch the event, along with some of the surrounding thread (if it's threaded) and the auth chain.
 	// Inject the response into the roomserver to remember the event across multiple calls and to set
@@ -390,7 +398,7 @@ func (rc *reqCtx) includeChildren(db Database, parentID string, limit int, recen
 		serversToQuery := rc.getServersForEventID(parentID)
 		var result *MSC2836EventRelationshipsResponse
 		for _, srv := range serversToQuery {
-			res, err := rc.fsAPI.MSC2836EventRelationships(rc.ctx, rc.serverName, srv, fclient.MSC2836EventRelationshipsRequest{
+			res, err := rc.fsAPI.MSC2836EventRelationships(rc.ctx, rc.localServer, srv, fclient.MSC2836EventRelationshipsRequest{
 				EventID:     parentID,
 				Direction:   "down",
 				Limit:       100, //nolint:mnd
@@ -481,7 +489,7 @@ func walkThread(
 
 // MSC2836EventRelationships performs an /event_relationships request to a remote server.
 func (rc *reqCtx) MSC2836EventRelationships(eventID string, srv spec.ServerName, ver gomatrixserverlib.RoomVersion) (*MSC2836EventRelationshipsResponse, error) {
-	res, err := rc.fsAPI.MSC2836EventRelationships(rc.ctx, rc.serverName, srv, fclient.MSC2836EventRelationshipsRequest{
+	res, err := rc.fsAPI.MSC2836EventRelationships(rc.ctx, rc.localServer, srv, fclient.MSC2836EventRelationshipsRequest{
 		EventID:     eventID,
 		DepthFirst:  rc.req.DepthFirst,
 		Direction:   rc.req.Direction,
@@ -559,11 +567,7 @@ func (rc *reqCtx) getServersForEventID(eventID string) []spec.ServerName {
 		util.GetLogger(rc.ctx).WithError(err).Error("getServersForEventID: failed to QueryJoinedHostServerNamesInRoom")
 		return nil
 	}
-	// query up to 5 servers
-	serversToQuery := queryRes.ServerNames
-	if len(serversToQuery) > 5 { //nolint:mnd
-		serversToQuery = serversToQuery[:5]
-	}
+	serversToQuery := rc.remoteServers(queryRes.ServerNames)
 	return serversToQuery
 }
 
@@ -617,10 +621,26 @@ func (rc *reqCtx) lookForEvent(eventID string) *types.HeaderedEvent {
 			}
 		}
 	}
-	if rc.req.RoomID == event.RoomID().String() {
+	if event != nil && rc.req.RoomID == event.RoomID().String() {
 		return event
 	}
 	return nil
+}
+
+// remoteServers returns up to five of the servers given, leaving out this
+// server: it can only ask others for events it does not have.
+func (rc *reqCtx) remoteServers(servers []spec.ServerName) []spec.ServerName {
+	remote := make([]spec.ServerName, 0, len(servers))
+	for _, srv := range servers {
+		if rc.isLocal != nil && rc.isLocal(srv) {
+			continue
+		}
+		remote = append(remote, srv)
+		if len(remote) == 5 { //nolint:mnd
+			break
+		}
+	}
+	return remote
 }
 
 func (rc *reqCtx) getLocalEvent(roomID, eventID string) *types.HeaderedEvent {
@@ -670,7 +690,7 @@ func (rc *reqCtx) injectResponseToRoomserver(res *MSC2836EventRelationshipsRespo
 	}
 	// we've got the data by this point so use a background context
 	ctx := context.Background()
-	if err := roomserver.SendInputRoomEvents(ctx, rc.rsAPI, rc.serverName, ires, false); err != nil {
+	if err := roomserver.SendInputRoomEvents(ctx, rc.rsAPI, rc.localServer, ires, false); err != nil {
 		return fmt.Errorf("inject MSC2836EventRelationshipsResponse into the roomserver: %w", err)
 	}
 	// Index every event, including duplicates the roomserver already knew:

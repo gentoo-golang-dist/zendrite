@@ -150,7 +150,7 @@ func startHomeserver(processCtx *process.ProcessContext, cfg *config.Zendrite, h
 	if err := processCtx.Context().Err(); err != nil {
 		return err
 	}
-	monolith.AddAllPublicRoutes(processCtx, cfg, routers, cm, &natsInstance, caches, caching.EnableMetrics)
+	startSending := monolith.AddAllPublicRoutes(processCtx, cfg, routers, cm, &natsInstance, caches, caching.EnableMetrics)
 	phases.done("public routes")
 
 	if err := processCtx.Context().Err(); err != nil {
@@ -172,6 +172,9 @@ func startHomeserver(processCtx *process.ProcessContext, cfg *config.Zendrite, h
 		}
 		phases.done("sync backlog")
 	}
+	// Every consumer of the roomserver output stream exists now, including
+	// those of the MSCs, so events sent from here on reach them all.
+	startSending()
 	// Admission is evaluated per request so a candidate that loses ownership
 	// rejects traffic immediately, including on established keep-alive
 	// connections, rather than waiting for Kubernetes to remove its endpoint.

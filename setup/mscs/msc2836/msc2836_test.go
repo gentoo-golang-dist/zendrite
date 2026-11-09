@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -16,8 +17,10 @@ import (
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
+	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 
+	fs "codefloe.com/pat-s/zendrite/federationapi/api"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	roomserver "codefloe.com/pat-s/zendrite/roomserver/api"
@@ -377,6 +380,59 @@ func TestMSC2836(t *testing.T) {
 }
 
 // TODO: TestMSC2836TerminatesLoops (short and long)
+// Events this server does not have are asked of the other servers in the
+// room, as this server: a request without an origin cannot be signed, and this
+// server cannot answer for itself. When no server answers, the walk ends
+// where the known events do instead of failing.
+func TestMSC2836AsksRemoteServersAsLocalServer(t *testing.T) {
+	alice := "@alice:localhost"
+	roomID := "!alice:localhost"
+	userAPI := &testUserAPI{accessTokens: map[string]userapi.Device{
+		"alice": {AccessToken: "alice", UserID: alice},
+	}}
+	eventD := mustCreateEvent(t, fledglingEvent{
+		RoomID: roomID, Sender: alice, Type: "m.room.message",
+		Content: map[string]any{"body": "[D] unknown here"},
+	})
+	eventE := mustCreateEvent(t, fledglingEvent{
+		RoomID: roomID, Sender: alice, Type: "m.room.message",
+		Content: map[string]any{
+			"body":           "[E] reply to D",
+			"m.relationship": map[string]string{"rel_type": "m.reference", "event_id": eventD.EventID()},
+		},
+	})
+	rsAPI := &testRoomserverAPI{
+		userToJoinedRooms: map[string][]string{alice: {roomID}},
+		events:            map[string]*types.HeaderedEvent{eventE.EventID(): eventE},
+	}
+	fsAPI := &testFederationAPI{servers: []spec.ServerName{"localhost", "remote"}}
+	router := injectEventsWithFederation(t, userAPI, rsAPI, fsAPI, []*types.HeaderedEvent{eventE})
+	cancel := runServer(t, router)
+	defer cancel()
+
+	// E's parent D is unknown and no server has it: E alone, not a 500.
+	res := postRelationships(t, 200, "alice", newReq(t, map[string]any{
+		"event_id":  eventE.EventID(),
+		"direction": "up",
+	}))
+	assertContains(t, res, []string{eventE.EventID()})
+
+	// An unknown event that no server has is refused.
+	postRelationships(t, 403, "alice", newReq(t, map[string]any{
+		"event_id": eventD.EventID(),
+		"room_id":  roomID,
+	}))
+
+	if len(fsAPI.calls) == 0 {
+		t.Fatalf("no remote /event_relationships requests were made")
+	}
+	for _, c := range fsAPI.calls {
+		if c.origin != "localhost" || c.dst != "remote" {
+			t.Errorf("remote request from %q to %q, want from localhost to remote", c.origin, c.dst)
+		}
+	}
+}
+
 // TODO: TestMSC2836UnknownEventsSkipped
 // TODO: TestMSC2836SkipEventIfNotInRoom
 
@@ -517,6 +573,30 @@ func (u *testUserAPI) QueryAccessToken(ctx context.Context, req *userapi.QueryAc
 	return nil
 }
 
+type fedCall struct{ origin, dst spec.ServerName }
+
+// testFederationAPI is in a room with the given servers, none of which
+// answer /event_relationships.
+type testFederationAPI struct {
+	fs.FederationInternalAPI
+	servers []spec.ServerName
+	calls   []fedCall
+}
+
+func (f *testFederationAPI) QueryJoinedHostServerNamesInRoom(
+	ctx context.Context, req *fs.QueryJoinedHostServerNamesInRoomRequest, res *fs.QueryJoinedHostServerNamesInRoomResponse,
+) error {
+	res.ServerNames = f.servers
+	return nil
+}
+
+func (f *testFederationAPI) MSC2836EventRelationships(
+	ctx context.Context, origin, dst spec.ServerName, r fclient.MSC2836EventRelationshipsRequest, roomVersion gomatrixserverlib.RoomVersion,
+) (fclient.MSC2836EventRelationshipsResponse, error) {
+	f.calls = append(f.calls, fedCall{origin: origin, dst: dst})
+	return fclient.MSC2836EventRelationshipsResponse{}, errors.New("unreachable")
+}
+
 type testRoomserverAPI struct {
 	// use a trace API as it implements method stubs so we don't need to have them here.
 	// We'll override the functions we care about.
@@ -544,6 +624,10 @@ func (r *testRoomserverAPI) QueryEventsByID(ctx context.Context, req *roomserver
 	return nil
 }
 
+func (r *testRoomserverAPI) QueryRoomVersionForRoom(ctx context.Context, roomID string) (gomatrixserverlib.RoomVersion, error) {
+	return gomatrixserverlib.RoomVersionV6, nil
+}
+
 func (r *testRoomserverAPI) QueryMembershipForUser(ctx context.Context, req *roomserver.QueryMembershipForUserRequest, res *roomserver.QueryMembershipForUserResponse) error {
 	rooms := r.userToJoinedRooms[req.UserID.String()]
 	for _, roomID := range rooms {
@@ -558,6 +642,14 @@ func (r *testRoomserverAPI) QueryMembershipForUser(ctx context.Context, req *roo
 }
 
 func injectEvents(t *testing.T, userAPI userapi.UserInternalAPI, rsAPI roomserver.RoomserverInternalAPI, events []*types.HeaderedEvent) *httputil.Router {
+	t.Helper()
+	return injectEventsWithFederation(t, userAPI, rsAPI, nil, events)
+}
+
+func injectEventsWithFederation(
+	t *testing.T, userAPI userapi.UserInternalAPI, rsAPI roomserver.RoomserverInternalAPI, fsAPI fs.FederationInternalAPI,
+	events []*types.HeaderedEvent,
+) *httputil.Router {
 	t.Helper()
 	cfg := &config.Zendrite{}
 	cfg.Defaults(config.DefaultOpts{
@@ -578,7 +670,7 @@ func injectEvents(t *testing.T, userAPI userapi.UserInternalAPI, rsAPI roomserve
 	js, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
 	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
 	routers := httputil.NewRouters()
-	err := msc2836.Enable(processCtx, cfg, cm, js, routers, rsAPI, nil, userAPI, nil)
+	err := msc2836.Enable(processCtx, cfg, cm, js, routers, rsAPI, fsAPI, userAPI, nil)
 	if err != nil {
 		t.Fatalf("failed to enable MSC2836: %s", err)
 	}

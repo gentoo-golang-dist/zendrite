@@ -54,7 +54,9 @@ type Monolith struct {
 	ExtUserDirectoryProvider userapi.QuerySearchProfilesAPI
 }
 
-// AddAllPublicRoutes attaches all public paths to the given router.
+// AddAllPublicRoutes attaches all public paths to the given router. It
+// returns a function that starts the background work which sends events, to
+// be called once every component that consumes events has been set up.
 func (m *Monolith) AddAllPublicRoutes(
 	processCtx *process.ProcessContext,
 	cfg *config.Zendrite,
@@ -63,12 +65,12 @@ func (m *Monolith) AddAllPublicRoutes(
 	natsInstance *jetstream.NATSInstance,
 	caches *caching.Caches,
 	enableMetrics bool,
-) {
+) (startSending func()) {
 	userDirectoryProvider := m.ExtUserDirectoryProvider
 	if userDirectoryProvider == nil {
 		userDirectoryProvider = m.UserAPI
 	}
-	clientapi.AddPublicRoutes(
+	startSending = clientapi.AddPublicRoutes(
 		processCtx, routers, cfg, natsInstance, m.FedClient, m.RoomserverAPI, m.AppserviceAPI, transactions.New(processCtx.Context()),
 		m.FederationAPI, m.UserAPI, userDirectoryProvider,
 		m.ExtPublicRoomsProvider, caches, enableMetrics,
@@ -82,4 +84,5 @@ func (m *Monolith) AddAllPublicRoutes(
 	if m.RelayAPI != nil {
 		relayapi.AddPublicRoutes(routers, cfg, m.KeyRing, m.RelayAPI)
 	}
+	return startSending
 }

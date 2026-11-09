@@ -24,7 +24,12 @@ import (
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
-// AddPublicRoutes sets up and registers HTTP handlers for the ClientAPI component.
+// AddPublicRoutes sets up and registers HTTP handlers for the ClientAPI
+// component. It returns a function that starts sending delayed events
+// (MSC4140), which the caller must call once every consumer of the roomserver
+// output stream exists: an event sent before then is lost to a consumer that
+// does not exist yet, as when JetStream is kept in memory and every consumer
+// is created anew on start.
 func AddPublicRoutes(
 	processContext *process.ProcessContext,
 	routers httputil.Routers,
@@ -40,7 +45,7 @@ func AddPublicRoutes(
 	extRoomsProvider api.ExtraPublicRoomsProvider,
 	caches *caching.Caches,
 	enableMetrics bool,
-) {
+) (startDelayedEvents func()) {
 	js, natsClient := natsInstance.Prepare(processContext, &cfg.Global.JetStream)
 
 	syncProducer := &producers.SyncAPIProducer{
@@ -62,5 +67,5 @@ func AddPublicRoutes(
 	)
 	// MSC4140: send the delayed events that become due, including those
 	// scheduled before this process started.
-	delayedEvents.Start(processContext.Context())
+	return func() { delayedEvents.Start(processContext.Context()) }
 }

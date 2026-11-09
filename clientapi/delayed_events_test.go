@@ -80,7 +80,8 @@ func newDelayedEventsHarness(t *testing.T, dbType test.DBType, users []*test.Use
 	// The sync API forwards room events to the user API, which cancels
 	// delayed state events when someone else changes that state.
 	syncapi.AddPublicRoutes(processCtx, routers, cfg, cm, &natsInstance, userAPI, rsAPI, caches, caching.DisableMetrics, nil, nil)
-	AddPublicRoutes(processCtx, routers, cfg, &natsInstance, nil, rsAPI, nil, transactions.New(processCtx.Context()), nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+	startDelayedEvents := AddPublicRoutes(processCtx, routers, cfg, &natsInstance, nil, rsAPI, nil, transactions.New(processCtx.Context()), nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+	startDelayedEvents()
 
 	accessTokens := map[*test.User]userDevice{}
 	for _, user := range users {

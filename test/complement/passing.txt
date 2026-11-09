@@ -189,8 +189,11 @@ tests/csapi/TestUploadKeyIdempotency
 tests/csapi/TestUploadKeyIdempotencyOverlap
 tests/csapi/TestUrlPreview
 tests/csapi/TestVersionStructure
+tests/msc2836/TestEventRelationships
+tests/msc2836/TestFederatedEventRelationships
 tests/msc3757/TestWithoutOwnedState
 tests/msc3967/TestMSC3967
+tests/msc4140/TestDelayedEvents
 tests/msc4222/TestSync
 tests/msc4306/TestMSC4308ThreadSubscriptionsSlidingSync
 tests/msc4306/TestThreadSubscriptions
