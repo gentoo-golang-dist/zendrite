@@ -7,7 +7,16 @@
 package consumers
 
 import (
+	"context"
 	"testing"
+
+	"codefloe.com/pat-s/gomatrixserverlib"
+	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/stretchr/testify/require"
+
+	"codefloe.com/pat-s/zendrite/roomserver/api"
+	"codefloe.com/pat-s/zendrite/setup/config"
+	"codefloe.com/pat-s/zendrite/test"
 )
 
 func TestCombineNoOp(t *testing.T) {
@@ -42,4 +51,40 @@ func TestCombineDedup(t *testing.T) {
 	if len(gotDel) != 1 || gotDel[0] != "b" {
 		t.Errorf("wanted combined removes to be %#v, got %#v", []string{"b"}, gotDel)
 	}
+}
+
+// senderRoomserverAPI resolves sender IDs as user IDs, as in rooms without
+// pseudo IDs.
+type senderRoomserverAPI struct {
+	api.FederationRoomserverAPI
+}
+
+func (senderRoomserverAPI) QueryUserIDForSender(_ context.Context, _ spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
+	return spec.NewUserID(string(senderID), true)
+}
+
+// An event a remote server sent us through /send_leave or /send_join is not
+// sent back to that server, while our own events go to every joined server.
+func TestRemoteSenderServerIsNotSentItsOwnEvent(t *testing.T) {
+	alice := test.NewUser(t)
+	charlie := test.NewUser(t, test.WithSigningServer("remote", "ed25519:remote", test.PrivateKeyB))
+	room := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV10))
+	room.CreateAndInsert(t, charlie, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(charlie.ID))
+	leave := room.CreateAndInsert(t, charlie, spec.MRoomMember, map[string]any{"membership": spec.Leave}, test.WithStateKey(charlie.ID))
+	message := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "hi"})
+
+	s := &OutputRoomEventConsumer{
+		ctx:   context.Background(),
+		cfg:   &config.FederationAPI{Matrix: &config.Global{ServerName: "test"}},
+		rsAPI: senderRoomserverAPI{},
+	}
+
+	server, ok := s.remoteSenderServer(api.OutputNewRoomEvent{Event: leave, SendAsServer: "test"})
+	require.True(t, ok)
+	require.Equal(t, spec.ServerName("remote"), server)
+	require.Equal(t, []spec.ServerName{"other"},
+		withoutServers([]spec.ServerName{"remote", "other"}, []spec.ServerName{server}))
+
+	_, ok = s.remoteSenderServer(api.OutputNewRoomEvent{Event: message, SendAsServer: "test"})
+	require.False(t, ok, "a local event has no remote sender to leave out")
 }

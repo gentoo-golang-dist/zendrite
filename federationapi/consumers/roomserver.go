@@ -334,6 +334,16 @@ func (s *OutputRoomEventConsumer) processMessage(ore api.OutputNewRoomEvent, rew
 		}
 	}
 
+	// An event a remote server handed us through /send_join, /send_leave or
+	// /send_knock is sent on to the rest of the room, but not back to that
+	// server, which already has it. As in Synapse, which drops the server it
+	// sends on behalf of. Echoing it back arrives late and can undo a later
+	// membership change on that server, such as a rejoin straight after a
+	// leave.
+	if senderServer, ok := s.remoteSenderServer(ore); ok {
+		joinedHostsAtEvent = withoutServers(joinedHostsAtEvent, []spec.ServerName{senderServer})
+	}
+
 	// TODO: do housekeeping to evict unrenewed peeking hosts
 
 	// TODO: implement query to let the fedapi check whether a given peek is live or not
@@ -342,6 +352,16 @@ func (s *OutputRoomEventConsumer) processMessage(ore api.OutputNewRoomEvent, rew
 	return s.queues.SendEvent(
 		ore.Event, spec.ServerName(ore.SendAsServer), joinedHostsAtEvent,
 	)
+}
+
+// remoteSenderServer returns the server of the event's sender if that server
+// is remote.
+func (s *OutputRoomEventConsumer) remoteSenderServer(ore api.OutputNewRoomEvent) (spec.ServerName, bool) {
+	sender, err := s.rsAPI.QueryUserIDForSender(s.ctx, ore.Event.RoomID(), ore.Event.SenderID())
+	if err != nil || sender == nil || s.cfg.Matrix.IsLocalServerName(sender.Domain()) {
+		return "", false
+	}
+	return sender.Domain(), true
 }
 
 // pendingMembershipTarget returns the server of the user a membership event
