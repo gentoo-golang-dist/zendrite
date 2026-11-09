@@ -7,6 +7,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -35,6 +36,7 @@ func SetPresence(
 	cfg *config.ClientAPI,
 	device *api.Device,
 	producer *producers.SyncAPIProducer,
+	natsClient *nats.Conn,
 	userID string,
 ) util.JSONResponse {
 	if !cfg.Matrix.Presence.EnableOutbound {
@@ -71,9 +73,53 @@ func SetPresence(
 		}
 	}
 
+	// The sync API stores the update when it consumes it, which can be after
+	// this request returns. Wait for it, so that a GET straight after the PUT
+	// sees the new presence.
+	waitForPresence(
+		req.Context(), natsClient, cfg.Matrix.JetStream.Prefixed(jetstream.RequestPresence),
+		userID, presenceStatus.String(), presence.StatusMsg,
+	)
+
 	return util.JSONResponse{
 		Code: http.StatusOK,
 		JSON: struct{}{},
+	}
+}
+
+// presenceWait bounds how long SetPresence waits for the sync API to store the
+// presence it sets.
+const presenceWait = 2 * time.Second
+
+// waitForPresence waits until the sync API reports the given presence and,
+// if one is given, status message for the user. It gives up quietly after
+// presenceWait, as the update is published either way.
+func waitForPresence(
+	ctx context.Context, natsClient *nats.Conn, topic, userID, presence string, statusMsg *string,
+) {
+	if natsClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, presenceWait)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		msg := nats.NewMsg(topic)
+		msg.Header.Set(jetstream.UserID, userID)
+		res, err := natsClient.RequestMsgWithContext(ctx, msg)
+		if err != nil {
+			return
+		}
+		if res.Header.Get("error") == "" && res.Header.Get("presence") == presence &&
+			(statusMsg == nil || res.Header.Get("status_msg") == *statusMsg) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 

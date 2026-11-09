@@ -101,17 +101,27 @@ func (p *InviteStreamProvider) IncrementalSync(
 		req.Response.Rooms.Invite[roomID] = ir
 	}
 
-	// When doing an initial sync, we don't want to add retired invites, as this
-	// can add rooms we were invited to, but already left.
-	if from == 0 {
+	// A complete sync lists retired invites only for a filter with
+	// include_leave, which asks for the rooms the user has left. Without it,
+	// they would add rooms the user was invited to and has since left.
+	completeSync := from == 0
+	if completeSync && !req.Filter.Room.IncludeLeave {
 		return to
 	}
 	for roomID := range retiredInvites {
+		// The PDU stream already lists rooms whose leave the sync API has,
+		// with the real leave event.
+		if _, listed := req.Response.Rooms.Leave[roomID]; listed {
+			continue
+		}
 		membership, _, err := snapshot.SelectMembershipForUser(ctx, roomID, req.Device.UserID, math.MaxInt64)
 		// Skip if the user is an existing member of the room.
 		// Otherwise, the NewLeaveResponse will eject the user from the room unintentionally
 		if membership == spec.Join ||
 			err != nil {
+			continue
+		}
+		if completeSync && p.roomForgotten(ctx, req, roomID) {
 			continue
 		}
 
@@ -130,5 +140,26 @@ func (p *InviteStreamProvider) IncrementalSync(
 		req.Response.Rooms.Leave[roomID] = lr
 	}
 
+	if completeSync {
+		return to
+	}
 	return maxID
+}
+
+// roomForgotten reports whether the user has forgotten the room, so that a
+// complete sync leaves it out. A room whose membership cannot be looked up is
+// listed, as the user's server may never have joined it.
+func (p *InviteStreamProvider) roomForgotten(ctx context.Context, req *types.SyncRequest, roomID string) bool {
+	userID, err := spec.NewUserID(req.Device.UserID, true)
+	if err != nil {
+		return false
+	}
+	var res api.QueryMembershipForUserResponse
+	if err = p.rsAPI.QueryMembershipForUser(ctx, &api.QueryMembershipForUserRequest{
+		RoomID: roomID, UserID: *userID,
+	}, &res); err != nil {
+		req.Log.WithError(err).WithField("room_id", roomID).Debug("Failed to query the membership of a room with a retired invite")
+		return false
+	}
+	return res.IsRoomForgotten
 }

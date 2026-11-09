@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"codefloe.com/pat-s/zendrite/mediaapi/types"
 )
 
 func TestReadWebP(t *testing.T) {
@@ -32,7 +34,7 @@ func TestReadWebP(t *testing.T) {
 			}
 			// Exercise the JPEG thumbnail path, not just decoding.
 			path := filepath.Join(t.TempDir(), "thumbnail.jpg")
-			require.NoError(t, writeFile(img, path))
+			require.NoError(t, writeFile(img, path, jpegThumbnail))
 			thumbnail, err := readFile(path)
 			require.NoError(t, err)
 			require.Equal(t, img.Bounds(), thumbnail.Bounds())
@@ -73,4 +75,33 @@ func TestReadInvalidWebP(t *testing.T) {
 		_, err := readFile(path)
 		require.Error(t, err, "input length %d", len(data))
 	}
+}
+
+// PNG and GIF files get PNG thumbnails, which keep transparency; other
+// images get JPEG thumbnails.
+func TestThumbnailContentType(t *testing.T) {
+	for source, want := range map[types.ContentType]types.ContentType{
+		"image/png":                 pngThumbnail,
+		"image/PNG; charset=binary": pngThumbnail,
+		"image/apng":                pngThumbnail,
+		"image/gif":                 pngThumbnail,
+		"image/jpeg":                jpegThumbnail,
+		"image/webp":                jpegThumbnail,
+		"":                          jpegThumbnail,
+	} {
+		require.Equal(t, want, thumbnailContentType(source), "source %q", source)
+	}
+
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.NRGBA{R: 255, A: 128})
+	path := filepath.Join(t.TempDir(), "thumbnail")
+	require.NoError(t, writeFile(img, path, pngThumbnail))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "\x89PNG", string(data[:4]), "a PNG thumbnail is encoded as PNG")
+	thumbnail, err := readFile(path)
+	require.NoError(t, err)
+	pixel, ok := color.NRGBAModel.Convert(thumbnail.At(0, 0)).(color.NRGBA)
+	require.True(t, ok)
+	require.Equal(t, uint8(128), pixel.A, "a PNG thumbnail keeps transparency")
 }

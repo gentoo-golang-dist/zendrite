@@ -74,7 +74,8 @@ func TestAnimatedThumbnails(t *testing.T) {
 		for _, query := range []string{"", "&animated=false"} {
 			rec := e.thumbnail(animated, query)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-			assert.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"), "query %q", query)
+			// A GIF gets a PNG still rendition.
+			assert.Equal(t, "image/png", rec.Header().Get("Content-Type"), "query %q", query)
 		}
 
 		rec := e.thumbnail(animated, "&animated=true")

@@ -8,6 +8,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -276,6 +277,9 @@ type SlidingSync interface {
 	// ===== Room Metadata (Phase 12 optimization) =====
 	// GetSlidingSyncRoomMetadata returns the interface for room metadata operations
 	GetSlidingSyncRoomMetadata() tables.SlidingSyncRoomMetadata
+	// WriteSlidingSyncRoomMetadata runs writes to the room metadata tables
+	// through the database's writer, in one transaction.
+	WriteSlidingSyncRoomMetadata(ctx context.Context, f func(txn *sql.Tx) error) error
 
 	// ===== Connection Management =====
 	// GetOrCreateConnection retrieves an existing connection or creates a new one

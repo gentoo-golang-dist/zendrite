@@ -24,6 +24,8 @@ tests/TestFederatedClientSpaces
 tests/TestFederationKeyUploadQuery
 tests/TestFederationRedactSendsWithoutEvent
 tests/TestFederationRejectInvite
+tests/TestFederationRoomsInvite
+tests/TestFederationThumbnail
 tests/TestGetMissingEventsGapFilling
 tests/TestInboundCanReturnMissingEvents
 tests/TestInboundFederationKeys
@@ -36,6 +38,7 @@ tests/TestJoinFederatedRoomFromApplicationServiceBridgeUser
 tests/TestJoinFederatedRoomWithUnverifiableEvents
 tests/TestJoinViaRoomIDAndServerName
 tests/TestJumpToDateEndpoint
+tests/TestKnockRestrictedRoomsLocalJoinNoCreatorsUsesPowerLevelsV11
 tests/TestKnockRestrictedRoomsLocalJoinNoCreatorsUsesPowerLevelsV12
 tests/TestKnockRoomsInPublicRoomsDirectory
 tests/TestKnockRoomsInPublicRoomsDirectoryInMSC3787Room
@@ -78,6 +81,7 @@ tests/TestRestrictedRoomsRemoteJoinFailOver
 tests/TestRestrictedRoomsRemoteJoinFailOverInMSC3787Room
 tests/TestRestrictedRoomsRemoteJoinInMSC3787Room
 tests/TestRestrictedRoomsRemoteJoinLocalUser
+tests/TestRestrictedRoomsRemoteJoinLocalUserInMSC3787Room
 tests/TestRestrictedRoomsSpacesSummaryFederation
 tests/TestRestrictedRoomsSpacesSummaryLocal
 tests/TestRoomSummaryAllowedRoomIDs
@@ -138,6 +142,7 @@ tests/csapi/TestMessagesOverFederation
 tests/csapi/TestNotPresentUserCannotBanOthers
 tests/csapi/TestOlderLeftRoomsNotInLeaveSection
 tests/csapi/TestPowerLevels
+tests/csapi/TestPresence
 tests/csapi/TestPresenceSyncDifferentRooms
 tests/csapi/TestProfileAvatarURL
 tests/csapi/TestProfileDisplayName
@@ -145,6 +150,7 @@ tests/csapi/TestPublicRooms
 tests/csapi/TestPushRuleCacheHealth
 tests/csapi/TestPushRuleRoomUpgrade
 tests/csapi/TestPushSync
+tests/csapi/TestRedact
 tests/csapi/TestRelations
 tests/csapi/TestRelationsPagination
 tests/csapi/TestRelationsPaginationSync
@@ -173,6 +179,7 @@ tests/csapi/TestServerNotices
 tests/csapi/TestSync
 tests/csapi/TestSyncFilter
 tests/csapi/TestSyncLeaveSection
+tests/csapi/TestSyncTimelineGap
 tests/csapi/TestTentativeEventualJoiningAfterRejecting
 tests/csapi/TestThreadReceiptsInSyncMSC4102
 tests/csapi/TestThreadedReceipts
@@ -191,6 +198,7 @@ tests/csapi/TestUrlPreview
 tests/csapi/TestVersionStructure
 tests/msc2836/TestEventRelationships
 tests/msc2836/TestFederatedEventRelationships
+tests/msc3389/TestMSC3389RedactionStripsRelationInOlderVersions
 tests/msc3757/TestWithoutOwnedState
 tests/msc3967/TestMSC3967
 tests/msc4140/TestDelayedEvents

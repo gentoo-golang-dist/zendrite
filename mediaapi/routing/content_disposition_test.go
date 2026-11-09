@@ -36,8 +36,8 @@ func TestMediaContentHeaders(t *testing.T) {
 		animated := e.uploadImage(t, encodeGIF(t, 3), "image/gif")
 		rec = e.thumbnail(animated, "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		assert.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"))
-		assert.Equal(t, `inline; filename="thumbnail.jpg"`, rec.Header().Get("Content-Disposition"))
+		assert.Equal(t, "image/png", rec.Header().Get("Content-Type"))
+		assert.Equal(t, `inline; filename="thumbnail.png"`, rec.Header().Get("Content-Disposition"))
 
 		// An original that is small enough to be its own thumbnail.
 		still := e.uploadImage(t, encodeGIF(t, 1), "image/gif")

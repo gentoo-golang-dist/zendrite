@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"time"
 
+	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -71,7 +73,17 @@ func GetEvent(
 
 	// A client may fetch an event it has just sent before the sync API has
 	// received it from the roomserver. Wait for it rather than answer 404.
-	if len(events) == 0 && waitForOwnEvent(ctx, syncDB, rsAPI, device, *roomID, eventID) {
+	// Likewise, the roomserver redacts an event before the redaction request
+	// returns, and the sync API only once it receives the redaction. Wait for
+	// it rather than serve content that has already been redacted.
+	waited := false
+	switch {
+	case len(events) == 0:
+		waited = waitForOwnEvent(ctx, syncDB, rsAPI, device, *roomID, eventID)
+	case len(events) == 1 && !isRedacted(events[0].PDU):
+		waited = waitForRedaction(ctx, syncDB, rsAPI, *roomID, eventID)
+	}
+	if waited {
 		db.Rollback() //nolint:errcheck
 		if db, err = syncDB.NewDatabaseSnapshot(ctx); err != nil {
 			logger.WithError(err).Error("GetEvent: syncDB.NewDatabaseSnapshot failed")
@@ -204,4 +216,44 @@ func waitForOwnEvent(
 			return true
 		}
 	}
+}
+
+// waitForRedaction waits until the sync API's copy of the event is redacted,
+// if the roomserver's copy already is, and reports whether it was.
+func waitForRedaction(
+	ctx context.Context, syncDB storage.Database, rsAPI api.SyncRoomserverAPI,
+	roomID spec.RoomID, eventID string,
+) bool {
+	res := &api.QueryEventsByIDResponse{}
+	if err := rsAPI.QueryEventsByID(ctx, &api.QueryEventsByIDRequest{
+		RoomID: roomID.String(), EventIDs: []string{eventID},
+	}, res); err != nil || len(res.Events) != 1 || !isRedacted(res.Events[0].PDU) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, ownEventWait)
+	defer cancel()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+		snapshot, err := syncDB.NewDatabaseSnapshot(ctx)
+		if err != nil {
+			return false
+		}
+		events, err := snapshot.Events(ctx, []string{eventID})
+		snapshot.Rollback() //nolint:errcheck
+		if err == nil && len(events) == 1 && isRedacted(events[0].PDU) {
+			return true
+		}
+	}
+}
+
+// isRedacted reports whether the event has been redacted. Stored events carry
+// the redaction in unsigned.redacted_because.
+func isRedacted(ev gomatrixserverlib.PDU) bool {
+	return ev.Redacted() || gjson.GetBytes(ev.JSON(), "unsigned.redacted_because").Exists()
 }

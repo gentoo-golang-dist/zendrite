@@ -1010,6 +1010,12 @@ func (d *Database) GetSlidingSyncRoomMetadata() tables.SlidingSyncRoomMetadata {
 	return d.SlidingSyncRoomMetadata
 }
 
+// WriteSlidingSyncRoomMetadata runs writes to the room metadata tables
+// through the writer, in one transaction.
+func (d *Database) WriteSlidingSyncRoomMetadata(ctx context.Context, f func(txn *sql.Tx) error) error {
+	return d.Writer.Do(d.DB, nil, f)
+}
+
 // InsertUnPartialStatedRoom records that a room has completed its partial state resync (MSC3706).
 func (d *Database) InsertUnPartialStatedRoom(ctx context.Context, roomID, userID string) (types.StreamPosition, error) {
 	var pos types.StreamPosition

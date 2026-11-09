@@ -8,6 +8,7 @@ package internal
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"sync"
 	"time"
@@ -66,6 +67,14 @@ func NewSlidingSyncMetadataWorker(
 		workerCh:     make(chan string, 1000),
 		retryMap:     make(map[string]time.Time),
 	}
+}
+
+// write runs a write to the metadata tables through the sync database's
+// writer. On SQLite a write outside it can take the database lock while a
+// writer transaction is open, which then fails at once with "database is
+// locked".
+func (w *SlidingSyncMetadataWorker) write(ctx context.Context, f func(txn *sql.Tx) error) error {
+	return w.db.WriteSlidingSyncRoomMetadata(ctx, f)
 }
 
 // Start begins the metadata worker. This is non-blocking - all work happens
@@ -175,7 +184,9 @@ func (w *SlidingSyncMetadataWorker) queueInitialPopulation() {
 		}
 
 		// Insert into recalculate queue
-		if err := w.roomMetadata.InsertRoomToRecalculate(ctx, nil, roomID); err != nil {
+		if err := w.write(ctx, func(txn *sql.Tx) error {
+			return w.roomMetadata.InsertRoomToRecalculate(ctx, txn, roomID)
+		}); err != nil {
 			logrus.WithError(err).WithField("room_id", roomID).Warn("[SLIDING_SYNC_METADATA] Failed to queue room")
 			continue
 		}
@@ -310,7 +321,9 @@ func (w *SlidingSyncMetadataWorker) processRoom(roomID string) error {
 	}
 
 	// Upsert into joined_rooms table
-	if err := w.roomMetadata.UpsertJoinedRoom(ctx, nil, joinedRoom); err != nil {
+	if err := w.write(ctx, func(txn *sql.Tx) error {
+		return w.roomMetadata.UpsertJoinedRoom(ctx, txn, joinedRoom)
+	}); err != nil {
 		return err
 	}
 
@@ -320,7 +333,9 @@ func (w *SlidingSyncMetadataWorker) processRoom(roomID string) error {
 	}
 
 	// Remove from recalculate queue
-	if err := w.roomMetadata.DeleteRoomToRecalculate(ctx, nil, roomID); err != nil {
+	if err := w.write(ctx, func(txn *sql.Tx) error {
+		return w.roomMetadata.DeleteRoomToRecalculate(ctx, txn, roomID)
+	}); err != nil {
 		logrus.WithError(err).WithField("room_id", roomID).Warn("[SLIDING_SYNC_METADATA] Failed to remove from recalculate queue")
 		// Not fatal, continue
 	}
@@ -420,7 +435,9 @@ func (w *SlidingSyncMetadataWorker) QueueMembershipChange(roomID, userID, sender
 		TombstoneSuccessorRoomID: roomMeta.TombstoneSuccessorRoomID,
 	}
 
-	if err := w.roomMetadata.UpsertMembershipSnapshot(ctx, nil, snapshot); err != nil {
+	if err := w.write(ctx, func(txn *sql.Tx) error {
+		return w.roomMetadata.UpsertMembershipSnapshot(ctx, txn, snapshot)
+	}); err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"room_id": roomID,
 			"user_id": userID,
@@ -472,7 +489,9 @@ func (w *SlidingSyncMetadataWorker) updateMembershipSnapshots(
 			TombstoneSuccessorRoomID: roomMeta.TombstoneSuccessorRoomID,
 		}
 
-		if err := w.roomMetadata.UpsertMembershipSnapshot(ctx, nil, membershipSnapshot); err != nil {
+		if err := w.write(ctx, func(txn *sql.Tx) error {
+			return w.roomMetadata.UpsertMembershipSnapshot(ctx, txn, membershipSnapshot)
+		}); err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
 				"room_id": roomID,
 				"user_id": userID,

@@ -2061,7 +2061,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return SetPresence(req, cfg, device, syncProducer, vars["userId"])
+			return SetPresence(req, cfg, device, syncProducer, natsClient, vars["userId"])
 		}),
 	).Methods(http.MethodPut, http.MethodOptions)
 	v3mux.Handle("/presence/{userId}/status",
