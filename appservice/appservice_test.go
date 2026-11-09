@@ -566,6 +566,100 @@ func TestOutputAppserviceEvent(t *testing.T) {
 	})
 }
 
+// TestAppserviceRemoteInvite verifies that an invite received over federation
+// reaches the application service. For a room this server is not in, the
+// roomserver publishes the invite as an OutputTypeNewInviteEvent only, so the
+// sync API must forward it to the OutputAppserviceEvent topic and the
+// appservice consumer must process it - otherwise bridges never learn that
+// one of their users was invited.
+func TestAppserviceRemoteInvite(t *testing.T) {
+	alice := test.NewUser(t)
+	bob := test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+
+		evChan := make(chan struct{})
+
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		// Create required internal APIs
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		routers := httputil.NewRouters()
+		usrAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+
+		room := test.NewRoom(t, alice)
+
+		// Invite Bob, a user matching the application service's namespace.
+		// The room is deliberately NOT sent to the roomserver: this models
+		// an invite that arrived over federation for a room we are not in.
+		inviteEv := room.CreateAndInsert(t, alice, spec.MRoomMember, map[string]any{
+			"membership": "invite",
+		}, test.WithStateKey(bob.ID))
+
+		// create a dummy AS url, handling the events
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var txn consumers.ApplicationServiceTransaction
+			err := json.NewDecoder(r.Body).Decode(&txn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ev := range txn.Events {
+				if ev.Type != spec.MRoomMember {
+					continue
+				}
+				if ev.StateKey != nil && *ev.StateKey == bob.ID {
+					membership := gjson.GetBytes(ev.Content, "membership").Str
+					if membership == spec.Invite {
+						evChan <- struct{}{}
+					}
+				}
+			}
+		}))
+		defer srv.Close()
+
+		as := &config.ApplicationService{
+			ID:              "someID",
+			URL:             srv.URL,
+			ASToken:         "",
+			HSToken:         "",
+			SenderLocalpart: "senderLocalPart",
+			NamespaceMap: map[string][]config.ApplicationServiceNamespace{
+				"users": {{RegexpObject: regexp.MustCompile(bob.ID)}},
+			},
+		}
+		as.CreateHTTPClient(cfg.AppServiceAPI.DisableTLSValidation)
+
+		// Create a dummy application service
+		cfg.AppServiceAPI.Derived.ApplicationServices = []config.ApplicationService{*as}
+
+		// Start the sync API: it is the component that republishes roomserver
+		// output to the OutputAppserviceEvent topic the appservice consumes.
+		syncapi.AddPublicRoutes(processCtx, routers, cfg, cm, natsInstance, usrAPI, rsAPI, caches, caching.DisableMetrics, nil, nil)
+
+		// start the consumer
+		appservice.NewInternalAPI(processCtx, cfg, natsInstance, usrAPI, rsAPI)
+
+		// Deliver the invite the same way the federation /invite/v2 endpoint
+		// does: HandleInvite publishes an OutputTypeNewInviteEvent and nothing
+		// else, since the server is not in the room.
+		if err := rsAPI.HandleInvite(processCtx.Context(), inviteEv); err != nil {
+			t.Fatalf("failed to handle invite: %v", err)
+		}
+
+		select {
+		case <-time.After(30 * time.Second):
+			t.Errorf("Timed out waiting for invite event")
+		case <-evChan:
+		}
+		close(evChan)
+	})
+}
+
 type userDevice struct {
 	accessToken string
 	deviceID    string

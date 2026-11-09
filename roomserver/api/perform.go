@@ -66,14 +66,23 @@ type PerformLeaveRequest struct {
 type PerformLeaveResponse struct {
 	Code    int `json:"code,omitempty"`
 	Message any `json:"message,omitempty"`
+	// EventID is the ID of the leave event sent through another server when
+	// an invite or knock on a room this server is not in was rejected or
+	// withdrawn. That event is not stored here, so it cannot be looked up.
+	EventID string `json:"event_id,omitempty"`
 }
 
 type InviteInput struct {
-	RoomID     spec.RoomID
-	Inviter    spec.UserID
-	Invitee    spec.UserID
-	Reason     string
-	IsDirect   bool
+	RoomID   spec.RoomID
+	Inviter  spec.UserID
+	Invitee  spec.UserID
+	Reason   string
+	IsDirect bool
+	// Content, if set, is used as the content of the invite event instead of
+	// one built from Reason and IsDirect. It is how an invite sent as a raw
+	// m.room.member state event keeps its extra fields. The membership is
+	// always forced to "invite".
+	Content    map[string]any
 	KeyID      gomatrixserverlib.KeyID
 	PrivateKey ed25519.PrivateKey
 	EventTime  time.Time

@@ -148,7 +148,17 @@ func (r *Inviter) PerformInvite(
 		IsDirect:   req.InviteInput.IsDirect,
 	}
 
-	if err = proto.SetContent(content); err != nil {
+	if req.InviteInput.Content != nil {
+		raw := make(map[string]any, len(req.InviteInput.Content)+1)
+		for k, v := range req.InviteInput.Content {
+			raw[k] = v
+		}
+		raw["membership"] = spec.Invite
+		err = proto.SetContent(raw)
+	} else {
+		err = proto.SetContent(content)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -247,10 +257,11 @@ func (r *Inviter) PerformInvite(
 	inputReq := &api.InputRoomEventsRequest{
 		InputRoomEvents: []api.InputRoomEvent{
 			{
-				Kind:         api.KindNew,
-				Event:        &types.HeaderedEvent{PDU: inviteEvent},
-				Origin:       req.InviteInput.Inviter.Domain(),
-				SendAsServer: req.SendAsServer,
+				Kind:          api.KindNew,
+				Event:         &types.HeaderedEvent{PDU: inviteEvent},
+				Origin:        req.InviteInput.Inviter.Domain(),
+				SendAsServer:  req.SendAsServer,
+				TransactionID: req.TransactionID,
 			},
 		},
 	}

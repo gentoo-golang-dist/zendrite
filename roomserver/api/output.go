@@ -219,6 +219,10 @@ type OutputNewInviteEvent struct {
 	RoomVersion gomatrixserverlib.RoomVersion `json:"room_version"`
 	// The "m.room.member" invite event.
 	Event *types.HeaderedEvent `json:"event"`
+	// NotInRoom is set for an invite received over federation for a room
+	// this server is not in. Such an invite is published only as this
+	// output; any other invite also arrives as an OutputTypeNewRoomEvent.
+	NotInRoom bool `json:"not_in_room,omitempty"`
 }
 
 // An OutputNewKnockEvent is written whenever a local user's knock becomes

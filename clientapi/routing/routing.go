@@ -856,6 +856,9 @@ func Setup(
 			if delayedEvents.Requested(req) {
 				return delayedEvents.Schedule(req, device, vars["roomID"], vars["eventType"], nil, &stateKey)
 			}
+			if res, handled := SendMembershipStateEvent(req, device, vars["roomID"], vars["eventType"], stateKey, rsAPI, userAPI); handled {
+				return res
+			}
 			return SendEvent(req, device, vars["roomID"], vars["eventType"], nil, &stateKey, cfg, rsAPI, nil, federation)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)

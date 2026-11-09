@@ -345,9 +345,20 @@ func (r *RoomserverInternalAPI) HandleInvite(
 			}
 		}
 	}
+	// Whether the invite will also arrive as a room event. If the room state
+	// cannot be read, assume it will not, so the invite is not lost.
+	inRoom := false
+	if info, infoErr := r.DB.RoomInfo(ctx, inviteEvent.RoomID().String()); infoErr == nil && info != nil && !info.IsStub() {
+		inRoom, _ = r.DB.GetLocalServerInRoom(ctx, info.RoomNID)
+	}
 	outputEvents, err := r.ProcessInviteMembership(ctx, inviteEvent)
 	if err != nil {
 		return err
+	}
+	for i := range outputEvents {
+		if outputEvents[i].NewInviteEvent != nil {
+			outputEvents[i].NewInviteEvent.NotInRoom = !inRoom
+		}
 	}
 	return r.OutputProducer.ProduceRoomEvents(inviteEvent.RoomID().String(), outputEvents)
 }

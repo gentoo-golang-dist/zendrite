@@ -254,6 +254,14 @@ func sendEventContent(
 	if resErr = checkInviteBlocked(ctx, rsAPI, e); resErr != nil {
 		return "", resErr
 	}
+	// The event is only built above to validate it. An invite has to go
+	// through the roomserver's invite flow, which is what delivers it to a
+	// remote invitee over federation and attaches the invite room state.
+	if stateKey != nil && e.Type() == spec.MRoomMember {
+		if membership, mErr := e.Membership(); mErr == nil && membership == spec.Invite {
+			return sendMemberInvite(ctx, device, roomID, *stateKey, r, evTime, txnAndSessionID, cfg, rsAPI)
+		}
+	}
 	if stateKey == nil {
 		if resErr = validateAnnotation(ctx, rsAPI, e, txnAndSessionID); resErr != nil {
 			return "", resErr

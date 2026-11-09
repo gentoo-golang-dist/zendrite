@@ -159,6 +159,16 @@ func (s *OutputRoomEventConsumer) onMessage(
 				}
 			}
 
+		case api.OutputTypeNewInviteEvent:
+			// An invite, typically received over federation. Local invites
+			// also arrive as OutputTypeNewRoomEvent. The interest check
+			// matches m.room.member events whose state_key is in one of the
+			// application service's user namespaces.
+			if output.NewInviteEvent == nil || !s.appserviceIsInterestedInEvent(ctx, output.NewInviteEvent.Event, state.ApplicationService) {
+				continue
+			}
+			events = append(events, output.NewInviteEvent.Event)
+
 		default:
 			continue
 		}

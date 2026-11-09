@@ -343,6 +343,23 @@ func sendInvite(
 	rsAPI roomserverAPI.ClientRoomserverAPI,
 	evTime time.Time,
 ) (util.JSONResponse, error) {
+	return sendInviteWithContent(ctx, device, roomID, userID, reason, nil, nil, cfg, rsAPI, evTime)
+}
+
+// sendInviteWithContent is sendInvite for an invite whose event content is
+// given (nil to build it from reason), as when an invite is sent as a raw
+// m.room.member state event. The txn argument is the client's transaction,
+// if any.
+func sendInviteWithContent(
+	ctx context.Context,
+	device *userapi.Device,
+	roomID, userID, reason string,
+	content map[string]any,
+	txn *roomserverAPI.TransactionID,
+	cfg *config.ClientAPI,
+	rsAPI roomserverAPI.ClientRoomserverAPI,
+	evTime time.Time,
+) (util.JSONResponse, error) {
 	validRoomID, err := spec.NewRoomID(roomID)
 	if err != nil {
 		return util.JSONResponse{
@@ -379,12 +396,14 @@ func sendInvite(
 			Invitee:    *invitee,
 			Reason:     reason,
 			IsDirect:   false,
+			Content:    content,
 			KeyID:      identity.KeyID,
 			PrivateKey: identity.PrivateKey,
 			EventTime:  evTime,
 		},
 		InviteRoomState: nil, // ask the roomserver to draw up invite room state for us
 		SendAsServer:    string(device.UserDomain()),
+		TransactionID:   txn,
 	})
 
 	{

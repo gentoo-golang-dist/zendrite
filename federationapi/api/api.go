@@ -199,7 +199,10 @@ type PerformLeaveRequest struct {
 	Reason      string            `json:"reason,omitempty"`
 }
 
-type PerformLeaveResponse struct{}
+type PerformLeaveResponse struct {
+	// EventID is the ID of the leave event sent to the remote server.
+	EventID string `json:"event_id,omitempty"`
+}
 
 type PerformKnockRequest struct {
 	RoomID string `json:"room_id"`

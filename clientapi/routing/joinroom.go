@@ -30,6 +30,21 @@ func JoinRoomByIDOrAlias(
 	profileAPI api.ClientUserAPI,
 	roomIDOrAlias string,
 ) util.JSONResponse {
+	return joinRoomByIDOrAlias(req, device, rsAPI, profileAPI, roomIDOrAlias, false)
+}
+
+// joinRoomByIDOrAlias is JoinRoomByIDOrAlias. With keepClientProfile, a
+// displayname or avatar_url in the request body is kept, as for a join sent
+// as an m.room.member state event, where it sets the user's profile in the
+// room; the global profile only fills in what the body leaves out.
+func joinRoomByIDOrAlias(
+	req *http.Request,
+	device *api.Device,
+	rsAPI roomserverAPI.ClientRoomserverAPI,
+	profileAPI api.ClientUserAPI,
+	roomIDOrAlias string,
+	keepClientProfile bool,
+) util.JSONResponse {
 	// MSC3706: Trace join timing for diagnostics
 	joinStartTime := time.Now()
 	logger := util.GetLogger(req.Context()).WithFields(map[string]any{
@@ -78,8 +93,12 @@ func JoinRoomByIDOrAlias(
 
 	switch {
 	case err == nil:
-		joinReq.Content["displayname"] = profile.DisplayName
-		joinReq.Content["avatar_url"] = profile.AvatarURL
+		if _, ok := joinReq.Content["displayname"]; !ok || !keepClientProfile {
+			joinReq.Content["displayname"] = profile.DisplayName
+		}
+		if _, ok := joinReq.Content["avatar_url"]; !ok || !keepClientProfile {
+			joinReq.Content["avatar_url"] = profile.AvatarURL
+		}
 	case errors.Is(err, appserviceAPI.ErrProfileNotExists):
 		util.GetLogger(req.Context()).Error("Unable to query user profile, no profile found.")
 		return util.JSONResponse{

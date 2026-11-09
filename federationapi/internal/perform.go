@@ -623,6 +623,7 @@ func (r *FederationInternalAPI) PerformLeave(
 		}
 
 		r.statistics.ForServer(serverName).Success(statistics.SendDirect) //nolint:contextcheck
+		response.EventID = event.EventID()
 		return nil
 	}
 

@@ -357,7 +357,7 @@ func (r *Leaver) pendingStateServers(roomID spec.RoomID, event gomatrixserverlib
 func (r *Leaver) performFederatedLeaveFromPending(
 	ctx context.Context,
 	req *rsAPI.PerformLeaveRequest,
-	res *rsAPI.PerformLeaveResponse, //nolint:unparam
+	res *rsAPI.PerformLeaveResponse,
 	servers []spec.ServerName, eventID string,
 	leaver spec.SenderID,
 ) ([]rsAPI.OutputEvent, error) {
@@ -373,6 +373,8 @@ func (r *Leaver) performFederatedLeaveFromPending(
 		// failures in PerformLeave should NEVER stop us from telling other components like the
 		// sync API that the invite or knock was withdrawn. Otherwise we can end up with stuck invites.
 		util.GetLogger(ctx).WithError(err).Errorf("failed to PerformLeave, still retiring the invite or knock")
+	} else {
+		res.EventID = leaveRes.EventID
 	}
 
 	info, err := r.DB.RoomInfo(ctx, req.RoomID)

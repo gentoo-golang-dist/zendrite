@@ -177,6 +177,21 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 		// re-delivering the invite to the client on every /sync.
 		if s.onNewInviteEvent(s.ctx, *output.NewInviteEvent) == nil { //nolint:contextcheck
 			_ = s.producePushEvent(msg)
+			// Forward an invite received over federation for a room this
+			// server is not in to the appservice topic. It is published as
+			// OutputTypeNewInviteEvent only: without forwarding, the
+			// application service never learns that one of its users was
+			// invited, which breaks bridges expecting the invite event. Any
+			// other invite also arrives as an OutputTypeNewRoomEvent and
+			// reaches the application service that way, so forwarding it too
+			// would deliver it twice. This is best-effort, like the push
+			// notification above: NAKing would replay onNewInviteEvent and
+			// duplicate the invite row (see above).
+			if s.asProducer != nil && output.NewInviteEvent.NotInRoom {
+				if err := s.asProducer.ProduceRoomEvents(msg); err != nil {
+					log.WithError(err).Warn("failed to produce OutputAppserviceEvent")
+				}
+			}
 		}
 	case api.OutputTypeRetireInviteEvent:
 		s.onRetireInviteEvent(s.ctx, *output.RetireInviteEvent) //nolint:contextcheck
