@@ -75,7 +75,7 @@ The [v1.6 changes](https://spec.matrix.org/v1.6/changelog/) add jump to date, re
 | --- | --- | --- |
 | Jump to date (MSC3030) | `syncapi/routing/timestamp_to_event.go` serves `/v1/rooms/{roomID}/timestamp_to_event` and the federation `/v1/timestamp_to_event/{roomID}`. When the local history has a gap that may hold a closer event, the client endpoint asks other servers in the room and backfills their answer. `timestamp_to_event_test.go` covers both endpoints and the remote lookup. | Implemented. |
 | Key queries without `keyId` (MSC3938) | `federationapi/routing/routing.go` serves `GET /_matrix/key/v2/query/{serverName}`; `TestNotaryServer` covers it. | Implemented. |
-| Faster joins (MSC3706, MSC3943) | `federationapi/internal/federationclient.go` joins with `omit_members=true`. Serving `send_join`, Zendrite always returns the full state with `members_omitted` unset, which the spec allows. | Compliant. |
+| Faster joins (MSC3706, MSC3943) | `federationapi/internal/federationclient.go` joins with `omit_members=true`. Serving `send_join` with `omit_members=true`, Zendrite returns the full state with `members_omitted` unset, which the spec allows, unless `federation_api.serve_partial_state_joins` is set: then `federationapi/routing/join.go` and `roomserver/internal/query/query_partial_state.go` return partial state with the heroes' memberships, an auth chain without the state, `members_omitted` and `servers_in_room`; `TestSendJoinPartialState` covers it. | Compliant. |
 
 ### v1.7
 

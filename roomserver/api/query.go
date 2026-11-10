@@ -229,6 +229,15 @@ type QueryStateAndAuthChainRequest struct {
 	// Should state resolution be ran on the result events?
 	// TODO: check call sites and remove if we always want to do state res
 	ResolveState bool `json:"resolve_state"`
+	// OmitMembers asks for a partial-state send_join response (MSC3706): the
+	// state omits membership events except JoinStateKey's own and, in a room
+	// without a name or canonical alias, the heroes'; the auth chain omits
+	// events that are in the state; and ServersInRoom is filled in.
+	// Ignored when OnlyFetchAuthChain is set.
+	OmitMembers bool `json:"omit_members,omitempty"`
+	// JoinStateKey is the state key of the join event that OmitMembers
+	// answers. It is never counted as a hero.
+	JoinStateKey string `json:"join_state_key,omitempty"`
 }
 
 // QueryStateAndAuthChainResponse is a response to QueryStateAndAuthChain.
@@ -248,6 +257,12 @@ type QueryStateAndAuthChainResponse struct {
 	AuthChainEvents []*types.HeaderedEvent `json:"auth_chain_events"`
 	// True if the queried event was rejected earlier.
 	IsRejected bool `json:"is_rejected"`
+	// MembersOmitted is true when StateEvents is partial state for
+	// OmitMembers.
+	MembersOmitted bool `json:"members_omitted,omitempty"`
+	// ServersInRoom lists the servers with a joined member in the state at
+	// the prev events, sorted. Only set with MembersOmitted.
+	ServersInRoom []string `json:"servers_in_room,omitempty"`
 }
 
 // QueryRoomVersionForRoomRequest asks for the room version for a given room.

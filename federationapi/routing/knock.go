@@ -54,6 +54,9 @@ func MakeKnock(
 			JSON: spec.NotFound(fmt.Sprintf("Local server not currently joined to room: %s", roomID.String())),
 		}
 	}
+	if inRoomRes.IsPartialState {
+		return partialStateRoomResponse("make_knock")
+	}
 
 	roomVersion := inRoomRes.RoomVersion
 	if !slices.Contains(remoteVersions, roomVersion) {
@@ -155,6 +158,9 @@ func SendKnock(
 			Code: http.StatusNotFound,
 			JSON: spec.NotFound(fmt.Sprintf("Local server not currently joined to room: %s", roomID.String())),
 		}
+	}
+	if inRoomRes.IsPartialState {
+		return partialStateRoomResponse("send_knock")
 	}
 	verImpl, err := gomatrixserverlib.GetRoomVersion(inRoomRes.RoomVersion)
 	if err != nil {

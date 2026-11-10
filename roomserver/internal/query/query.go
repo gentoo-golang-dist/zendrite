@@ -786,6 +786,20 @@ func (r *Queryer) QueryStateAndAuthChain(
 		}
 	}
 
+	if request.OmitMembers && !stateMissing {
+		roomID, roomErr := spec.NewRoomID(request.RoomID)
+		if roomErr != nil {
+			return roomErr
+		}
+		response.ServersInRoom = r.serversInState(ctx, *roomID, stateEvents)
+		known := make([]gomatrixserverlib.PDU, 0, len(stateEvents)+len(authEvents))
+		known = append(known, stateEvents...)
+		known = append(known, authEvents...)
+		stateEvents = partialJoinState(stateEvents, request.JoinStateKey, request.AuthEventIDs)
+		authEvents = partialJoinAuthChain(stateEvents, request.AuthEventIDs, known)
+		response.MembersOmitted = true
+	}
+
 	for _, event := range stateEvents {
 		response.StateEvents = append(response.StateEvents, &types.HeaderedEvent{PDU: event})
 	}

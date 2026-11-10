@@ -178,6 +178,10 @@ func SendLeave(
 	keys gomatrixserverlib.JSONVerifier,
 	roomID, eventID string,
 ) util.JSONResponse {
+	if res := rejectIfPartialStateRoom(httpReq.Context(), rsAPI, roomID, "send_leave"); res != nil {
+		return *res
+	}
+
 	roomVersion, err := rsAPI.QueryRoomVersionForRoom(httpReq.Context(), roomID)
 	if err != nil {
 		return util.JSONResponse{

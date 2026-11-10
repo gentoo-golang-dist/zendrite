@@ -56,6 +56,10 @@ func MakeJoin(
 		}
 	}
 
+	if res.IsPartialState {
+		return partialStateRoomResponse("make_join")
+	}
+
 	createJoinTemplate := func(proto *gomatrixserverlib.ProtoEvent) (gomatrixserverlib.PDU, []gomatrixserverlib.PDU, error) { //nolint:contextcheck
 		identity, signErr := cfg.Matrix.SigningIdentityFor(request.Destination())
 		if signErr != nil {
@@ -197,7 +201,14 @@ func SendJoin(
 	keys gomatrixserverlib.JSONVerifier,
 	roomID spec.RoomID,
 	eventID string,
+	omitMembers bool,
 ) util.JSONResponse {
+	if res := rejectIfPartialStateRoom(httpReq.Context(), rsAPI, roomID.String(), "send_join"); res != nil {
+		return *res
+	}
+	// Answering with full state is always allowed (MSC3706).
+	omitMembers = omitMembers && cfg.ServePartialStateJoins
+
 	roomVersion, err := rsAPI.QueryRoomVersionForRoom(httpReq.Context(), roomID.String())
 	if err != nil {
 		util.GetLogger(httpReq.Context()).WithError(err).Error("rsAPI.QueryRoomVersionForRoom failed")
@@ -279,11 +290,17 @@ func SendJoin(
 	// Fetch the state and auth chain. We do this before we send the events
 	// on, in case this fails.
 	var stateAndAuthChainResponse api.QueryStateAndAuthChainResponse
+	joinStateKey := ""
+	if response.JoinEvent.StateKey() != nil {
+		joinStateKey = *response.JoinEvent.StateKey()
+	}
 	err = rsAPI.QueryStateAndAuthChain(httpReq.Context(), &api.QueryStateAndAuthChainRequest{
 		PrevEventIDs: response.JoinEvent.PrevEventIDs(),
 		AuthEventIDs: response.JoinEvent.AuthEventIDs(),
 		RoomID:       roomID.String(),
 		ResolveState: true,
+		OmitMembers:  omitMembers,
+		JoinStateKey: joinStateKey,
 	}, &stateAndAuthChainResponse)
 	if err != nil {
 		util.GetLogger(httpReq.Context()).WithError(err).Error("rsAPI.QueryStateAndAuthChain failed")
@@ -349,12 +366,61 @@ func SendJoin(
 	return util.JSONResponse{
 		Code: http.StatusOK,
 		JSON: fclient.RespSendJoin{
-			StateEvents: types.NewEventJSONsFromHeaderedEvents(stateAndAuthChainResponse.StateEvents),
-			AuthEvents:  types.NewEventJSONsFromHeaderedEvents(stateAndAuthChainResponse.AuthChainEvents),
-			Origin:      cfg.Matrix.ServerName,
-			Event:       response.JoinEvent.JSON(),
+			StateEvents:    types.NewEventJSONsFromHeaderedEvents(stateAndAuthChainResponse.StateEvents),
+			AuthEvents:     types.NewEventJSONsFromHeaderedEvents(stateAndAuthChainResponse.AuthChainEvents),
+			Origin:         cfg.Matrix.ServerName,
+			Event:          response.JoinEvent.JSON(),
+			MembersOmitted: stateAndAuthChainResponse.MembersOmitted,
+			ServersInRoom:  serversInRoomOrEmpty(stateAndAuthChainResponse),
 		},
 	}
+}
+
+// serversInRoomOrEmpty returns servers_in_room for a partial-state response,
+// never nil, so that it is sent as [] rather than null.
+func serversInRoomOrEmpty(res api.QueryStateAndAuthChainResponse) []string {
+	if !res.MembersOmitted || res.ServersInRoom != nil {
+		return res.ServersInRoom
+	}
+	return []string{}
+}
+
+// SendJoinOmitMembers reports whether a v2 send_join request asks for a
+// partial-state response (MSC3706): the stable omit_members query parameter,
+// or the unstable org.matrix.msc3706.partial_state one that servers sent
+// before Matrix 1.6.
+func SendJoinOmitMembers(httpReq *http.Request) bool {
+	query := httpReq.URL.Query()
+	return query.Get("omit_members") == "true" || query.Get("org.matrix.msc3706.partial_state") == "true"
+}
+
+// partialStateRoomResponse is the answer to a request that this server cannot
+// serve while it only has partial state of the room after a faster join
+// (MSC3706): it cannot give the full state or the list of servers, so it
+// answers as if it were not in the room, as Synapse does.
+func partialStateRoomResponse(endpoint string) util.JSONResponse {
+	return util.JSONResponse{
+		Code: http.StatusNotFound,
+		JSON: spec.NotFound(fmt.Sprintf("Unable to handle /%s right now; this server is not fully joined", endpoint)),
+	}
+}
+
+// rejectIfPartialStateRoom returns partialStateRoomResponse when this server
+// has partial state of the room, an error response when that cannot be
+// checked, and nil otherwise.
+func rejectIfPartialStateRoom(
+	ctx context.Context, rsAPI api.FederationRoomserverAPI, roomID, endpoint string,
+) *util.JSONResponse {
+	var res api.QueryServerJoinedToRoomResponse
+	if err := rsAPI.QueryServerJoinedToRoom(ctx, &api.QueryServerJoinedToRoomRequest{RoomID: roomID}, &res); err != nil {
+		util.GetLogger(ctx).WithError(err).Error("rsAPI.QueryServerJoinedToRoom failed")
+		return &util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+	}
+	if res.IsPartialState {
+		resp := partialStateRoomResponse(endpoint)
+		return &resp
+	}
+	return nil
 }
 
 type eventsByDepth []*types.HeaderedEvent

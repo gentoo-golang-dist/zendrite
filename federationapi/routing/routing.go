@@ -413,7 +413,7 @@ func Setup(
 			}
 
 			res := SendJoin(
-				httpReq, request, cfg, rsAPI, keys, *roomID, eventID,
+				httpReq, request, cfg, rsAPI, keys, *roomID, eventID, false,
 			)
 			// not all responses get wrapped in [code, body]
 			var body any
@@ -452,7 +452,7 @@ func Setup(
 			}
 
 			return SendJoin(
-				httpReq, request, cfg, rsAPI, keys, *roomID, eventID,
+				httpReq, request, cfg, rsAPI, keys, *roomID, eventID, SendJoinOmitMembers(httpReq),
 			)
 		},
 	)).Methods(http.MethodPut)

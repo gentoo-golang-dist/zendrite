@@ -49,6 +49,12 @@ type FederationAPI struct {
 	// Should we prefer direct key fetches over perspective ones?
 	PreferDirectFetch bool `yaml:"prefer_direct_fetch"`
 
+	// ServePartialStateJoins answers send_join requests that set omit_members
+	// with partial state (MSC3706 faster joins). Off by default: joining
+	// Zendrite servers then take their own partial-state join path, which does
+	// not yet behave as MSC3902 requires.
+	ServePartialStateJoins bool `yaml:"serve_partial_state_joins"`
+
 	// Deny/Allow lists used for restricting request scopes.
 	DenyNetworkCIDRs  []string `yaml:"deny_networks"`
 	AllowNetworkCIDRs []string `yaml:"allow_networks"`

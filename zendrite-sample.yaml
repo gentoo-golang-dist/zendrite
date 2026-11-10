@@ -355,6 +355,13 @@ federation_api:
   # memory being used on TLS handshakes for each new connection instead.
   disable_http_keepalives: false
 
+  # Answer send_join requests that ask for partial state (MSC3706 faster joins)
+  # with partial state, so that servers joining large rooms through this one do
+  # not wait for every membership. Off by default: Zendrite servers that join
+  # through this one then take their own partial-state join path, which does not
+  # yet behave as MSC3902 requires (see the MSC support page).
+  serve_partial_state_joins: false
+
   # Perspective keyservers to use as a backup when direct key fetches fail. This may
   # be required to satisfy key requests for servers that are no longer online when
   # joining some rooms.
