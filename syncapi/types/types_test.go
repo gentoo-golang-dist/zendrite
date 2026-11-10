@@ -441,3 +441,49 @@ func TestResponseMoveStateToStateAfter(t *testing.T) {
 		})
 	}
 }
+
+// Profile updates (MSC4429) count as updates and are sent under their
+// unstable key, with null for removed fields and for users no longer
+// tracked; a response without any leaves the key out.
+func TestResponseProfileUpdates(t *testing.T) {
+	res := NewResponse()
+	if res.HasUpdates() {
+		t.Fatal("an empty response has no updates")
+	}
+	encoded, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := mustUnmarshalMap(t, encoded)["org.matrix.msc4429.users"]; ok {
+		t.Fatalf("empty profile updates are sent: %s", encoded)
+	}
+
+	res.Users = map[string]*SyncUserUpdate{
+		"@bob:test":   {ProfileUpdates: map[string]json.RawMessage{"displayname": json.RawMessage(`"Bob"`), "m.tz": json.RawMessage("null")}},
+		"@carol:test": {},
+	}
+	if !res.HasUpdates() {
+		t.Fatal("profile updates are updates")
+	}
+	encoded, err = json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(mustUnmarshalMap(t, encoded)["org.matrix.msc4429.users"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"@bob:test":{"profile_updates":{"displayname":"Bob","m.tz":null}},"@carol:test":{"profile_updates":null}}`
+	if string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+func mustUnmarshalMap(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}

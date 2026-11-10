@@ -85,3 +85,34 @@ func TestFilterValidate(t *testing.T) {
 		})
 	}
 }
+
+// The MSC4429 profile fields filter round-trips under its unstable key, and
+// a filter without it opts in to no profile fields.
+func TestFilterProfileFields(t *testing.T) {
+	var f Filter
+	if err := json.Unmarshal([]byte(`{"org.matrix.msc4429.profile_fields":{"ids":["m.tz","displayname"]}}`), &f); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.ProfileFieldIDs(); !reflect.DeepEqual(got, []string{"m.tz", "displayname"}) {
+		t.Fatalf("got %v", got)
+	}
+	encoded, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Filter
+	if err = json.Unmarshal(encoded, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back.ProfileFieldIDs(), f.ProfileFieldIDs()) {
+		t.Fatalf("round trip lost the profile fields: %s", encoded)
+	}
+	defaultFilter := DefaultFilter()
+	if got := defaultFilter.ProfileFieldIDs(); got != nil {
+		t.Fatalf("the default filter asks for %v", got)
+	}
+	var nilFilter *Filter
+	if got := nilFilter.ProfileFieldIDs(); got != nil {
+		t.Fatalf("a nil filter asks for %v", got)
+	}
+}

@@ -13,10 +13,11 @@ import (
 )
 
 // ProfileUpdatesStreamProvider tracks the latest position in the profile
-// updates stream. Only the MSC4262 sliding sync extension delivers profile
-// updates; /sync just carries the position forward, so that its tokens catch
-// up with the stream and a long poll does not wake for updates it never
-// returns.
+// updates stream, which the MSC4262 sliding sync extension and, for clients
+// whose filter asks for profile fields, /sync (MSC4429, in the sync package)
+// deliver. For other /sync requests it just carries the position forward,
+// so that their tokens catch up with the stream and a long poll does not
+// return for updates it never sends.
 type ProfileUpdatesStreamProvider struct {
 	DefaultStreamProvider
 }

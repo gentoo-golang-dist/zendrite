@@ -401,6 +401,17 @@ type Response struct {
 	DeviceLists                         *DeviceLists      `json:"device_lists,omitempty"`
 	DeviceListsOTKCount                 map[string]int    `json:"device_one_time_keys_count,omitempty"`
 	DeviceListsUnusedFallbackAlgorithms []string          `json:"device_unused_fallback_key_types"`
+	// Users carries profile updates per user, for clients that opted in
+	// with a profile fields filter (MSC4429).
+	Users map[string]*SyncUserUpdate `json:"org.matrix.msc4429.users,omitempty"`
+}
+
+// SyncUserUpdate holds the profile updates of one user in /sync (MSC4429).
+// ProfileUpdates maps a field to its new value, or to null when the field
+// was removed. A nil ProfileUpdates, sent as null, tells the client that it
+// no longer shares a room with the user and may stop tracking their profile.
+type SyncUserUpdate struct {
+	ProfileUpdates map[string]json.RawMessage `json:"profile_updates"`
 }
 
 func (r Response) MarshalJSON() ([]byte, error) {
@@ -440,7 +451,8 @@ func (r *Response) HasUpdates() bool {
 		len(r.Rooms.Peek) > 0 ||
 		len(r.ToDevice.Events) > 0 ||
 		len(r.DeviceLists.Changed) > 0 ||
-		len(r.DeviceLists.Left) > 0)
+		len(r.DeviceLists.Left) > 0 ||
+		len(r.Users) > 0)
 }
 
 // NewResponse creates an empty response with initialized maps.

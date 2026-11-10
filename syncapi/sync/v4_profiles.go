@@ -80,6 +80,19 @@ type profileTargets struct {
 	// roomOf holds a room shared with each remote user, whose membership
 	// event provides the profile.
 	roomOf map[string]string
+	// known holds remote users' profiles already read from a membership
+	// event in the response, so that they are not loaded again.
+	known map[string]map[string]json.RawMessage
+}
+
+func newProfileTargets() *profileTargets {
+	return &profileTargets{
+		full:    make(map[string]bool),
+		changed: make(map[string]map[string]bool),
+		gone:    make(map[string]bool),
+		roomOf:  make(map[string]string),
+		known:   make(map[string]map[string]json.RawMessage),
+	}
 }
 
 func (t *profileTargets) addFull(userID, roomID string) {
@@ -133,12 +146,7 @@ func (rp *RequestPool) processProfilesExtension(
 	wanted := func(field string) bool {
 		return req.Fields == nil || slices.Contains(*req.Fields, field)
 	}
-	targets := &profileTargets{
-		full:    make(map[string]bool),
-		changed: make(map[string]map[string]bool),
-		gone:    make(map[string]bool),
-		roomOf:  make(map[string]string),
-	}
+	targets := newProfileTargets()
 
 	joinedRooms, err := snapshot.RoomIDsWithMembership(ctx, userID, spec.Join)
 	if err != nil {
@@ -210,9 +218,32 @@ func (rp *RequestPool) processProfilesExtension(
 		}
 	}
 
-	resp := &types.ProfilesResponse{Users: make(map[string]*types.ProfileUserUpdate)}
+	users, err := rp.resolveProfileTargets(ctx, snapshot, targets, wanted)
+	if err != nil {
+		return nil, served, err
+	}
+
+	rp.persistProfilesRoomState(ctx, connState, subset, fieldsKey)
+	if len(users) == 0 {
+		return nil, served, nil
+	}
+	return &types.ProfilesResponse{Users: users}, served, nil
+}
+
+// resolveProfileTargets reads the profiles of the targets and returns, per
+// user, the wanted fields that are set and the changed ones that were
+// removed, or nil for users the syncing user no longer shares a room with.
+// Users with nothing to send, or whose profile could not be read, are left
+// out.
+func (rp *RequestPool) resolveProfileTargets(
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction,
+	targets *profileTargets,
+	wanted func(field string) bool,
+) (map[string]*types.ProfileUserUpdate, error) {
+	result := make(map[string]*types.ProfileUserUpdate)
 	for gone := range targets.gone {
-		resp.Users[gone] = nil
+		result[gone] = nil
 	}
 	users := make(map[string]bool, len(targets.full)+len(targets.changed))
 	for user := range targets.full {
@@ -225,12 +256,14 @@ func (rp *RequestPool) processProfilesExtension(
 		if targets.gone[user] {
 			continue
 		}
-		if err = ctx.Err(); err != nil {
-			return nil, served, err
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		profile, ok := rp.profileFields(ctx, snapshot, user, targets.roomOf[user])
+		profile, ok := targets.known[user]
 		if !ok {
-			continue
+			if profile, ok = rp.profileFields(ctx, snapshot, user, targets.roomOf[user]); !ok {
+				continue
+			}
 		}
 		update := &types.ProfileUserUpdate{}
 		fields := targets.changed[user]
@@ -260,14 +293,9 @@ func (rp *RequestPool) processProfilesExtension(
 			continue
 		}
 		sort.Strings(update.Removed)
-		resp.Users[user] = update
+		result[user] = update
 	}
-
-	rp.persistProfilesRoomState(ctx, connState, subset, fieldsKey)
-	if len(resp.Users) == 0 {
-		return nil, served, nil
-	}
-	return resp, served, nil
+	return result, nil
 }
 
 // profilesSentBefore reports whether this connection already sent the member

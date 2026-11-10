@@ -20,6 +20,24 @@ type Filter struct {
 	Presence    EventFilter `json:"presence,omitempty"`
 	AccountData EventFilter `json:"account_data,omitempty"`
 	Room        RoomFilter  `json:"room,omitempty"`
+	// ProfileFields selects the profile fields whose updates /sync returns
+	// (MSC4429). Without it, /sync returns none.
+	ProfileFields *ProfileFieldsFilter `json:"org.matrix.msc4429.profile_fields,omitempty"`
+}
+
+// ProfileFieldsFilter lists the profile fields, by ID, whose updates /sync
+// returns (MSC4429).
+type ProfileFieldsFilter struct {
+	IDs []string `json:"ids,omitempty"`
+}
+
+// ProfileFieldIDs returns the profile fields the filter asks /sync to return
+// updates for, which is none when it does not opt in to MSC4429.
+func (f *Filter) ProfileFieldIDs() []string {
+	if f == nil || f.ProfileFields == nil {
+		return nil
+	}
+	return f.ProfileFields.IDs
 }
 
 // EventFilter is used to define filtering rules for events.

@@ -533,6 +533,7 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 				// waking it.
 				ThreadSubscriptionPosition: rp.Notifier.CurrentPosition().ThreadSubscriptionPosition,
 			}
+			rp.addProfileUpdates(syncReq, true, withTransaction)
 		} else {
 			// Incremental sync
 			syncReq.Response.NextBatch = types.StreamingToken{
@@ -638,6 +639,7 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 				),
 				ThreadSubscriptionPosition: rp.Notifier.CurrentPosition().ThreadSubscriptionPosition,
 			}
+			rp.addProfileUpdates(syncReq, false, withTransaction)
 			// it's possible for there to be no updates for this user even though since < current pos,
 			// e.g busy servers with a quiet user. In this scenario, we don't want to return a no-op
 			// response immediately, so let's try this again but pretend they bumped their since token.
@@ -775,6 +777,29 @@ func waitBeforeRetry(ctx context.Context, d time.Duration) bool {
 func giveupAfterFailure(syncReq *types.SyncRequest) util.JSONResponse {
 	syncReq.Response.NextBatch = syncReq.Since
 	return util.JSONResponse{Code: http.StatusOK, JSON: syncReq.Response}
+}
+
+// addProfileUpdates adds the MSC4429 profile updates to the response of a
+// /sync whose filter asks for profile fields, after the other streams, and
+// moves the response's profile position to what it served. Without such a
+// filter the profile position is carried forward without content, so a
+// profile update that wakes the request finds nothing to return and it
+// waits on.
+func (rp *RequestPool) addProfileUpdates(
+	syncReq *types.SyncRequest,
+	initial bool,
+	withTransaction func(types.StreamPosition, func(storage.DatabaseTransaction) types.StreamPosition) types.StreamPosition,
+) {
+	if len(syncReq.Filter.ProfileFieldIDs()) == 0 {
+		return
+	}
+	to := syncReq.Response.NextBatch
+	syncReq.Response.NextBatch.ProfilePosition = withTransaction(
+		syncReq.Since.ProfilePosition,
+		func(txn storage.DatabaseTransaction) types.StreamPosition {
+			return rp.syncProfileUpdates(syncReq.Context, txn, syncReq, initial, to)
+		},
+	)
 }
 
 func (rp *RequestPool) shouldReturnImmediately(syncReq *types.SyncRequest, currentPos types.StreamingToken) bool {

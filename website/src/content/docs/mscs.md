@@ -20,6 +20,7 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | [MSC4354](https://github.com/matrix-org/matrix-spec-proposals/pull/4354) | Sticky events | N/A | Implemented (unstable prefix): see [sticky events](#sticky-events) |
 | [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480) | Sliding sync extension: sticky events | N/A | Implemented: the `org.matrix.msc4354.sticky_events` extension |
 | [MSC4262](https://github.com/matrix-org/matrix-spec-proposals/pull/4262) | Sliding sync extension: profile updates | N/A | Implemented (unstable prefix): see [profile updates in sliding sync](#profile-updates-in-sliding-sync) |
+| [MSC4429](https://github.com/matrix-org/matrix-spec-proposals/pull/4429) | Profile updates for legacy sync | N/A | Implemented (unstable prefix): see [profile updates in `/sync`](#profile-updates-in-sync) |
 | [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) | `state_after` in `/sync` | 1.16 | Implemented: with `use_state_after=true`, joined and left rooms carry `state_after`, the state at the end of the timeline, instead of `state`. The unstable `org.matrix.msc4222.use_state_after` parameter is answered with `org.matrix.msc4222.state_after`. See [state after the timeline](#state-after-the-timeline) |
 | [MSC4445](https://github.com/matrix-org/matrix-spec-proposals/pull/4445) | Clarify `/sync` timeline order | N/A | Implemented (unstable prefix): the timeline of a room a sync sends for the first time is in topological order, an incremental timeline in stream order. See [timeline order](#timeline-order) |
 
@@ -70,7 +71,30 @@ Their profiles are the display name and avatar URL of their membership event in 
 Their custom fields are not sent.
 Removing custom fields by deactivating an account is not sent.
 One response reads at most 1,000 profile changes and 1,000 membership events per room; further profile changes follow in the next response.
-`/sync` does not carry profile updates (MSC4429).
+`/sync` carries the same profile updates for clients that opt in, see [profile updates in `/sync`](#profile-updates-in-sync).
+
+### Profile updates in `/sync`
+
+`/versions` advertises `org.matrix.msc4429` in `unstable_features`, and `/sync` carries profile updates ([MSC4429](https://github.com/matrix-org/matrix-spec-proposals/pull/4429)) with the request and response shape of Synapse.
+A client opts in with the `org.matrix.msc4429.profile_fields` filter field, whose `ids` list the profile fields it wants, for example `{"org.matrix.msc4429.profile_fields": {"ids": ["displayname", "avatar_url", "m.tz"]}}`.
+The field works in an inline filter and in one stored with `POST /user/{userId}/filter`.
+Without it, or with an empty `ids`, `/sync` sends no profile updates.
+
+The response carries `org.matrix.msc4429.users`, which maps a user ID to `profile_updates`: the requested fields that were set or changed, with `null` for fields that were removed, or `null` instead of the object when the syncing user no longer shares any room with that user.
+The key is left out of a response with nothing to deliver.
+
+- An initial sync sends the syncing user's own profile.
+- The members whose membership event a joined room of the response carries in its state, or on an initial sync in its timeline, have their requested fields sent.
+  Without lazy-loaded members, that is every member of every joined room on an initial sync, and of a room the user just joined.
+  With `lazy_load_members`, it is the members the response loads, so a member's profile follows their membership event and is sent again only when a later response loads the member again.
+- Every change a local user who shares a joined room with the syncing user makes to a requested field is sent, and so are the syncing user's own changes.
+- Users who join a room shared with the syncing user have their requested fields sent.
+- The display name and avatar URL of remote users come from their membership events, as in [sliding sync](#profile-updates-in-sliding-sync); their custom fields are not sent.
+
+A long-polling `/sync` that opted in returns when one of these updates arrives.
+One that did not opt in, or whose fields did not change, carries the profile position forward and keeps waiting.
+The updates reuse the profile updates stream and position of the sliding sync extension, so no extra state is stored.
+One response reads at most 1,000 profile changes and 1,000 membership events per room; further profile changes follow in the next response.
 
 ### State after the timeline
 

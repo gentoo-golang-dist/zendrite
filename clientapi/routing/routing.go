@@ -102,6 +102,7 @@ func Setup(
 		"org.matrix.msc4140.stable":     cfg.DelayedEvents.Enabled(), // MSC4140: stable delayed event endpoints
 		"org.matrix.msc4143":            len(cfg.Matrix.RTCFoci) > 0,
 		"org.matrix.msc4262":            true, // MSC4262: sliding sync profile updates
+		"org.matrix.msc4429":            true, // MSC4429: profile updates in /sync
 		"org.matrix.msc4354":            true, // MSC4354: sticky events
 		"org.matrix.msc4222":            true, // MSC4222: state_after in /sync
 		"uk.tcpip.msc4133":              true, // MSC4133: custom profile fields, unstable path
