@@ -49,6 +49,9 @@ const purgeRedactionsSQL = "" +
 	"	SELECT event_id FROM roomserver_events WHERE room_nid = $1" +
 	")"
 
+const purgeRedactedContentSQL = "" +
+	"DELETE FROM roomserver_redacted_content WHERE room_nid = $1"
+
 const purgeAnnotationsSQL = "" +
 	"DELETE FROM roomserver_annotations WHERE room_nid = $1"
 
@@ -77,6 +80,7 @@ type purgeStatements struct {
 	purgeClientTransactionsStmt   *sql.Stmt
 	purgeRedactionStmt            *sql.Stmt
 	purgeAnnotationsStmt          *sql.Stmt
+	purgeRedactedContentStmt      *sql.Stmt
 	purgeRoomAliasesStmt          *sql.Stmt
 	purgeRoomStmt                 *sql.Stmt
 	purgeStateBlockEntriesStmt    *sql.Stmt
@@ -97,6 +101,7 @@ func PreparePurgeStatements(db *sql.DB) (*purgeStatements, error) {
 		{&s.purgePreviousEvents2Stmt, purgePreviousEvents2SQL},
 		{&s.purgeRedactionStmt, purgeRedactionsSQL},
 		{&s.purgeAnnotationsStmt, purgeAnnotationsSQL},
+		{&s.purgeRedactedContentStmt, purgeRedactedContentSQL},
 		{&s.purgeRoomAliasesStmt, purgeRoomAliasesSQL},
 		{&s.purgeRoomStmt, purgeRoomSQL},
 		{&s.purgeStateBlockEntriesStmt, purgeStateBlockEntriesSQL},
@@ -132,6 +137,7 @@ func (s *purgeStatements) PurgeRoom(
 		s.purgeEventJSONStmt,
 		s.purgeRedactionStmt,
 		s.purgeAnnotationsStmt,
+		s.purgeRedactedContentStmt,
 		s.purgeEventsStmt,
 		s.purgeRoomStmt,
 	}

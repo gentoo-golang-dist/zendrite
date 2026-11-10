@@ -47,6 +47,7 @@ func TestVersions(t *testing.T) {
 		"org.matrix.msc4380":                             true,
 		"org.matrix.msc4380.stable":                      true,
 		"org.matrix.msc4306":                             true,
+		"fi.mau.msc2815":                                 true,
 		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,
 		// MSC4445: initial sync timelines in topological order.
 		"org.matrix.msc4445.initial_sync_timeline_topological_ordering": true,

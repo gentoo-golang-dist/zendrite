@@ -162,6 +162,9 @@ func (d *Database) create(db *sql.DB) error {
 	if err := CreateAnnotationsTable(db); err != nil {
 		return err
 	}
+	if err := CreateRedactedContentTable(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -250,6 +253,10 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 	if err != nil {
 		return err
 	}
+	redactedContent, err := PrepareRedactedContentTable(db)
+	if err != nil {
+		return err
+	}
 	erasedUsers, err := PrepareErasedUsersTable(db)
 	if err != nil {
 		return err
@@ -266,17 +273,18 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 	d.Database = shared.Database{
 		DB: db,
 		EventDatabase: shared.EventDatabase{
-			DB:                  db,
-			Cache:               cache,
-			Writer:              writer,
-			EventsTable:         events,
-			EventTypesTable:     eventTypes,
-			EventStateKeysTable: eventStateKeys,
-			EventJSONTable:      eventJSON,
-			PrevEventsTable:     prevEvents,
-			RedactionsTable:     redactions,
-			ReportedEventsTable: reportedEvents,
-			AnnotationsTable:    annotations,
+			DB:                   db,
+			Cache:                cache,
+			Writer:               writer,
+			EventsTable:          events,
+			EventTypesTable:      eventTypes,
+			EventStateKeysTable:  eventStateKeys,
+			EventJSONTable:       eventJSON,
+			PrevEventsTable:      prevEvents,
+			RedactionsTable:      redactions,
+			ReportedEventsTable:  reportedEvents,
+			AnnotationsTable:     annotations,
+			RedactedContentTable: redactedContent,
 		},
 		Cache:                   cache,
 		Writer:                  writer,

@@ -30,6 +30,16 @@ type Database interface {
 	SetUserErased(ctx context.Context, userID string, erased bool) error
 	// ErasedUsers returns the subset of userIDs that is erased.
 	ErasedUsers(ctx context.Context, userIDs []string) (map[string]struct{}, error)
+	// SetRedactedContentRetention sets how long the content of redacted
+	// events is kept for room moderators (MSC2815): zero keeps none, a
+	// negative value keeps it until the room is purged.
+	SetRedactedContentRetention(retention time.Duration)
+	// RedactedEventContent returns the JSON of a redacted event of the room
+	// as it was before the redaction, or nil if it is not kept (MSC2815).
+	RedactedEventContent(ctx context.Context, roomNID types.RoomNID, eventID string) ([]byte, error)
+	// ExpireRedactedContent forgets the content of events redacted longer
+	// ago than the retention period.
+	ExpireRedactedContent(ctx context.Context) (int64, error)
 	// Do we support processing input events for more than one room at a time?
 	SupportsConcurrentRoomInputs() bool
 	AssignRoomNID(ctx context.Context, roomID spec.RoomID, roomVersion gomatrixserverlib.RoomVersion) (roomNID types.RoomNID, err error)
@@ -350,6 +360,9 @@ type RoomDatabase interface {
 	EventSentToOutput(ctx context.Context, eventNID types.EventNID) (bool, error)
 	// ExpireClientTransactions forgets transactions recorded before the given time.
 	ExpireClientTransactions(ctx context.Context, before time.Time) (int64, error)
+	// ExpireRedactedContent forgets the content of events redacted longer
+	// ago than the retention period (MSC2815).
+	ExpireRedactedContent(ctx context.Context) (int64, error)
 	// StoreAnnotation records the event if it is an annotation (MSC2677) that
 	// has not been redacted.
 	StoreAnnotation(ctx context.Context, roomInfo *types.RoomInfo, event gomatrixserverlib.PDU) error

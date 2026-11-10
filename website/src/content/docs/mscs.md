@@ -138,6 +138,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) | Threading (generic relationships) | N/A | Opt-in (`msc2836`) |
 | [MSC2285](https://github.com/matrix-org/matrix-spec-proposals/pull/2285) | Private read receipts | 1.4 | Implemented |
 | [MSC2174](https://github.com/matrix-org/matrix-spec-proposals/pull/2174) | Move the `redacts` property to `content` | 1.8 | Implemented: from room version 11, redactions are applied from `content.redacts` and the top-level key is ignored. Clients receive `redacts` both at the top level and in `content` in every room version |
+| [MSC2815](https://github.com/matrix-org/matrix-spec-proposals/pull/2815) | Allow room moderators to view redacted event content | N/A | Implemented (unstable prefix): see [redacted event content for moderators](#redacted-event-content-for-moderators) |
 | [MSC4169](https://github.com/matrix-org/matrix-spec-proposals/pull/4169) | Backwards-compatible redaction sending using `/send` | 1.18 | Implemented: `PUT /send/m.room.redaction` copies `content.redacts` to the top level, so it redacts in every room version. Advertised as `com.beeper.msc4169` in `/versions` |
 
 ### Bundled aggregations
@@ -147,6 +148,26 @@ An unlimited timeline already carries every child event the client has not seen,
 Each bundle holds the thread summary (`m.thread`), the most recent valid edit (`m.replace`) and the referencing events (`m.reference`).
 Only child events the requesting user may see are aggregated, and events from ignored users are left out.
 State events, and aggregations that arrive with events over federation, are never served with bundles.
+
+### Redacted event content for moderators
+
+Zendrite implements MSC2815 with Synapse's unstable names and advertises `fi.mau.msc2815` in `unstable_features`.
+When the roomserver applies a redaction, it keeps the event's original JSON in a separate table for `room_server.redaction_retention_period` (7 days by default, as in Synapse).
+Everything else, including `/sync`, sliding sync, `/messages`, `/context`, search and federation, keeps getting the redacted event.
+
+`GET /rooms/{roomId}/event/{eventId}?fi.mau.msc2815.include_unredacted_content=true` returns a redacted event with its original content and the redacted event's `unsigned`, including `redacted_because`:
+
+- The requester's power level in the room's current state must be at least the `redact` level; room creators in room versions that give them unlimited power, and server admins, may always ask.
+  Anyone else gets 403 `M_FORBIDDEN`, as in Synapse, before the event is looked up.
+- History visibility applies as without the parameter: an event the requester may not see is 404 `M_NOT_FOUND`, and events of erased users (MSC4025) stay redacted for those who could not see them when they were sent.
+- An event that is not redacted is returned as it is.
+- A redacted event whose content the server no longer has gets 404 `FI.MAU.MSC2815_UNREDACTED_CONTENT_DELETED`, with `fi.mau.msc2815.content_keep_ms` set to the retention period unless content is kept until the room is purged.
+  That includes events redacted before the upgrade to a version with MSC2815, or while the retention period was `0s`.
+- Any value other than `true` or `false` is 400 `M_INVALID_PARAM`.
+
+Content redacted longer ago than the retention period is no longer served, and a job on each roomserver deletes it every five minutes.
+`0s` keeps no content, and a negative period keeps it until the room is purged; purging a room deletes its content.
+The MSC's `M_UNREDACTED_CONTENT_NOT_RECEIVED` code is not used, as in Synapse: an event that arrived already redacted is returned redacted.
 
 ### Thread subscriptions
 

@@ -386,6 +386,7 @@ func (r *Inputer) Start() error {
 	}
 
 	r.ProcessContext.Go(r.expireClientTransactions)
+	r.ProcessContext.Go(r.expireRedactedContent)
 
 	// Make sure that the room consumers have the right config.
 	stream := r.Cfg.Matrix.JetStream.Prefixed(jetstream.InputRoomEvent)
@@ -482,6 +483,33 @@ func (r *Inputer) expireClientTransactions() {
 			logrus.WithError(err).Warn("Failed to expire client transactions")
 		} else if removed > 0 {
 			logrus.WithField("removed", removed).Debug("Expired client transactions")
+		}
+		select {
+		case <-r.ProcessContext.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// redactedContentExpiryInterval is how often the content of redacted events
+// kept past the retention period is deleted, as in Synapse.
+const redactedContentExpiryInterval = 5 * time.Minute
+
+// expireRedactedContent periodically deletes the content of redacted events
+// kept for room moderators (MSC2815) once the retention period has passed.
+// Reads ignore expired content, so the interval only bounds how long it
+// stays in the database. The delete only matches expired rows, so it is
+// safe to run on every process.
+func (r *Inputer) expireRedactedContent() {
+	ticker := time.NewTicker(redactedContentExpiryInterval)
+	defer ticker.Stop()
+	for {
+		removed, err := r.DB.ExpireRedactedContent(r.ProcessContext.Context())
+		if err != nil && r.ProcessContext.Context().Err() == nil {
+			logrus.WithError(err).Warn("Failed to delete the expired content of redacted events")
+		} else if removed > 0 {
+			logrus.WithField("removed", removed).Debug("Deleted the expired content of redacted events")
 		}
 		select {
 		case <-r.ProcessContext.Context().Done():

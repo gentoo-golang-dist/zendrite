@@ -291,6 +291,20 @@ type Annotations interface {
 	DeleteAnnotation(ctx context.Context, txn *sql.Tx, annotationEventID string) error
 }
 
+// RedactedContent keeps the JSON of redacted events as it was before the
+// redaction, for the room moderators who may view it (MSC2815).
+type RedactedContent interface {
+	// InsertRedactedContent records the original JSON of a redacted event,
+	// keeping a row already recorded for it.
+	InsertRedactedContent(ctx context.Context, txn *sql.Tx, eventNID types.EventNID, roomNID types.RoomNID, eventJSON []byte, redactedTS int64) error
+	// SelectRedactedContent returns the original JSON of the event if it was
+	// redacted at or after notBeforeTS, or nil.
+	SelectRedactedContent(ctx context.Context, txn *sql.Tx, eventNID types.EventNID, notBeforeTS int64) ([]byte, error)
+	// DeleteRedactedContentBefore forgets the content of events redacted
+	// before redactedTS.
+	DeleteRedactedContentBefore(ctx context.Context, txn *sql.Tx, redactedTS int64) (int64, error)
+}
+
 // ErasedUsers records local users who asked for erasure when deactivating
 // their account (MSC4025).
 type ErasedUsers interface {

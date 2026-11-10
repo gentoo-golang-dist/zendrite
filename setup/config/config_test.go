@@ -425,6 +425,26 @@ func TestRefreshableAccessTokenLifetime(t *testing.T) {
 	}
 }
 
+func TestRedactionRetentionPeriod(t *testing.T) {
+	var c RoomServer
+	c.Defaults(DefaultOpts{})
+	if c.RedactionRetentionPeriod != 7*24*time.Hour {
+		t.Fatalf("default retention is %s, want 168h", c.RedactionRetentionPeriod)
+	}
+	for input, want := range map[string]time.Duration{
+		"redaction_retention_period: 24h": 24 * time.Hour,
+		"redaction_retention_period: 0s":  0,
+		"redaction_retention_period: -1s": -time.Second,
+	} {
+		if err := yaml.Unmarshal([]byte(input), &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.RedactionRetentionPeriod != want {
+			t.Fatalf("%q parsed as %s, want %s", input, c.RedactionRetentionPeriod, want)
+		}
+	}
+}
+
 func TestDelayedEventsConfig(t *testing.T) {
 	var c ClientAPI
 	c.Defaults(DefaultOpts{})

@@ -35,6 +35,7 @@ func NewInternalAPI(
 	if err != nil {
 		logrus.WithError(err).Panicf("failed to connect to room server db")
 	}
+	roomserverDB.SetRedactedContentRetention(cfg.RoomServer.RedactionRetentionPeriod)
 
 	js, nc := natsInstance.Prepare(processContext, &cfg.Global.JetStream)
 

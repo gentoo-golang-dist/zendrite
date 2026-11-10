@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -635,6 +636,28 @@ func (r *Queryer) QueryServerEventVisibility(
 // QueryErasedUsers implements api.SyncRoomserverAPI.
 func (r *Queryer) QueryErasedUsers(ctx context.Context, userIDs []string) (map[string]struct{}, error) {
 	return r.DB.ErasedUsers(ctx, userIDs)
+}
+
+// QueryUnredactedEvent implements api.SyncRoomserverAPI.
+func (r *Queryer) QueryUnredactedEvent(ctx context.Context, roomID spec.RoomID, eventID string) (*types.HeaderedEvent, time.Duration, error) {
+	retention := r.Cfg.RoomServer.RedactionRetentionPeriod
+	roomInfo, err := r.DB.RoomInfo(ctx, roomID.String())
+	if err != nil || roomInfo == nil {
+		return nil, retention, err
+	}
+	eventJSON, err := r.DB.RedactedEventContent(ctx, roomInfo.RoomNID, eventID)
+	if err != nil || eventJSON == nil {
+		return nil, retention, err
+	}
+	verImpl, err := gomatrixserverlib.GetRoomVersion(roomInfo.RoomVersion)
+	if err != nil {
+		return nil, retention, err
+	}
+	event, err := verImpl.NewEventFromTrustedJSONWithEventID(eventID, eventJSON, false)
+	if err != nil {
+		return nil, retention, fmt.Errorf("NewEventFromTrustedJSONWithEventID: %w", err)
+	}
+	return &types.HeaderedEvent{PDU: event}, retention, nil
 }
 
 // QueryMissingEvents implements api.RoomserverInternalAPI.

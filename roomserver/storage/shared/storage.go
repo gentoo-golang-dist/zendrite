@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -82,6 +83,13 @@ type EventDatabase struct {
 	ReportedEventsTable tables.ReportedEvents
 	// AnnotationsTable indexes unredacted annotations (MSC2677).
 	AnnotationsTable tables.Annotations
+	// RedactedContentTable keeps the original JSON of redacted events for
+	// room moderators (MSC2815).
+	RedactedContentTable tables.RedactedContent
+	// RedactedContentRetention is how long RedactedContentTable keeps the
+	// content of a redacted event: zero keeps none, a negative value keeps
+	// it until the room is purged.
+	RedactedContentRetention time.Duration
 }
 
 func (d *Database) SupportsConcurrentRoomInputs() bool {
@@ -1132,6 +1140,14 @@ func (d *EventDatabase) MaybeRedactEvent(
 			return nil
 		}
 
+		// Keep the content for room moderators (MSC2815), unless an earlier
+		// redaction already removed it.
+		var originalJSON []byte
+		if d.RedactedContentRetention != 0 && roomInfo != nil && !redactedEvent.Redacted() &&
+			!gjson.GetBytes(redactedEvent.JSON(), "unsigned.redacted_because").Exists() {
+			originalJSON = slices.Clone(redactedEvent.JSON())
+		}
+
 		// mark the event as redacted
 		if redactionsArePermanent {
 			redactedEvent.Redact()
@@ -1150,6 +1166,13 @@ func (d *EventDatabase) MaybeRedactEvent(
 		err = d.EventJSONTable.InsertEventJSON(ctx, txn, redactedEvent.EventNID, redactedEvent.JSON())
 		if err != nil {
 			return fmt.Errorf("d.EventJSONTable.InsertEventJSON: %w", err)
+		}
+
+		if originalJSON != nil {
+			err = d.RedactedContentTable.InsertRedactedContent(ctx, txn, redactedEvent.EventNID, roomInfo.RoomNID, originalJSON, time.Now().UnixMilli())
+			if err != nil {
+				return fmt.Errorf("d.RedactedContentTable.InsertRedactedContent: %w", err)
+			}
 		}
 
 		err = d.RedactionsTable.MarkRedactionValidated(ctx, txn, redactionEvent.EventID(), true)
@@ -2591,6 +2614,49 @@ func (d *Database) EventSentToOutput(ctx context.Context, eventNID types.EventNI
 func (d *Database) ExpireClientTransactions(ctx context.Context, before time.Time) (removed int64, err error) {
 	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		removed, err = d.ClientTransactionsTable.DeleteClientTransactionsBefore(ctx, txn, before.UnixMilli())
+		return err
+	})
+	return removed, err
+}
+
+// SetRedactedContentRetention implements storage.Database.
+func (d *Database) SetRedactedContentRetention(retention time.Duration) {
+	d.RedactedContentRetention = retention
+}
+
+// redactedContentCutoff returns the earliest redaction time, in
+// milliseconds, whose content is still kept.
+func (d *EventDatabase) redactedContentCutoff(now time.Time) int64 {
+	if d.RedactedContentRetention < 0 {
+		return math.MinInt64
+	}
+	return now.Add(-d.RedactedContentRetention).UnixMilli()
+}
+
+// RedactedEventContent implements storage.Database.
+func (d *Database) RedactedEventContent(ctx context.Context, roomNID types.RoomNID, eventID string) ([]byte, error) {
+	if d.RedactedContentRetention == 0 {
+		return nil, nil
+	}
+	nids, err := d.EventNIDs(ctx, []string{eventID})
+	if err != nil {
+		return nil, err
+	}
+	nid, ok := nids[eventID]
+	if !ok || nid.RoomNID != roomNID {
+		return nil, nil
+	}
+	return d.RedactedContentTable.SelectRedactedContent(ctx, nil, nid.EventNID, d.redactedContentCutoff(time.Now()))
+}
+
+// ExpireRedactedContent implements storage.Database.
+func (d *Database) ExpireRedactedContent(ctx context.Context) (removed int64, err error) {
+	if d.RedactedContentRetention < 0 {
+		return 0, nil
+	}
+	cutoff := d.redactedContentCutoff(time.Now())
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		removed, err = d.RedactedContentTable.DeleteRedactedContentBefore(ctx, txn, cutoff)
 		return err
 	})
 	return removed, err

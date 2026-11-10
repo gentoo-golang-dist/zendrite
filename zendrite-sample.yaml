@@ -430,6 +430,13 @@ room_server:
   # behaviour.
   auto_forget_on_leave: false
 
+  # How long to keep the content of redacted events, so that room moderators
+  # (users with at least the room's "redact" power level) and server admins
+  # can still view it (MSC2815). After this period the content is deleted.
+  # 0s keeps no content, and a negative value, such as -1s, keeps it until
+  # the room is purged. Defaults to 168h (7 days), as in Synapse.
+  redaction_retention_period: 168h
+
 # Configuration for the Media API.
 media_api:
   # Storage backend for uploaded media. Supported values are "local" (default)

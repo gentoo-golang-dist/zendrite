@@ -167,6 +167,10 @@ column roomserver_published | appservice_id | text | NO |
 column roomserver_published | network_id | text | NO |
 column roomserver_published | published | boolean | NO | false
 column roomserver_published | room_id | text | NO |
+column roomserver_redacted_content | event_json | text | NO |
+column roomserver_redacted_content | event_nid | bigint | NO |
+column roomserver_redacted_content | redacted_ts | bigint | NO |
+column roomserver_redacted_content | room_nid | bigint | NO |
 column roomserver_redactions | redaction_event_id | text | NO |
 column roomserver_redactions | redacts_event_id | text | NO |
 column roomserver_redactions | validated | boolean | NO |
@@ -605,6 +609,9 @@ index roomserver_partial_state_rooms | roomserver_partial_state_rooms_pkey | CRE
 index roomserver_partial_state_rooms_servers | roomserver_partial_state_rooms_servers_pkey | CREATE UNIQUE INDEX roomserver_partial_state_rooms_servers_pkey ON public.roomserver_partial_state_rooms_servers USING btree (room_nid, server_name)
 index roomserver_previous_events | roomserver_previous_event_id_unique | CREATE UNIQUE INDEX roomserver_previous_event_id_unique ON public.roomserver_previous_events USING btree (previous_event_id)
 index roomserver_published | roomserver_published_pkey | CREATE UNIQUE INDEX roomserver_published_pkey ON public.roomserver_published USING btree (room_id, appservice_id, network_id)
+index roomserver_redacted_content | roomserver_redacted_content_pkey | CREATE UNIQUE INDEX roomserver_redacted_content_pkey ON public.roomserver_redacted_content USING btree (event_nid)
+index roomserver_redacted_content | roomserver_redacted_content_redacted_ts_idx | CREATE INDEX roomserver_redacted_content_redacted_ts_idx ON public.roomserver_redacted_content USING btree (redacted_ts)
+index roomserver_redacted_content | roomserver_redacted_content_room_nid_idx | CREATE INDEX roomserver_redacted_content_room_nid_idx ON public.roomserver_redacted_content USING btree (room_nid)
 index roomserver_redactions | roomserver_redactions_pkey | CREATE UNIQUE INDEX roomserver_redactions_pkey ON public.roomserver_redactions USING btree (redaction_event_id)
 index roomserver_redactions | roomserver_redactions_redacts_event_id | CREATE INDEX roomserver_redactions_redacts_event_id ON public.roomserver_redactions USING btree (redacts_event_id)
 index roomserver_reported_events | roomserver_reported_events_pkey | CREATE UNIQUE INDEX roomserver_reported_events_pkey ON public.roomserver_reported_events USING btree (id)
@@ -952,6 +959,11 @@ constraint roomserver_published | roomserver_published_network_id_not_null | NOT
 constraint roomserver_published | roomserver_published_pkey | PRIMARY KEY (room_id, appservice_id, network_id)
 constraint roomserver_published | roomserver_published_published_not_null | NOT NULL published
 constraint roomserver_published | roomserver_published_room_id_not_null | NOT NULL room_id
+constraint roomserver_redacted_content | roomserver_redacted_content_event_json_not_null | NOT NULL event_json
+constraint roomserver_redacted_content | roomserver_redacted_content_event_nid_not_null | NOT NULL event_nid
+constraint roomserver_redacted_content | roomserver_redacted_content_pkey | PRIMARY KEY (event_nid)
+constraint roomserver_redacted_content | roomserver_redacted_content_redacted_ts_not_null | NOT NULL redacted_ts
+constraint roomserver_redacted_content | roomserver_redacted_content_room_nid_not_null | NOT NULL room_nid
 constraint roomserver_redactions | roomserver_redactions_pkey | PRIMARY KEY (redaction_event_id)
 constraint roomserver_redactions | roomserver_redactions_redaction_event_id_not_null | NOT NULL redaction_event_id
 constraint roomserver_redactions | roomserver_redactions_redacts_event_id_not_null | NOT NULL redacts_event_id

@@ -8,7 +8,9 @@ package routing
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -16,8 +18,10 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"codefloe.com/pat-s/zendrite/roomserver/api"
+	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/syncapi/internal"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
@@ -59,6 +63,51 @@ func GetEvent(
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: spec.InvalidParam("invalid room ID"),
+		}
+	}
+
+	// If the request is coming from an appservice, get the user from the request
+	rawUserID := device.UserID
+	if asUserID := req.FormValue("user_id"); device.AppserviceID != "" && asUserID != "" {
+		rawUserID = asUserID
+	}
+
+	userID, err := spec.NewUserID(rawUserID, true)
+	if err != nil {
+		util.GetLogger(req.Context()).WithError(err).Error("invalid device.UserID")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+
+	// MSC2815: room moderators and server admins may ask for the content of
+	// redacted events. As in Synapse, the power level is checked first.
+	var includeUnredacted bool
+	switch req.URL.Query().Get(includeUnredactedContentParam) {
+	case "", "false":
+	case "true":
+		includeUnredacted = true
+	default:
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.InvalidParam(fmt.Sprintf("Query parameter %q must be one of [true, false]", includeUnredactedContentParam)),
+		}
+	}
+	if includeUnredacted && device.AccountType != userapi.AccountTypeAdmin {
+		allowed, permErr := mayViewRedactedContent(ctx, db, rsAPI, *roomID, *userID)
+		if permErr != nil {
+			logger.WithError(permErr).Error("GetEvent: checking the redact power level failed")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
+		}
+		if !allowed {
+			return util.JSONResponse{
+				Code: http.StatusForbidden,
+				JSON: spec.Forbidden("You don't have permission to view redacted events in this room."),
+			}
 		}
 	}
 
@@ -111,18 +160,37 @@ func GetEvent(
 		}
 	}
 
-	// If the request is coming from an appservice, get the user from the request
-	rawUserID := device.UserID
-	if asUserID := req.FormValue("user_id"); device.AppserviceID != "" && asUserID != "" {
-		rawUserID = asUserID
-	}
-
-	userID, err := spec.NewUserID(rawUserID, true)
-	if err != nil {
-		util.GetLogger(req.Context()).WithError(err).Error("invalid device.UserID")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
+	// Swap in the content from before the redaction. The history visibility
+	// filter below still applies to it, including the redaction of erased
+	// senders' events (MSC4025).
+	var contentDeleted bool
+	var retention time.Duration
+	if includeUnredacted && isRedacted(events[0].PDU) && events[0].RoomID().String() == roomID.String() {
+		var original *rstypes.HeaderedEvent
+		original, retention, err = rsAPI.QueryUnredactedEvent(ctx, *roomID, eventID)
+		if err != nil {
+			logger.WithError(err).Error("GetEvent: rsAPI.QueryUnredactedEvent failed")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
+		}
+		if original == nil {
+			contentDeleted = true
+		} else {
+			// Keep the unsigned section of the redacted event, with
+			// redacted_because, as Synapse does.
+			unredacted, unredactErr := withUnsigned(original.PDU, events[0].Unsigned())
+			if unredactErr != nil {
+				logger.WithError(unredactErr).Error("GetEvent: building the unredacted event failed")
+				return util.JSONResponse{
+					Code: http.StatusInternalServerError,
+					JSON: spec.InternalServerError{},
+				}
+			}
+			copied := *events[0]
+			copied.PDU = unredacted
+			events[0] = &copied
 		}
 	}
 
@@ -144,6 +212,10 @@ func GetEvent(
 			Code: http.StatusNotFound,
 			JSON: spec.NotFound("The event was not found or you do not have permission to read this event"),
 		}
+	}
+
+	if contentDeleted {
+		return unredactedContentDeleted(retention)
 	}
 
 	clientEvent, err := synctypes.ToClientEvent(events[0], synctypes.FormatAll, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
@@ -256,4 +328,90 @@ func waitForRedaction(
 // the redaction in unsigned.redacted_because.
 func isRedacted(ev gomatrixserverlib.PDU) bool {
 	return ev.Redacted() || gjson.GetBytes(ev.JSON(), "unsigned.redacted_because").Exists()
+}
+
+// includeUnredactedContentParam is the unstable query parameter of MSC2815.
+const includeUnredactedContentParam = "fi.mau.msc2815.include_unredacted_content"
+
+// errUnredactedContentDeleted is the unstable error code of MSC2815 for a
+// redacted event whose content the server no longer has.
+const errUnredactedContentDeleted spec.MatrixErrorCode = "FI.MAU.MSC2815_UNREDACTED_CONTENT_DELETED"
+
+// unredactedContentDeletedError is the error for a redacted event whose
+// content is no longer kept, with how long content is kept, if limited.
+type unredactedContentDeletedError struct {
+	spec.MatrixError
+	ContentKeepMS *int64 `json:"fi.mau.msc2815.content_keep_ms,omitempty"`
+}
+
+func unredactedContentDeleted(retention time.Duration) util.JSONResponse {
+	res := unredactedContentDeletedError{MatrixError: spec.MatrixError{
+		ErrCode: errUnredactedContentDeleted,
+		Err:     "The content for that event has already been erased from the database",
+	}}
+	if retention >= 0 {
+		keepMS := retention.Milliseconds()
+		res.ContentKeepMS = &keepMS
+	}
+	return util.JSONResponse{Code: http.StatusNotFound, JSON: res}
+}
+
+// mayViewRedactedContent reports whether the user's power level in the
+// room's current state is at least the redact level (MSC2815). The room's
+// creators may in room versions that give them unlimited power.
+func mayViewRedactedContent(
+	ctx context.Context, db storage.DatabaseTransaction, rsAPI api.SyncRoomserverAPI,
+	roomID spec.RoomID, userID spec.UserID,
+) (bool, error) {
+	senderID, err := rsAPI.QuerySenderIDForUser(ctx, roomID, userID)
+	if err != nil {
+		return false, fmt.Errorf("rsAPI.QuerySenderIDForUser: %w", err)
+	}
+	if senderID == nil {
+		return false, nil
+	}
+	createEvent, err := db.GetStateEvent(ctx, roomID.String(), spec.MRoomCreate, "")
+	if err != nil {
+		return false, fmt.Errorf("db.GetStateEvent: %w", err)
+	}
+	if createEvent == nil {
+		return false, nil
+	}
+	if verImpl, verErr := gomatrixserverlib.GetRoomVersion(createEvent.Version()); verErr == nil && verImpl.PrivilegedCreators() &&
+		slices.Contains(gomatrixserverlib.CreatorsFromCreateEvent(createEvent), string(*senderID)) {
+		return true, nil
+	}
+	plEvent, err := db.GetStateEvent(ctx, roomID.String(), spec.MRoomPowerLevels, "")
+	if err != nil {
+		return false, fmt.Errorf("db.GetStateEvent: %w", err)
+	}
+	if plEvent == nil {
+		// Without power levels the creator has level 100 and everyone else 0.
+		// That is above the default redact level of 50.
+		return createEvent.SenderID() == *senderID, nil
+	}
+	pl, err := gomatrixserverlib.NewPowerLevelContentFromEvent(plEvent)
+	if err != nil {
+		return false, nil
+	}
+	return pl.UserLevel(*senderID) >= pl.Redact, nil
+}
+
+// withUnsigned returns a copy of the event with the given unsigned section.
+func withUnsigned(event gomatrixserverlib.PDU, unsigned []byte) (gomatrixserverlib.PDU, error) {
+	eventJSON := slices.Clone(event.JSON())
+	var err error
+	if len(unsigned) == 0 {
+		eventJSON, err = sjson.DeleteBytes(eventJSON, "unsigned")
+	} else {
+		eventJSON, err = sjson.SetRawBytes(eventJSON, "unsigned", unsigned)
+	}
+	if err != nil {
+		return nil, err
+	}
+	verImpl, err := gomatrixserverlib.GetRoomVersion(event.Version())
+	if err != nil {
+		return nil, err
+	}
+	return verImpl.NewEventFromTrustedJSONWithEventID(event.EventID(), eventJSON, false)
 }

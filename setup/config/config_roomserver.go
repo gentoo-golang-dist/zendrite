@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"github.com/goccy/go-yaml"
@@ -95,8 +96,17 @@ type RoomServer struct {
 	// can opt in.
 	AutoForgetOnLeave bool `yaml:"auto_forget_on_leave"`
 
+	// RedactionRetentionPeriod is how long the content of a redacted event
+	// is kept after the redaction, so that room moderators can still view
+	// it (MSC2815). Zero keeps none, and a negative value keeps it until the
+	// room is purged. Defaults to 7 days, as in Synapse.
+	RedactionRetentionPeriod time.Duration `yaml:"redaction_retention_period"`
+
 	Database DatabaseOptions `yaml:"database,omitempty"`
 }
+
+// DefaultRedactionRetentionPeriod is the default RedactionRetentionPeriod.
+const DefaultRedactionRetentionPeriod = 7 * 24 * time.Hour
 
 // AutoPurgeEnabled returns true when auto-purge is configured to fire in
 // at least one of its modes.
@@ -107,6 +117,7 @@ func (c *RoomServer) AutoPurgeEnabled() bool {
 func (c *RoomServer) Defaults(opts DefaultOpts) {
 	c.DefaultRoomVersion = gomatrixserverlib.RoomVersionV12
 	c.AutoPurgeMode = AutoPurgeOnAllForgotten
+	c.RedactionRetentionPeriod = DefaultRedactionRetentionPeriod
 	if opts.Generate {
 		if !opts.SingleDatabase {
 			c.Database.ConnectionString = "file:roomserver.db"

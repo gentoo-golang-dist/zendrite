@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/ed25519"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
@@ -241,6 +242,12 @@ type SyncRoomserverAPI interface {
 	// QueryErasedUsers returns the subset of userIDs that asked for erasure
 	// when deactivating their account (MSC4025).
 	QueryErasedUsers(ctx context.Context, userIDs []string) (map[string]struct{}, error)
+	// QueryUnredactedEvent returns a redacted event of the room as it was
+	// before the redaction, or nil if its content is no longer kept, for
+	// room moderators (MSC2815). It also returns how long the content of
+	// redacted events is kept; a negative period keeps it until the room is
+	// purged.
+	QueryUnredactedEvent(ctx context.Context, roomID spec.RoomID, eventID string) (*types.HeaderedEvent, time.Duration, error)
 }
 
 type AppserviceRoomserverAPI interface {
