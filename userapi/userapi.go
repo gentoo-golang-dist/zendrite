@@ -18,6 +18,7 @@ import (
 	fedsenderapi "codefloe.com/pat-s/zendrite/federationapi/api"
 	"codefloe.com/pat-s/zendrite/federationapi/statistics"
 	"codefloe.com/pat-s/zendrite/internal/pushgateway"
+	"codefloe.com/pat-s/zendrite/internal/pushrules"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	rsapi "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -63,6 +64,10 @@ func NewInternalAPI(
 		zendriteCfg.UserAPI.OpenIDTokenLifetimeMS,
 		api.DefaultLoginTokenLifetime,
 		zendriteCfg.UserAPI.Matrix.ServerNotices.LocalPart,
+		storage.WithPushRuleOptions(pushrules.Options{
+			// MSC4028 is opt-in, as in Synapse.
+			EncryptedEvent: zendriteCfg.MSCs.Enabled("msc4028"),
+		}),
 	)
 	if err != nil {
 		logrus.WithError(err).Panicf("failed to connect to accounts db")

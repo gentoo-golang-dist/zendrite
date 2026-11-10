@@ -1826,6 +1826,71 @@ func TestPushRules(t *testing.T) {
 	})
 }
 
+// The MSC3930 poll rules are always served; the MSC4028 rule only with
+// msc4028 enabled, and then users can turn it off.
+func TestPushRulesPollsAndEncryptedEvent(t *testing.T) {
+	alice := test.NewUser(t)
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		for _, msc4028 := range []bool{false, true} {
+			t.Run(fmt.Sprintf("msc4028=%v", msc4028), func(t *testing.T) {
+				cfg, processCtx, closeRig := testrig.CreateConfig(t, dbType)
+				defer closeRig()
+				cfg.ClientAPI.RateLimiting.Enabled = false
+				if msc4028 {
+					cfg.MSCs.MSCs = []string{"msc4028"}
+				}
+				caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+				natsInstance := jetstream.NATSInstance{}
+				routers := httputil.NewRouters()
+				cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+				rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+				rsAPI.SetFederationAPI(nil, nil)
+				userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, &natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+				AddPublicRoutes(processCtx, routers, cfg, &natsInstance, nil, rsAPI, nil, nil, nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+				accessTokens := map[*test.User]userDevice{alice: {}}
+				createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+
+				do := func(method, path, body string) *httptest.ResponseRecorder {
+					t.Helper()
+					req := httptest.NewRequest(method, "/_matrix/client/v3/pushrules/global/"+path, strings.NewReader(body))
+					req.Header.Set("Authorization", "Bearer "+accessTokens[alice].accessToken)
+					rec := httptest.NewRecorder()
+					routers.Client.ServeHTTP(rec, req)
+					return rec
+				}
+
+				for _, path := range []string{
+					"override/" + pushrules.MRulePollResponse,
+					"underride/" + pushrules.MRulePollStartOneToOne,
+					"underride/" + pushrules.MRulePollStart,
+					"underride/" + pushrules.MRulePollEndOneToOne,
+					"underride/" + pushrules.MRulePollEnd,
+				} {
+					rec := do(http.MethodGet, path, "")
+					assert.Equal(t, http.StatusOK, rec.Code, path)
+					assert.True(t, gjson.GetBytes(rec.Body.Bytes(), "enabled").Bool(), path)
+				}
+
+				rec := do(http.MethodGet, "override/"+pushrules.MRuleEncryptedEvent, "")
+				if !msc4028 {
+					assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+					return
+				}
+				assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				assert.JSONEq(t, `{"rule_id":".org.matrix.msc4028.encrypted_event","default":true,"enabled":true,`+
+					`"conditions":[{"kind":"event_match","key":"type","pattern":"m.room.encrypted"}],"actions":["notify"]}`, rec.Body.String())
+				override := gjson.GetBytes(do(http.MethodGet, "override/", "").Body.Bytes(), "#.rule_id").Array()
+				assert.Equal(t, pushrules.MRuleEncryptedEvent, override[1].Str)
+
+				rec = do(http.MethodPut, "override/"+pushrules.MRuleEncryptedEvent+"/enabled", `{"enabled":false}`)
+				assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				rec = do(http.MethodGet, "override/"+pushrules.MRuleEncryptedEvent+"/enabled", "")
+				assert.JSONEq(t, `{"enabled":false}`, rec.Body.String())
+			})
+		}
+	})
+}
+
 // Tests the `/keys` endpoints.
 // Note that this only tests the happy path.
 func TestKeys(t *testing.T) {

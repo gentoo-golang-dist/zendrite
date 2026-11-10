@@ -55,6 +55,7 @@ func EnableMSC(
 	case "msc2444": // enabled inside federationapi
 	case "msc2753": // enabled inside clientapi
 	case "msc3861": // enabled inside clientapi routing and userapi
+	case "msc4028": // enabled inside the userapi push rules
 	default:
 		logrus.Warnf("EnableMSC: unknown MSC '%s', this MSC is either not supported or is natively supported by Zendrite", msc)
 	}

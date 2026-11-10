@@ -505,6 +505,7 @@ mscs:
   #  - msc2836  # (Threading, see https://github.com/matrix-org/matrix-doc/pull/2836)
   #  - msc3814  # (Dehydrated devices v2, see https://github.com/matrix-org/matrix-spec-proposals/pull/3814)
   #  - msc3861  # (OIDC delegated auth, see https://github.com/matrix-org/matrix-spec-proposals/pull/3861)
+  #  - msc4028  # (Push all encrypted events except for muted rooms, see https://github.com/matrix-org/matrix-spec-proposals/pull/4028)
 
   # MSC3861: OIDC delegated authentication configuration.
   # Only used when msc3861 is listed above.

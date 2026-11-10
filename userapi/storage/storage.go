@@ -15,9 +15,11 @@ import (
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 
+	"codefloe.com/pat-s/zendrite/internal/pushrules"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/userapi/storage/postgres"
+	"codefloe.com/pat-s/zendrite/userapi/storage/shared"
 	"codefloe.com/pat-s/zendrite/userapi/storage/sqlite3"
 )
 
@@ -32,15 +34,36 @@ func NewUserDatabase(
 	openIDTokenLifetimeMS int64,
 	loginTokenLifetime time.Duration,
 	serverNoticesLocalpart string,
+	options ...Option,
 ) (UserDatabase, error) {
+	var (
+		db  *shared.Database
+		err error
+	)
 	switch {
 	case dbProperties.ConnectionString.IsSQLite():
-		return sqlite3.NewUserDatabase(ctx, conMan, dbProperties, serverName, bcryptCost, openIDTokenLifetimeMS, loginTokenLifetime, serverNoticesLocalpart)
+		db, err = sqlite3.NewUserDatabase(ctx, conMan, dbProperties, serverName, bcryptCost, openIDTokenLifetimeMS, loginTokenLifetime, serverNoticesLocalpart)
 	case dbProperties.ConnectionString.IsPostgres():
-		return postgres.NewDatabase(ctx, conMan, dbProperties, serverName, bcryptCost, openIDTokenLifetimeMS, loginTokenLifetime, serverNoticesLocalpart)
+		db, err = postgres.NewDatabase(ctx, conMan, dbProperties, serverName, bcryptCost, openIDTokenLifetimeMS, loginTokenLifetime, serverNoticesLocalpart)
 	default:
 		return nil, fmt.Errorf("unexpected database type")
 	}
+	if err != nil {
+		return nil, err
+	}
+	for _, option := range options {
+		option(db)
+	}
+	return db, nil
+}
+
+// An Option configures a user database.
+type Option func(*shared.Database)
+
+// WithPushRuleOptions selects the default push rules that depend on server
+// configuration.
+func WithPushRuleOptions(opts pushrules.Options) Option {
+	return func(db *shared.Database) { db.PushRuleOptions = opts }
 }
 
 // NewKeyDatabase opens a new Postgres or Sqlite database (base on dataSourceName) scheme)

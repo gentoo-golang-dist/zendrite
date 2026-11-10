@@ -119,7 +119,7 @@ func Setup(
 	// Keep this list aligned with setup/mscs.EnableMSC and the discovery audit.
 	for _, msc := range mscCfg.MSCs {
 		switch msc {
-		case "msc2444", "msc2753", "msc2836", "msc3814", "msc3861":
+		case "msc2444", "msc2753", "msc2836", "msc3814", "msc3861", "msc4028":
 			unstableFeatures["org.matrix."+msc] = true
 		}
 	}

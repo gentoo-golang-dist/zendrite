@@ -91,6 +91,8 @@ Zendrite advertises `org.matrix.msc4222` in `unstable_features` for clients that
 | [MSC3316](https://github.com/matrix-org/matrix-spec-proposals/pull/3316) | Timestamp massaging | 1.3 | Implemented: the `ts` parameter on `/send`, `/state`, membership endpoints, `/createRoom` and profile updates only applies to requests made with an application service token, and is ignored otherwise |
 | [MSC4210](https://github.com/matrix-org/matrix-spec-proposals/pull/4210) | Remove legacy mentions | 1.17 | Implemented: the `.m.rule.contains_display_name`, `.m.rule.contains_user_name` and `.m.rule.roomnotif` push rules are no longer installed, and are dropped from existing accounts' rules once `.m.rule.is_user_mention` and `.m.rule.is_room_mention` have taken over their settings. Only `m.mentions` notifies of a mention. The deprecated `contains_display_name` condition still works in user-defined rules |
 | [MSC3958](https://github.com/matrix-org/matrix-spec-proposals/pull/3958) | Suppress notifications from message edits | 1.9 | Implemented: the `.m.rule.suppress_edits` default push rule, also added to existing accounts' rules |
+| [MSC3930](https://github.com/matrix-org/matrix-spec-proposals/pull/3930) | Push rules for polls | N/A | Implemented (unstable prefix): see [poll push rules](#poll-push-rules) |
+| [MSC4028](https://github.com/matrix-org/matrix-spec-proposals/pull/4028) | Push all encrypted events except for muted rooms | N/A | Opt-in (`msc4028`): see [MSC4028](#msc4028-push-all-encrypted-events) |
 | [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Implemented: relations are stored and served through `/relations`. Sending an annotation that the sender has already made, with the same event type and key on the same event and not redacted, fails with 400 `M_DUPLICATE_ANNOTATION`; retrying the original transaction still returns its event. The spec defines no server-side aggregation for annotations |
 | [MSC3970](https://github.com/matrix-org/matrix-spec-proposals/pull/3970) | Scope transaction IDs to devices | 1.7 | Implemented: `/send`, `/redact`, `/sendToDevice`, delayed events and server notices recognise a retransmission by device, endpoint and transaction ID, so it survives a refreshed access token. Application services share one scope per application service, whichever user they act as |
 | [MSC3267](https://github.com/matrix-org/matrix-spec-proposals/pull/3267) | Reference relations | 1.5 | Implemented: references are bundled under `m.reference` |
@@ -546,6 +548,19 @@ The resend uses the same roomserver transaction, keyed by the delay ID, so an ev
 
 `/versions` advertises `org.matrix.msc4140` and `org.matrix.msc4140.stable` while delayed events are enabled, and `/capabilities` reports the limits as both `m.delayed_events` and `org.matrix.msc4140.delayed_events`, where a `max_delay_ms` of 0 means disabled.
 
+### Poll push rules
+
+Zendrite installs the MSC3930 default push rules with the unstable rule IDs and [MSC3381](https://github.com/matrix-org/matrix-spec-proposals/pull/3381) event types that Synapse and current clients use:
+
+- `.org.matrix.msc3930.rule.poll_response`, the last default `override` rule, keeps `org.matrix.msc3381.poll.response` events from notifying.
+- `.org.matrix.msc3930.rule.poll_start_one_to_one` and `.org.matrix.msc3930.rule.poll_end_one_to_one` notify with the default sound for `org.matrix.msc3381.poll.start` and `org.matrix.msc3381.poll.end` in rooms with two members.
+- `.org.matrix.msc3930.rule.poll_start` and `.org.matrix.msc3930.rule.poll_end` notify for them in other rooms.
+
+The four `underride` rules come after the other default `underride` rules, each one-to-one rule before its counterpart.
+Polls in encrypted rooms are `m.room.encrypted` events, which the encryption rules handle.
+Existing accounts receive the rules when their push rules are next read; a rule the user disabled stays disabled.
+Unlike Synapse, where they need `msc3381_polls_enabled`, the rules are always installed, because MSC3930 is accepted.
+
 ## Client-only MSCs
 
 Some spec MSCs need no server support beyond storing events, account data, media or to-device messages, so they work with Zendrite as they are:
@@ -569,6 +584,7 @@ mscs:
     - msc2753
     - msc3814
     - msc3861
+    - msc4028
 ```
 
 ### MSC2836: Threading
@@ -606,6 +622,26 @@ mscs:
 ```
 
 No additional configuration is needed beyond enabling the MSC.
+
+### MSC4028: Push all encrypted events
+
+MSC4028 lets clients that decrypt notifications themselves, such as Element X, receive a push for every encrypted event and decide after decrypting it whether to show it.
+It is off by default, as in Synapse, where it needs `msc4028_push_encrypted_events`.
+
+**What changes when MSC4028 is enabled:**
+
+- `/versions` advertises `org.matrix.msc4028` in `unstable_features`.
+- The default `override` rule `.org.matrix.msc4028.encrypted_event` (Synapse's unstable ID; the MSC calls it `.m.rule.encrypted_event`) notifies for every `m.room.encrypted` event. As in Synapse, it is enabled and comes right after `.m.rule.master`.
+- Rules the user added take precedence, so muted rooms stay muted, but encrypted events in a room set to mentions and keywords only notify, and count as unread notifications.
+- New accounts get the rule, and existing accounts receive it when their push rules are next read. Users can disable it like any default rule.
+
+Removing `msc4028` from the configuration removes the rule from every account when its push rules are next read, including a user's choice to disable it; enabling the MSC again adds it back enabled.
+
+```yaml
+mscs:
+  mscs:
+    - msc4028
+```
 
 ### MSC3861: OIDC Delegated Authentication
 

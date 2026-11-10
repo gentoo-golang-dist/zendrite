@@ -14,6 +14,7 @@ func defaultOverrideRules(userID string) []*Rule {
 		&mRuleReactionDefinition,
 		&mRuleACLsDefinition,
 		mRuleSuppressEditsDefinition(),
+		mRulePollResponseDefinition(),
 	}
 }
 
@@ -166,7 +167,8 @@ func mRuleIsUserMentionDefinition(userID string) *Rule {
 }
 
 // mRuleSuppressEditsDefinition stops event replacements from notifying, as
-// added in v1.9 of the spec. It is the last default override rule.
+// added in v1.9 of the spec. It is the last default override rule of the
+// spec; the MSC3930 poll response rule follows it.
 func mRuleSuppressEditsDefinition() *Rule {
 	return &Rule{
 		RuleID: MRuleSuppressEdits, Default: true, Enabled: true,

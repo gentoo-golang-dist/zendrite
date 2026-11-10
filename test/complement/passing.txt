@@ -201,6 +201,7 @@ tests/msc2836/TestEventRelationships
 tests/msc2836/TestFederatedEventRelationships
 tests/msc3389/TestMSC3389RedactionStripsRelationInOlderVersions
 tests/msc3757/TestWithoutOwnedState
+tests/msc3930/TestPollsLocalPushRules
 tests/msc3967/TestMSC3967
 tests/msc4140/TestDelayedEvents
 tests/msc4222/TestSync

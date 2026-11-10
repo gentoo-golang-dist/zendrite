@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1203,6 +1204,105 @@ func TestUpdatePushRulesConcurrently(t *testing.T) {
 		rules, err = db.QueryPushRules(ctx, "alice", "localhost")
 		assert.NoError(t, err)
 		assert.Len(t, rules.Global.Room, updates, "an update without changes must not be stored")
+	})
+}
+
+func openUserDatabase(t *testing.T, connStr string, options ...storage.Option) storage.UserDatabase {
+	t.Helper()
+	cm := sqlutil.NewConnectionManager(nil, config.DatabaseOptions{})
+	db, err := storage.NewUserDatabase(ctx, cm, &config.DatabaseOptions{
+		ConnectionString: config.DataSource(connStr),
+	}, "localhost", bcrypt.MinCost, openIDLifetimeMS, loginTokenLifetime, "_server", options...)
+	if err != nil {
+		t.Fatalf("NewUserDatabase returned %s", err)
+	}
+	return db
+}
+
+func findPushRule(rules []*pushrules.Rule, ruleID string) *pushrules.Rule {
+	for _, rule := range rules {
+		if rule.RuleID == ruleID {
+			return rule
+		}
+	}
+	return nil
+}
+
+// Stored rules gain the MSC3930 poll rules on read, and the MSC4028 rule
+// while the server enables it.
+func TestPushRulesPollsAndEncryptedEventUpgrade(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		connStr, closeDB := test.PrepareDBConnectionString(t, dbType)
+		defer closeDB()
+		withMSC4028 := storage.WithPushRuleOptions(pushrules.Options{EncryptedEvent: true})
+		db := openUserDatabase(t, connStr, withMSC4028)
+
+		// Rules stored before MSC3930 and MSC4028.
+		rules := pushrules.DefaultAccountRuleSets("alice", "localhost")
+		isNew := func(rule *pushrules.Rule) bool {
+			return strings.Contains(rule.RuleID, "msc3930") || rule.RuleID == pushrules.MRuleEncryptedEvent
+		}
+		rules.Global.Override = slices.DeleteFunc(rules.Global.Override, isNew)
+		rules.Global.Underride = slices.DeleteFunc(rules.Global.Underride, isNew)
+		data, err := json.Marshal(rules)
+		assert.NoError(t, err)
+		assert.NoError(t, db.SaveAccountData(ctx, "alice", "localhost", "", "m.push_rules", data))
+
+		upgraded, err := db.QueryPushRules(ctx, "alice", "localhost")
+		assert.NoError(t, err)
+		for _, id := range []string{pushrules.MRulePollStartOneToOne, pushrules.MRulePollStart, pushrules.MRulePollEndOneToOne, pushrules.MRulePollEnd} {
+			assert.NotNil(t, findPushRule(upgraded.Global.Underride, id), id)
+		}
+		assert.Equal(t, pushrules.MRulePollResponse, upgraded.Global.Override[len(upgraded.Global.Override)-1].RuleID)
+		assert.Equal(t, pushrules.MRuleMaster, upgraded.Global.Override[0].RuleID)
+		assert.Equal(t, pushrules.MRuleEncryptedEvent, upgraded.Global.Override[1].RuleID)
+		assert.True(t, upgraded.Global.Override[1].Enabled)
+		// Clients reading the account data see the same rules.
+		expected, err := json.Marshal(upgraded)
+		assert.NoError(t, err)
+		byType, err := db.GetAccountDataByType(ctx, "alice", "localhost", "", "m.push_rules")
+		assert.NoError(t, err)
+		assert.JSONEq(t, string(expected), string(byType))
+		global, _, err := db.GetAccountData(ctx, "alice", "localhost")
+		assert.NoError(t, err)
+		assert.JSONEq(t, string(expected), string(global["m.push_rules"]))
+
+		// A new account gets them from the start.
+		_, err = db.CreateAccount(ctx, "bob", "localhost", "", "", api.AccountTypeUser)
+		assert.NoError(t, err)
+		bob, err := db.QueryPushRules(ctx, "bob", "localhost")
+		assert.NoError(t, err)
+		assert.NotNil(t, findPushRule(bob.Global.Override, pushrules.MRuleEncryptedEvent))
+		assert.NotNil(t, findPushRule(bob.Global.Underride, pushrules.MRulePollStart))
+
+		// The user disables the rule, which stays disabled.
+		changed, err := db.UpdatePushRules(ctx, "alice", "localhost", func(rs *pushrules.AccountRuleSets) (bool, error) {
+			findPushRule(rs.Global.Override, pushrules.MRuleEncryptedEvent).Enabled = false
+			return true, nil
+		})
+		assert.NoError(t, err)
+		assert.True(t, changed)
+		again, err := openUserDatabase(t, connStr, withMSC4028).QueryPushRules(ctx, "alice", "localhost")
+		assert.NoError(t, err)
+		assert.False(t, findPushRule(again.Global.Override, pushrules.MRuleEncryptedEvent).Enabled)
+
+		// Without MSC4028, the rule is not served or evaluated, but the
+		// poll rules are.
+		without := openUserDatabase(t, connStr)
+		for _, user := range []string{"alice", "bob"} {
+			rs, err := without.QueryPushRules(ctx, user, "localhost")
+			assert.NoError(t, err)
+			assert.Nil(t, findPushRule(rs.Global.Override, pushrules.MRuleEncryptedEvent), user)
+			assert.NotNil(t, findPushRule(rs.Global.Override, pushrules.MRulePollResponse), user)
+			data, err := without.GetAccountDataByType(ctx, user, "localhost", "", "m.push_rules")
+			assert.NoError(t, err)
+			assert.NotContains(t, string(data), pushrules.MRuleEncryptedEvent, user)
+		}
+		_, err = without.CreateAccount(ctx, "carol", "localhost", "", "", api.AccountTypeUser)
+		assert.NoError(t, err)
+		carol, err := without.QueryPushRules(ctx, "carol", "localhost")
+		assert.NoError(t, err)
+		assert.Nil(t, findPushRule(carol.Global.Override, pushrules.MRuleEncryptedEvent))
 	})
 }
 

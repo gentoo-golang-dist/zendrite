@@ -68,6 +68,11 @@ func TestVersions(t *testing.T) {
 			},
 		},
 		{
+			name:     "MSC4028 push rule for encrypted events",
+			mscs:     []string{"msc4028"},
+			features: map[string]bool{"org.matrix.msc4028": true},
+		},
+		{
 			name: "OIDC implies discovery and scopes",
 			mscs: []string{"msc3861"},
 			features: map[string]bool{

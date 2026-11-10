@@ -163,6 +163,27 @@ func Test_evaluatePushRules(t *testing.T) {
 				},
 				thread: eventThread{inThread: true},
 			},
+			// MSC3930: poll starts and ends notify, responses do not.
+			{
+				name:         "poll start notifies",
+				eventContent: `{"type":"org.matrix.msc3381.poll.start","content":{},"room_id":"!room:example.com"}`,
+				wantNotify:   true,
+				wantAction:   pushrules.NotifyAction,
+				wantActions:  []*pushrules.Action{{Kind: pushrules.NotifyAction}},
+			},
+			{
+				name:         "poll end notifies",
+				eventContent: `{"type":"org.matrix.msc3381.poll.end","content":{},"room_id":"!room:example.com"}`,
+				wantNotify:   true,
+				wantAction:   pushrules.NotifyAction,
+				wantActions:  []*pushrules.Action{{Kind: pushrules.NotifyAction}},
+			},
+			{
+				name:         "poll response does not notify",
+				eventContent: `{"type":"org.matrix.msc3381.poll.response","content":{},"room_id":"!room:example.com"}`,
+				wantAction:   pushrules.UnknownAction,
+				wantActions:  []*pushrules.Action{},
+			},
 		}...)
 
 		for _, tc := range testCases {

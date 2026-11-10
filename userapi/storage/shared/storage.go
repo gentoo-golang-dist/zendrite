@@ -63,6 +63,9 @@ type Database struct {
 	ServerName            spec.ServerName
 	BcryptCost            int
 	OpenIDTokenLifetimeMS int64
+	// PushRuleOptions selects the default push rules that depend on server
+	// configuration, such as the MSC4028 rule.
+	PushRuleOptions pushrules.Options
 
 	// pushRulesLocks serialize changes to the push rules of a user, which
 	// are stored as a single blob, so that they do not lose each other's
@@ -337,7 +340,7 @@ func (d *Database) createAccount(
 	if err = d.Profiles.InsertProfile(ctx, txn, localpart, serverName); err != nil {
 		return nil, fmt.Errorf("d.Profiles.InsertProfile: %w", err)
 	}
-	pushRuleSets := pushrules.DefaultAccountRuleSets(localpart, serverName)
+	pushRuleSets := d.defaultPushRules(localpart, serverName)
 	prbs, err := json.Marshal(pushRuleSets)
 	if err != nil {
 		return nil, fmt.Errorf("json.Marshal: %w", err)
@@ -401,7 +404,7 @@ func (d *Database) QueryPushRules(
 		defer d.lockPushRules(localpart, serverName)()
 		return d.queryPushRulesLocked(ctx, localpart, serverName)
 	}
-	return parsePushRules(data, localpart, serverName)
+	return d.parsePushRules(data, localpart, serverName)
 }
 
 // queryPushRulesLocked returns the push rules of a user, and stores the
@@ -415,12 +418,12 @@ func (d *Database) queryPushRulesLocked(
 		return nil, err
 	}
 	if len(data) > 0 {
-		return parsePushRules(data, localpart, serverName)
+		return d.parsePushRules(data, localpart, serverName)
 	}
 
 	// If we didn't find any default push rules then we should just generate some
 	// fresh ones.
-	pushRuleSets := pushrules.DefaultAccountRuleSets(localpart, serverName)
+	pushRuleSets := d.defaultPushRules(localpart, serverName)
 	prbs, err := json.Marshal(pushRuleSets)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal default push rules: %w", err)
@@ -434,13 +437,27 @@ func (d *Database) queryPushRulesLocked(
 	return pushRuleSets, err
 }
 
-func parsePushRules(data json.RawMessage, localpart string, serverName spec.ServerName) (*pushrules.AccountRuleSets, error) {
+// defaultPushRules returns the default push rules for a new account.
+func (d *Database) defaultPushRules(localpart string, serverName spec.ServerName) *pushrules.AccountRuleSets {
+	ruleSets := pushrules.DefaultAccountRuleSets(localpart, serverName)
+	pushrules.ApplyOptions(&ruleSets.Global, d.PushRuleOptions)
+	return ruleSets
+}
+
+// upgradePushRules brings stored global rules in line with the current
+// defaults and the configured optional rules.
+func (d *Database) upgradePushRules(global *pushrules.RuleSet, localpart string, serverName spec.ServerName) {
+	pushrules.UpgradeDefaultRules(global, localpart, serverName)
+	pushrules.ApplyOptions(global, d.PushRuleOptions)
+}
+
+func (d *Database) parsePushRules(data json.RawMessage, localpart string, serverName spec.ServerName) (*pushrules.AccountRuleSets, error) {
 	var pushRules pushrules.AccountRuleSets
 	if err := json.Unmarshal(data, &pushRules); err != nil {
 		return nil, err
 	}
 
-	pushrules.UpgradeDefaultRules(&pushRules.Global, localpart, serverName)
+	d.upgradePushRules(&pushRules.Global, localpart, serverName)
 	return &pushRules, nil
 }
 
@@ -478,7 +495,7 @@ func (d *Database) GetAccountData(ctx context.Context, localpart string, serverN
 		return
 	}
 	if data, ok := global["m.push_rules"]; ok {
-		global["m.push_rules"], err = upgradeMentionAccountData(data, localpart, serverName)
+		global["m.push_rules"], err = d.upgradePushRulesAccountData(data, localpart, serverName)
 	}
 	return
 }
@@ -496,14 +513,15 @@ func (d *Database) GetAccountDataByType(
 		return nil, err
 	}
 	if roomID == "" && dataType == "m.push_rules" {
-		return upgradeMentionAccountData(data, localpart, serverName)
+		return d.upgradePushRulesAccountData(data, localpart, serverName)
 	}
 	return data, nil
 }
 
-// upgradeMentionAccountData upgrades existing global rules without creating account
-// data on reads or changing empty payloads and unrelated top-level fields.
-func upgradeMentionAccountData(data json.RawMessage, localpart string, serverName spec.ServerName) (json.RawMessage, error) {
+// upgradePushRulesAccountData upgrades existing global rules without creating
+// account data on reads or changing empty payloads and unrelated top-level
+// fields.
+func (d *Database) upgradePushRulesAccountData(data json.RawMessage, localpart string, serverName spec.ServerName) (json.RawMessage, error) {
 	if len(data) == 0 {
 		return data, nil
 	}
@@ -520,7 +538,7 @@ func upgradeMentionAccountData(data json.RawMessage, localpart string, serverNam
 	if global == nil {
 		return data, nil
 	}
-	pushrules.UpgradeDefaultRules(global, localpart, serverName)
+	d.upgradePushRules(global, localpart, serverName)
 	raw, err := json.Marshal(global)
 	if err != nil {
 		return nil, err

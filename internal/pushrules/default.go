@@ -20,7 +20,7 @@ func DefaultGlobalRuleSet(localpart string, serverName spec.ServerName) *RuleSet
 	return &RuleSet{
 		Override:    defaultOverrideRules("@" + localpart + ":" + string(serverName)),
 		PostContent: defaultPostContentRules(),
-		Underride:   defaultUnderrideRules,
+		Underride:   append(slices.Clone(defaultUnderrideRules), defaultPollUnderrideRules()...),
 	}
 }
 
@@ -39,6 +39,8 @@ func UpgradeDefaultRules(rules *RuleSet, localpart string, serverName spec.Serve
 	}
 	RemoveLegacyMentionRules(rules)
 	addPostContentRules(rules)
+	// After .m.rule.suppress_edits, as in the defaults.
+	addPollRules(rules)
 }
 
 // Legacy mention rules, removed from the predefined rules by MSC4210 (spec
