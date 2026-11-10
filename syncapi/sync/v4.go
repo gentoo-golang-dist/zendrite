@@ -626,6 +626,23 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 	rp.updateLastSeen(req, device)
 	rp.updatePresence(rp.db, v4Req.SetPresence, device.UserID)
 
+	// Each pass of the loop below opens database snapshots, each holding a
+	// pooled connection in an open transaction, plus a notifier listener and a
+	// timer. A defer would hold them until the handler returns, so a long poll
+	// that loops many times without updates would pile up open transactions
+	// until the shared pool ran dry and every other query in the process
+	// waited on it. They are released at the end of each pass instead, and by
+	// the deferred call if the handler returns mid-pass.
+	var passCleanups []func()
+	releaseOnNextPass := func(f func()) { passCleanups = append(passCleanups, f) }
+	releasePass := func() {
+		for i := len(passCleanups) - 1; i >= 0; i-- {
+			passCleanups[i]()
+		}
+		passCleanups = nil
+	}
+	defer releasePass()
+
 	// Main sync loop - similar to v3 sync
 	// Loop until we have updates to return or timeout expires
 	for {
@@ -650,7 +667,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 
 			// Wait for changes using the notifier
 			timer := time.NewTimer(timeout)
-			defer timer.Stop()
+			releaseOnNextPass(func() { timer.Stop() })
 
 			// Create a minimal sync request for the notifier
 			syncReq := &types.SyncRequest{
@@ -662,7 +679,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			}
 
 			userStream := rp.Notifier.GetListener(*syncReq)
-			defer userStream.Close()
+			releaseOnNextPass(userStream.Close)
 
 			select {
 			case <-userStream.GetNotifyChannel(since.StreamToken):
@@ -836,7 +853,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			if subSnapshotErr != nil {
 				logrus.WithError(subSnapshotErr).Error("[V4_SYNC] Failed to create snapshot for subscription filtering")
 			} else {
-				defer func() { _ = subSnapshot.Rollback() }()
+				releaseOnNextPass(func() { _ = subSnapshot.Rollback() })
 
 				// Get list of kicked rooms (leave where sender != user) to allow those subscriptions
 				kickedRoomIDs, kickedErr := subSnapshot.KickedRoomIDs(ctx, device.UserID) //nolint:contextcheck
@@ -953,7 +970,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 					JSON: spec.InternalServerError{},
 				}
 			}
-			defer func() { _ = filterSnapshot.Rollback() }()
+			releaseOnNextPass(func() { _ = filterSnapshot.Rollback() })
 
 			// Get list of all candidate room IDs
 			candidateRoomIDs := make([]string, 0, len(roomsToPopulate))
@@ -1135,12 +1152,12 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			}
 		}
 		var succeeded bool
-		defer func() {
+		releaseOnNextPass(func() {
 			if succeeded {
 				_ = snapshot.Commit() // Best effort
 			}
 			_ = snapshot.Rollback() // No-op if already committed
-		}()
+		})
 
 		logrus.WithFields(logrus.Fields{
 			"num_rooms_to_populate": len(roomsToPopulate),
@@ -1463,6 +1480,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 				"elapsed_ms":  elapsed.Milliseconds(),
 				"new_timeout": v4Req.Timeout,
 			}).Info("[V4_SYNC] No updates, looping again with reduced timeout")
+			releasePass()
 			continue
 		}
 
