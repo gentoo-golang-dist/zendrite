@@ -222,9 +222,13 @@ func sendEventContent(
 	domain := device.UserDomain()
 
 	if stateKey != nil {
-		// If the existing/new state content are equal, return the existing event_id, making the request idempotent.
-		if eventID, ok := stateEqual(ctx, rsAPI, eventType, *stateKey, roomID, r); ok {
-			return eventID, nil
+		// If the user already sent this exact state, return that event's ID,
+		// making the request idempotent. The same content sent by someone
+		// else is not a retry: the request still has to pass the auth rules.
+		if sender := senderIDForDevice(ctx, rsAPI, device, roomID); sender != nil {
+			if eventID, ok := stateEqual(ctx, rsAPI, eventType, *stateKey, roomID, r, sender); ok {
+				return eventID, nil
+			}
 		}
 	}
 
@@ -387,9 +391,28 @@ func updatePowerLevels(ctx context.Context, r map[string]any, roomID string, rsA
 	return nil
 }
 
+// senderIDForDevice returns the device user's sender ID in the room, or nil
+// if it cannot be determined.
+func senderIDForDevice(ctx context.Context, rsAPI api.ClientRoomserverAPI, device *userapi.Device, roomID string) *spec.SenderID {
+	userID, err := spec.NewUserID(device.UserID, true)
+	if err != nil {
+		return nil
+	}
+	validRoomID, err := spec.NewRoomID(roomID)
+	if err != nil {
+		return nil
+	}
+	senderID, err := rsAPI.QuerySenderIDForUser(ctx, *validRoomID, *userID)
+	if err != nil {
+		return nil
+	}
+	return senderID
+}
+
 // stateEqual compares the new and the existing state event content. If they
 // are equal, it returns the existing event ID, making the request idempotent.
-func stateEqual(ctx context.Context, rsAPI api.ClientRoomserverAPI, eventType, stateKey, roomID string, newContent map[string]any) (string, bool) {
+// With a sender, the existing event must also have been sent by them.
+func stateEqual(ctx context.Context, rsAPI api.ClientRoomserverAPI, eventType, stateKey, roomID string, newContent map[string]any, sender *spec.SenderID) (string, bool) {
 	stateRes := api.QueryCurrentStateResponse{}
 	tuple := gomatrixserverlib.StateKeyTuple{
 		EventType: eventType,
@@ -403,6 +426,9 @@ func stateEqual(ctx context.Context, rsAPI api.ClientRoomserverAPI, eventType, s
 		return "", false
 	}
 	if existingEvent, ok := stateRes.StateEvents[tuple]; ok {
+		if sender != nil && existingEvent.SenderID() != *sender {
+			return "", false
+		}
 		var existingContent map[string]any
 		if err = json.Unmarshal(existingEvent.Content(), &existingContent); err != nil {
 			return "", false

@@ -95,12 +95,14 @@ func SendMembershipStateEvent(
 	}
 
 	// Sending the same request twice answers with the event it produced the
-	// first time, as for any other state event.
+	// first time, as for any other state event. The state key is the user's
+	// own, so an identical event by someone else (a kick with the same
+	// content as a leave) already left the user where they asked to be.
 	memberKey := stateKey
 	if before.SenderID != nil {
 		memberKey = string(*before.SenderID)
 	}
-	if eventID, ok := stateEqual(req.Context(), rsAPI, spec.MRoomMember, memberKey, roomID, content); ok {
+	if eventID, ok := stateEqual(req.Context(), rsAPI, spec.MRoomMember, memberKey, roomID, content, nil); ok {
 		return util.JSONResponse{Code: http.StatusOK, JSON: sendEventResponse{eventID}}, true
 	}
 
