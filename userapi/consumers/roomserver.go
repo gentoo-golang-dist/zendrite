@@ -388,7 +388,7 @@ func (s *OutputRoomEventConsumer) processMessage(ctx context.Context, event *rst
 		if err != nil {
 			return fmt.Errorf("newLocalMembership: %w", err)
 		}
-		if member.Membership == spec.Invite && member.Domain == s.cfg.Matrix.ServerName {
+		if member.Membership == spec.Invite && member.Domain == s.cfg.Matrix.ServerName && s.inviteNotifies(ctx, member.UserID, cevent.Sender) {
 			// localRoomMembers only adds joined members. An invite
 			// should also be pushed to the target user.
 			members = append(members, member)
@@ -490,6 +490,40 @@ type localMembership struct {
 	UserID    string
 	Localpart string
 	Domain    spec.ServerName
+}
+
+// inviteNotifies reports whether an invite from inviter notifies the local
+// user invitee: invites their invite configuration ignores or blocks never
+// notify (MSC4155). A failure to read the configuration is logged and the
+// invite notifies.
+func (s *OutputRoomEventConsumer) inviteNotifies(ctx context.Context, invitee, inviter string) bool {
+	rule, err := api.InviteRuleFor(ctx, accountDataReader{s.db}, invitee, inviter)
+	if err != nil {
+		log.WithError(err).WithField("user_id", invitee).Warn("Failed to read the invite permission config")
+		return true
+	}
+	return rule == api.InviteAllow
+}
+
+// accountDataReader answers global account data queries from the database.
+type accountDataReader struct {
+	db storage.UserDatabase
+}
+
+func (r accountDataReader) QueryAccountData(ctx context.Context, req *api.QueryAccountDataRequest, res *api.QueryAccountDataResponse) error {
+	localpart, domain, err := gomatrixserverlib.SplitID('@', req.UserID)
+	if err != nil {
+		return err
+	}
+	data, err := r.db.GetAccountDataByType(ctx, localpart, domain, "", req.DataType)
+	if err != nil {
+		return err
+	}
+	res.GlobalAccountData = map[string]json.RawMessage{}
+	if data != nil {
+		res.GlobalAccountData[req.DataType] = data
+	}
+	return nil
 }
 
 func newLocalMembership(event *synctypes.ClientEvent) (*localMembership, error) {

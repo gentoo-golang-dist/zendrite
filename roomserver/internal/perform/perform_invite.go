@@ -168,7 +168,7 @@ func (r *Inviter) PerformInvite(
 
 	isTargetLocal := r.Cfg.Matrix.IsLocalServerName(req.InviteInput.Invitee.Domain())
 	if isTargetLocal {
-		blocked, blockErr := r.RSAPI.InvitesBlocked(ctx, req.InviteInput.Invitee)
+		blocked, blockErr := r.RSAPI.InviteBlocked(ctx, req.InviteInput.Invitee, req.InviteInput.Inviter.String())
 		if blockErr != nil {
 			return blockErr
 		}

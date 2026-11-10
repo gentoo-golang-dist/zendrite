@@ -154,6 +154,7 @@ A change wakes the user's waiting sliding sync requests, and the `/sync` token c
 | [MSC3765](https://github.com/matrix-org/matrix-spec-proposals/pull/3765) | Rich text in room topics | 1.15 | Implemented: `createRoom` with `topic` adds a `text/plain` representation in `m.topic`. `/publicRooms`, `/hierarchy`, room summaries and `/search` use the first `text/plain` representation in `m.topic` (a missing `mimetype` counts as `text/plain`) and fall back to the `topic` key |
 | [MSC4267](https://github.com/matrix-org/matrix-spec-proposals/pull/4267) | Forget room on leave ([`m.forget_forced_upon_leave` capability](https://spec.matrix.org/v1.18/client-server-api/#mforget_forced_upon_leave-capability)) | 1.18 | Implemented (opt-in via [`auto_forget_on_leave`](/administration/auto-forget-on-leave/)) |
 | [MSC4380](https://github.com/matrix-org/matrix-spec-proposals/pull/4380) | Invite blocking | 1.18 | Implemented: see [invite blocking](#invite-blocking) |
+| [MSC4155](https://github.com/matrix-org/matrix-spec-proposals/pull/4155) | Invite filtering | N/A | Implemented (unstable prefix): see [invite filtering](#invite-filtering) |
 | [MSC2666](https://github.com/matrix-org/matrix-spec-proposals/pull/2666) | Mutual rooms | 1.19 | Implemented: `GET /_matrix/client/v1/mutual_rooms` lists the rooms the caller shares with a user, with signed pagination tokens. Also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable` |
 | [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
 | [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
@@ -166,6 +167,47 @@ Inviting them through `POST /rooms/{roomId}/invite`, the `invite` list of `POST 
 `/sync` and sliding sync leave out invites the user already has, and serve them again once blocking is turned off; other endpoints and application services see invites as usual.
 Any other `default_action`, or no account data, allows invites.
 The unstable `org.matrix.msc4380.invite_permission_config` type is read when the stable type is not set, and `/versions` advertises `org.matrix.msc4380` and `org.matrix.msc4380.stable`.
+An empty `m.invite_permission_config` (`{}`) states no preference, so [invite filtering](#invite-filtering) applies.
+
+### Invite filtering
+
+The `org.matrix.msc4155.invite_permission_config` account data lists which users and servers may invite the user, as in Synapse.
+Only the unstable type is read: the stable `m.invite_permission_config` belongs to [invite blocking](#invite-blocking).
+
+```json
+{
+  "allowed_users": ["@goodguy:badguys.org"],
+  "ignored_users": [],
+  "blocked_users": ["@spam*:*"],
+  "allowed_servers": ["goodguys.org"],
+  "ignored_servers": ["reallybadguys.org"],
+  "blocked_servers": ["*"]
+}
+```
+
+- Entries are globs: `*` matches any number of characters and `?` exactly one, ignoring case.
+  `*_users` globs match the inviter's user ID, `*_servers` globs its server name, with or without the port.
+- The user lists are checked before the server lists, each in the order allowed, ignored, blocked.
+  The first match decides; without one, the invite is allowed.
+  So an allowed user can invite even from a blocked server, and a blocked user cannot invite from an allowed server.
+- A blocked invite is refused with 403 `M_INVITE_BLOCKED` on `POST /rooms/{roomId}/invite`, the `invite` list of `POST /createRoom`, `PUT /rooms/{roomId}/state/m.room.member/{userId}` and the federation `/invite` endpoints.
+  `createRoom` still creates the room, as with any other failed invite.
+- An ignored invite is accepted, so the inviter learns nothing, but `/sync` and sliding sync leave it out and it does not notify.
+  Other endpoints, such as the room state, and application services see it as usual.
+- `/sync` and sliding sync also leave out invites the user already has and now ignores or blocks, and serve them again once the configuration allows them.
+  As with `m.ignored_user_list`, a client should run an initial `/sync` after relaxing the configuration.
+- Sliding sync also leaves out invites from users in `m.ignored_user_list`, as `/sync` already did.
+- `"enabled": false` turns the configuration off without removing it.
+- Entries that are not strings, empty or longer than 255 bytes are skipped, and so are fields that are not lists.
+- A stated [invite blocking](#invite-blocking) preference takes precedence: `m.invite_permission_config` (or its unstable MSC4380 type) with any `default_action` decides alone, and the MSC4155 lists apply only without one.
+- `/versions` advertises `org.matrix.msc4155`.
+
+Differences from Synapse:
+
+- Synapse does not read `enabled`, which the MSC defines.
+- Synapse matches server globs against the server name with its port only, and the MSC without it; both forms match here.
+- Synapse lets server admins invite past the invitee's configuration; here admins are filtered like any other user, as for invite blocking.
+- Synapse's `/sync` and sliding sync hide only ignored invites; here pending invites that are now blocked are hidden too, as the MSC recommends and as invite blocking already does.
 
 ## Registration
 

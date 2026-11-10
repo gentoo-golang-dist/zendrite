@@ -298,12 +298,13 @@ func (r *RoomserverInternalAPI) SetUserAPI(userAPI userapi.RoomserverUserAPI) {
 	r.Inputer.UserAPI = userAPI
 }
 
-// InvitesBlocked implements api.InviteBlockingAPI.
-func (r *RoomserverInternalAPI) InvitesBlocked(ctx context.Context, userID spec.UserID) (bool, error) {
-	if r.userAPI == nil || !r.Cfg.Global.IsLocalServerName(userID.Domain()) {
+// InviteBlocked implements api.InviteBlockingAPI.
+func (r *RoomserverInternalAPI) InviteBlocked(ctx context.Context, invitee spec.UserID, inviter string) (bool, error) {
+	if r.userAPI == nil || !r.Cfg.Global.IsLocalServerName(invitee.Domain()) {
 		return false, nil
 	}
-	return userapi.InvitesBlocked(ctx, r.userAPI, userID.String())
+	rule, err := userapi.InviteRuleFor(ctx, r.userAPI, invitee.String(), inviter)
+	return rule == userapi.InviteBlock, err
 }
 
 func (r *RoomserverInternalAPI) SetAppserviceAPI(asAPI asAPI.AppServiceInternalAPI) {
@@ -336,7 +337,11 @@ func (r *RoomserverInternalAPI) HandleInvite(
 	if inviteEvent.StateKey() != nil {
 		invitee, err := r.QueryUserIDForSender(ctx, inviteEvent.RoomID(), spec.SenderID(*inviteEvent.StateKey()))
 		if err == nil && invitee != nil {
-			blocked, blockErr := r.InvitesBlocked(ctx, *invitee)
+			inviter := string(inviteEvent.SenderID())
+			if sender, senderErr := r.QueryUserIDForSender(ctx, inviteEvent.RoomID(), inviteEvent.SenderID()); senderErr == nil && sender != nil {
+				inviter = sender.String()
+			}
+			blocked, blockErr := r.InviteBlocked(ctx, *invitee, inviter)
 			if blockErr != nil {
 				return blockErr
 			}

@@ -31,9 +31,10 @@ type SyncRequest struct {
 	MembershipChanges map[string]struct{}
 	// Updated by the PDU stream.
 	IgnoredUsers IgnoredUsers
-	// InvitesBlocked is true when the user blocks every room invite
-	// (MSC4380), so the invite stream leaves invites out.
-	InvitesBlocked bool
+	// InviteConfig is the user's invite configuration (MSC4380, MSC4155).
+	// The invite stream leaves out invites it ignores or blocks. Nil allows
+	// every invite.
+	InviteConfig *userapi.InviteConfig
 	// Rooms the user joined within this incremental sync. Updated by the PDU
 	// stream, read by the sticky events stream.
 	NewlyJoinedRooms map[string]struct{}

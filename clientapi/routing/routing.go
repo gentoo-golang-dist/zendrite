@@ -107,6 +107,7 @@ func Setup(
 		"uk.tcpip.msc4133":              true, // MSC4133: custom profile fields, unstable path
 		"uk.tcpip.msc4133.stable":       true, // MSC4133: custom profile fields, v3 path
 		"com.beeper.msc4169":            true, // MSC4169: redactions through /send in every room version
+		"org.matrix.msc4155":            true, // MSC4155: invite filtering
 		"org.matrix.msc4380":            true, // MSC4380: invite blocking, unstable account data type
 		"org.matrix.msc4380.stable":     true, // MSC4380: invite blocking, m.invite_permission_config
 		"org.matrix.msc4306":            true, // MSC4306: thread subscriptions

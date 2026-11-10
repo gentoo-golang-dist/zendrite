@@ -251,7 +251,7 @@ func sendEventContent(
 	if resErr != nil {
 		return "", resErr
 	}
-	if resErr = checkInviteBlocked(ctx, rsAPI, e); resErr != nil {
+	if resErr = checkInviteBlocked(ctx, rsAPI, e, device.UserID); resErr != nil {
 		return "", resErr
 	}
 	// The event is only built above to validate it. An invite has to go
@@ -326,8 +326,8 @@ func sendEventContent(
 }
 
 // checkInviteBlocked refuses an invite sent as a membership state event to a
-// local user who blocks every room invite (MSC4380).
-func checkInviteBlocked(ctx context.Context, rsAPI api.ClientRoomserverAPI, e gomatrixserverlib.PDU) *util.JSONResponse {
+// local user who blocks invites from the sender (MSC4380, MSC4155).
+func checkInviteBlocked(ctx context.Context, rsAPI api.ClientRoomserverAPI, e gomatrixserverlib.PDU, inviter string) *util.JSONResponse {
 	if e.Type() != spec.MRoomMember || e.StateKey() == nil {
 		return nil
 	}
@@ -338,9 +338,9 @@ func checkInviteBlocked(ctx context.Context, rsAPI api.ClientRoomserverAPI, e go
 	if err != nil || invitee == nil {
 		return nil
 	}
-	blocked, err := rsAPI.InvitesBlocked(ctx, *invitee)
+	blocked, err := rsAPI.InviteBlocked(ctx, *invitee, inviter)
 	if err != nil {
-		util.GetLogger(ctx).WithError(err).Error("rsAPI.InvitesBlocked failed")
+		util.GetLogger(ctx).WithError(err).Error("rsAPI.InviteBlocked failed")
 		return &util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},

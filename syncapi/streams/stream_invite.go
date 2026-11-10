@@ -14,6 +14,7 @@ import (
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
+	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 type InviteStreamProvider struct {
@@ -89,8 +90,13 @@ func (p *InviteStreamProvider) IncrementalSync(
 			req.Response.Rooms.Knock[roomID] = kr
 			continue
 		}
-		// Invites are not served while the user blocks them (MSC4380).
-		if req.InvitesBlocked {
+		// Invites the user ignores or blocks are not served (MSC4380,
+		// MSC4155).
+		inviter := user.String()
+		if err != nil || sender == nil {
+			inviter = string(inviteEvent.SenderID())
+		}
+		if req.InviteConfig.Rule(inviter) != userapi.InviteAllow {
 			continue
 		}
 		ir, err := types.NewInviteResponse(ctx, p.rsAPI, inviteEvent, eventFormat)

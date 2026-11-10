@@ -16,6 +16,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/sirupsen/logrus"
 
+	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
@@ -55,11 +56,15 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 		// Query the invites table using InviteEventsInRange
 		// Use range from 0 to max to get all current invites
 		maxID, maxIDErr := snapshot.MaxStreamPositionForInvites(ctx)
-		// Invites are not served while the user blocks them (MSC4380).
-		invitesBlocked := membership == spec.Invite && rp.invitesBlocked(ctx, userID)
+		// Invites the user ignores or blocks are not served (MSC4380,
+		// MSC4155).
+		var filter inviteFilter
+		if membership == spec.Invite {
+			filter = rp.loadInviteFilter(ctx, snapshot, userID)
+		}
 		if maxIDErr != nil {
 			logrus.WithError(maxIDErr).Warn("Failed to get max invite ID")
-		} else if maxID > 0 && !invitesBlocked {
+		} else if maxID > 0 && !filter.config.BlocksAll() {
 			// Get all invite events for this user
 			inviteRange := types.Range{
 				From:      0,
@@ -73,6 +78,9 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 				// Extract room IDs from active invites (not retired)
 				for roomID, event := range invites {
 					if eventMembership, _ := event.Membership(); eventMembership != membership {
+						continue
+					}
+					if membership == spec.Invite && filter.hides(ctx, rp, event) {
 						continue
 					}
 					// Only include if not in retired map
@@ -511,14 +519,45 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// invitesBlocked reports whether the user blocks every room invite (MSC4380),
-// in which case sliding sync serves none of their invites. A failure to read
-// the setting is logged and the invites are served.
-func (rp *RequestPool) invitesBlocked(ctx context.Context, userID string) bool {
-	blocked, err := userapi.InvitesBlocked(ctx, rp.userAPI, userID)
+// inviteFilter decides which invites sliding sync leaves out: those from
+// users in m.ignored_user_list, and those the user's invite configuration
+// ignores or blocks (MSC4380, MSC4155).
+type inviteFilter struct {
+	config  *userapi.InviteConfig
+	ignored map[string]any
+}
+
+// loadInviteFilter reads the user's invite filter. A failure to read a
+// setting is logged and that setting is skipped, so the invites are served.
+func (rp *RequestPool) loadInviteFilter(ctx context.Context, snapshot storage.DatabaseTransaction, userID string) inviteFilter {
+	var filter inviteFilter
+	config, err := userapi.LoadInviteConfig(ctx, rp.userAPI, userID)
 	if err != nil {
 		logrus.WithError(err).WithField("user_id", userID).Warn("[V4_SYNC] Failed to read the invite permission config")
+	} else {
+		filter.config = config
+	}
+	ignores, err := snapshot.IgnoresForUser(ctx, userID)
+	if err == nil && ignores != nil {
+		filter.ignored = ignores.List
+	}
+	return filter
+}
+
+// hides reports whether the invite event is left out.
+func (f inviteFilter) hides(ctx context.Context, rp *RequestPool, invite *rstypes.HeaderedEvent) bool {
+	if f.config.BlocksAll() {
+		return true
+	}
+	if f.config == nil && len(f.ignored) == 0 {
 		return false
 	}
-	return blocked
+	inviter := string(invite.SenderID())
+	if sender, err := rp.rsAPI.QueryUserIDForSender(ctx, invite.RoomID(), invite.SenderID()); err == nil && sender != nil {
+		inviter = sender.String()
+	}
+	if _, ignored := f.ignored[inviter]; ignored {
+		return true
+	}
+	return f.config.Rule(inviter) != userapi.InviteAllow
 }

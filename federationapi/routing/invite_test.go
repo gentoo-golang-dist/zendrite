@@ -34,6 +34,8 @@ const inviteLocalServer = spec.ServerName("localhost")
 type inviteRoomserverAPI struct {
 	rsapi.FederationRoomserverAPI
 	handled []*rstypes.HeaderedEvent
+	// handleErr is returned by HandleInvite.
+	handleErr error
 }
 
 func (r *inviteRoomserverAPI) IsKnownRoom(context.Context, spec.RoomID) (bool, error) {
@@ -49,6 +51,9 @@ func (r *inviteRoomserverAPI) StateQuerier() gomatrixserverlib.StateQuerier {
 }
 
 func (r *inviteRoomserverAPI) HandleInvite(_ context.Context, event *rstypes.HeaderedEvent) error {
+	if r.handleErr != nil {
+		return r.handleErr
+	}
 	r.handled = append(r.handled, event)
 	return nil
 }
@@ -82,6 +87,13 @@ func inviteState(t *testing.T, events []*rstypes.HeaderedEvent, stripped bool) [
 
 func sendInviteV2(t *testing.T, room *test.Room, invite *rstypes.HeaderedEvent, state []json.RawMessage) (rsAPI *inviteRoomserverAPI, code int, body []byte) {
 	t.Helper()
+	rsAPI = &inviteRoomserverAPI{}
+	code, body = sendInviteV2To(t, rsAPI, room, invite, state)
+	return rsAPI, code, body
+}
+
+func sendInviteV2To(t *testing.T, rsAPI *inviteRoomserverAPI, room *test.Room, invite *rstypes.HeaderedEvent, state []json.RawMessage) (code int, body []byte) {
+	t.Helper()
 	_, sk, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
 	cfg := &config.FederationAPI{Matrix: &config.Global{
@@ -108,11 +120,26 @@ func sendInviteV2(t *testing.T, room *test.Room, invite *rstypes.HeaderedEvent, 
 
 	roomID, err := spec.NewRoomID(room.ID)
 	require.NoError(t, err)
-	rsAPI = &inviteRoomserverAPI{}
 	res := routing.InviteV2(httpReq, &req, *roomID, invite.EventID(), cfg, rsAPI, &test.NopJSONVerifier{})
 	body, err = json.Marshal(res.JSON)
 	require.NoError(t, err)
-	return rsAPI, res.Code, body
+	return res.Code, body
+}
+
+// TestInviteV2Blocked checks that an invite the invitee blocks (MSC4380,
+// MSC4155) is refused over federation with 403 M_INVITE_BLOCKED.
+func TestInviteV2Blocked(t *testing.T) {
+	alice := test.NewUser(t)
+	invitee, err := spec.NewUserID("@bob:"+string(inviteLocalServer), true)
+	require.NoError(t, err)
+	room := test.NewRoom(t, alice)
+	invite := room.CreateEvent(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Invite}, test.WithStateKey(invitee.String()))
+
+	rsAPI := &inviteRoomserverAPI{handleErr: rsapi.ErrInviteBlocked{Invitee: *invitee}}
+	code, body := sendInviteV2To(t, rsAPI, room, invite, nil)
+	require.Equal(t, http.StatusForbidden, code, string(body))
+	require.Equal(t, "M_INVITE_BLOCKED", gjson.GetBytes(body, "errcode").Str, string(body))
+	require.Empty(t, rsAPI.handled)
 }
 
 func TestInviteV2ValidatesInviteRoomState(t *testing.T) {

@@ -320,8 +320,8 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 			JSON: spec.Unknown(err.Error()),
 		}
 	}
-	if syncReq.InvitesBlocked, err = userapi.InvitesBlocked(syncReq.Context, rp.userAPI, device.UserID); err != nil {
-		util.GetLogger(syncReq.Context).WithError(err).Error("userapi.InvitesBlocked failed")
+	if syncReq.InviteConfig, err = userapi.LoadInviteConfig(syncReq.Context, rp.userAPI, device.UserID); err != nil {
+		util.GetLogger(syncReq.Context).WithError(err).Error("userapi.LoadInviteConfig failed")
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},

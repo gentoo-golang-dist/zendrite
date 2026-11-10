@@ -34,14 +34,14 @@ func (e ErrNotAllowed) Error() string {
 	return e.Err.Error()
 }
 
-// ErrInviteBlocked is returned when the invited local user blocks every room
-// invite (MSC4380). Callers answer it with 403 M_INVITE_BLOCKED.
+// ErrInviteBlocked is returned when the invited local user blocks the invite
+// (MSC4380, MSC4155). Callers answer it with 403 M_INVITE_BLOCKED.
 type ErrInviteBlocked struct {
 	Invitee spec.UserID
 }
 
 func (e ErrInviteBlocked) Error() string {
-	return e.Invitee.String() + " does not accept invites"
+	return e.Invitee.String() + " does not accept this invite"
 }
 
 // MatrixError is the error to answer the blocked invite with.
@@ -269,11 +269,13 @@ type AppserviceRoomserverAPI interface {
 	) error
 }
 
-// InviteBlockingAPI reports whether local users block room invites (MSC4380).
+// InviteBlockingAPI reports whether local users block room invites (MSC4380,
+// MSC4155).
 type InviteBlockingAPI interface {
-	// InvitesBlocked reports whether the local user blocks every room
-	// invite. It is false for remote users and when the user API is not set.
-	InvitesBlocked(ctx context.Context, userID spec.UserID) (bool, error)
+	// InviteBlocked reports whether the local user invitee blocks invites
+	// from inviter, a user ID. It is false for remote invitees and when the
+	// user API is not set. Ignored invites are not blocked.
+	InviteBlocked(ctx context.Context, invitee spec.UserID, inviter string) (bool, error)
 }
 
 type ClientRoomserverAPI interface {
