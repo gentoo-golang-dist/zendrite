@@ -173,6 +173,7 @@ tests/csapi/TestRoomState
 tests/csapi/TestRoomSummary
 tests/csapi/TestRoomsInvite
 tests/csapi/TestSearch
+tests/csapi/TestSendAndFetchMessage
 tests/csapi/TestSendMessageWithTxn
 tests/csapi/TestServerCapabilities
 tests/csapi/TestServerNotices

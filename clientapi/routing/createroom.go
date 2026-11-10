@@ -17,6 +17,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
+	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 
@@ -25,6 +26,7 @@ import (
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	roomserverVersion "codefloe.com/pat-s/zendrite/roomserver/version"
 	"codefloe.com/pat-s/zendrite/setup/config"
+	"codefloe.com/pat-s/zendrite/setup/jetstream"
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
 
@@ -106,6 +108,7 @@ func CreateRoom(
 	cfg *config.ClientAPI,
 	profileAPI api.ClientUserAPI, rsAPI roomserverAPI.ClientRoomserverAPI,
 	asAPI appserviceAPI.AppServiceInternalAPI,
+	natsClient *nats.Conn,
 ) util.JSONResponse {
 	var createRequest createRoomRequest
 	resErr := httputil.UnmarshalJSONRequest(req, &createRequest)
@@ -122,7 +125,62 @@ func CreateRoom(
 			JSON: spec.InvalidParam(err.Error()),
 		}
 	}
-	return createRoom(req.Context(), createRequest, device, cfg, profileAPI, rsAPI, asAPI, evTime)
+	res := createRoom(req.Context(), createRequest, device, cfg, profileAPI, rsAPI, asAPI, evTime)
+	if created, ok := res.JSON.(createRoomResponse); ok && res.Code == http.StatusOK {
+		// The sync API receives the room's events from the roomserver after
+		// this request returns. Wait for them, so that a sync straight after
+		// createRoom returns a token that includes the whole room creation.
+		waitForSyncedRoom(
+			req.Context(), rsAPI, natsClient,
+			cfg.Matrix.JetStream.Prefixed(jetstream.RequestSyncedEvent), created.RoomID,
+		)
+	}
+	return res
+}
+
+// syncedRoomWait bounds how long CreateRoom waits for the sync API.
+const syncedRoomWait = 5 * time.Second
+
+// waitForSyncedRoom waits until the sync API reports that a sync token taken
+// now includes the room's latest events. It gives up quietly after
+// syncedRoomWait, as the events reach the sync API either way.
+func waitForSyncedRoom(
+	ctx context.Context, rsAPI roomserverAPI.ClientRoomserverAPI, natsClient *nats.Conn, topic, roomID string,
+) {
+	if natsClient == nil {
+		return
+	}
+	latest := roomserverAPI.QueryLatestEventsAndStateResponse{}
+	if err := rsAPI.QueryLatestEventsAndState(ctx, &roomserverAPI.QueryLatestEventsAndStateRequest{
+		RoomID:       roomID,
+		StateToFetch: []gomatrixserverlib.StateKeyTuple{{EventType: spec.MRoomCreate, StateKey: ""}},
+	}, &latest); err != nil {
+		util.GetLogger(ctx).WithError(err).Warn("createRoom: unable to query the room's latest events")
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, syncedRoomWait)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for _, eventID := range latest.LatestEvents {
+		for {
+			msg := nats.NewMsg(topic)
+			msg.Header.Set(jetstream.RoomID, roomID)
+			msg.Header.Set(jetstream.EventID, eventID)
+			res, err := natsClient.RequestMsgWithContext(ctx, msg)
+			if err != nil {
+				return
+			}
+			if res.Header.Get(jetstream.Synced) == "true" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}
 }
 
 // createRoom implements /createRoom.

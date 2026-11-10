@@ -146,6 +146,12 @@ func AddPublicRoutes(
 	if err = roomConsumer.Start(); err != nil {
 		logrus.WithError(err).Panicf("failed to start room server consumer")
 	}
+	if err = consumers.StartSyncedEventResponder(
+		processContext, natsClient, zendriteCfg.Global.JetStream.Prefixed(jetstream.RequestSyncedEvent),
+		syncDB, streams.PDUStreamProvider,
+	); err != nil {
+		logrus.WithError(err).Panicf("failed to start synced event responder")
+	}
 
 	clientConsumer := consumers.NewOutputClientDataConsumer(
 		processContext, &zendriteCfg.SyncAPI, js, natsClient, syncDB, notifier,

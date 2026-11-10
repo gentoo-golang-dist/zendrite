@@ -9,9 +9,12 @@ import (
 )
 
 const (
-	UserID        = "user_id"
-	RoomID        = "room_id"
-	EventID       = "event_id"
+	UserID  = "user_id"
+	RoomID  = "room_id"
+	EventID = "event_id"
+	// Synced is the header of a reply to a RequestSyncedEvent request: "true"
+	// when a sync token taken now includes the event.
+	Synced        = "synced"
 	RoomEventType = "output_room_event_type"
 )
 
@@ -31,8 +34,11 @@ var (
 	OutputStreamEvent       = "OutputStreamEvent"
 	OutputReadUpdate        = "OutputReadUpdate"
 	RequestPresence         = "GetPresence"
-	OutputPresenceEvent     = "OutputPresenceEvent"
-	InputFulltextReindex    = "InputFulltextReindex"
+	// RequestSyncedEvent asks the sync API whether a sync token taken now
+	// includes an event (see syncapi/consumers.StartSyncedEventResponder).
+	RequestSyncedEvent   = "GetSyncedEvent"
+	OutputPresenceEvent  = "OutputPresenceEvent"
+	InputFulltextReindex = "InputFulltextReindex"
 	// OutputProfileUpdate carries the names of the profile fields a local
 	// user changed, for the sync API's profile updates stream (MSC4262).
 	OutputProfileUpdate = "OutputProfileUpdate"
