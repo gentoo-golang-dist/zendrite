@@ -644,7 +644,7 @@ func (rp *RequestPool) persistAccountDataRoomState(
 		delivered := toPos
 		delivered.AccountDataPosition = pos
 		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, accountDataStream, "live", delivered.String()); err != nil {
-			if ctx.Err() != nil {
+			if rp.stopAfterWriteError(ctx, connState) {
 				return
 			}
 			logrus.WithError(err).WithField("room_id", roomID).Warn("[ACCOUNT_DATA] Failed to persist account_data stream state")
@@ -685,8 +685,8 @@ func (rp *RequestPool) copyForwardAccountDataState(ctx context.Context, connStat
 			continue
 		}
 		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, accountDataStream, prevState.RoomStatus, prevState.LastToken); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+			if rp.stopAfterWriteError(ctx, connState) {
+				return ctx.Err()
 			}
 			logrus.WithError(err).WithField("room_id", roomID).Warn("[ACCOUNT_DATA] Failed to copy forward account_data stream state")
 		}

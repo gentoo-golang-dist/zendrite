@@ -287,7 +287,8 @@ type SlidingSync interface {
 	// CreateConnectionPosition creates a new position for a connection
 	// Returns the connection_position that goes in the pos token
 	CreateConnectionPosition(ctx context.Context, connectionKey int64) (connectionPosition int64, err error)
-	// ValidateConnectionPosition checks if a position token is valid for a connection
+	// ValidateConnectionPosition checks if a position token is valid for a connection.
+	// A position that does not exist yields an error wrapping types.ErrConnectionPositionNotFound.
 	ValidateConnectionPosition(ctx context.Context, connectionPosition int64, expectedConnectionKey int64) error
 
 	// ===== Stream Management (Delta Tracking) =====

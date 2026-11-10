@@ -90,6 +90,10 @@ type V4ConnectionState struct {
 	// Rooms whose profiles stream state this response has already written,
 	// so copyForwardProfilesState knows which ones still need carrying over.
 	ProfilesWritten map[string]bool
+	// supersede cancels the request once its ConnectionPosition is found to
+	// have been deleted by a newer request on the same connection. Nil in
+	// tests that build a connection state by hand.
+	supersede context.CancelCauseFunc
 }
 
 // laggingRoomSet lists the rooms whose own last-sent token sits behind the
@@ -301,8 +305,8 @@ func (rp *RequestPool) copyForwardStreamStates(
 			continue
 		}
 		if updateErr := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, "events", types.HaveSentRoomPreviously.String(), eventsStream.LastToken); updateErr != nil {
-			if err := ctx.Err(); err != nil {
-				return copiedCount, err
+			if rp.stopAfterWriteError(ctx, connState) {
+				return copiedCount, ctx.Err()
 			}
 			logrus.WithError(updateErr).WithFields(logrus.Fields{
 				"room_id":             roomID,
@@ -343,8 +347,8 @@ func (rp *RequestPool) copyForwardRoomConfigs(
 			continue
 		}
 		if updateErr := rp.db.UpdateRoomConfig(ctx, connState.ConnectionPosition, roomID, prevConfig.TimelineLimit, prevConfig.RequiredStateID); updateErr != nil {
-			if err := ctx.Err(); err != nil {
-				return err
+			if rp.stopAfterWriteError(ctx, connState) {
+				return ctx.Err()
 			}
 			logrus.WithError(updateErr).WithFields(logrus.Fields{
 				"room_id":             roomID,
@@ -363,10 +367,44 @@ func (rp *RequestPool) copyForwardRoomConfigs(
 	return nil
 }
 
+// errConnectionSuperseded is the cancellation cause of a sliding sync request
+// whose new connection position was deleted while the response was being
+// built. That happens when the client gives up on a request and sends the next
+// one on the same connection before the server notices (for instance behind a
+// proxy that keeps the upstream request open): the newer request runs
+// DeleteOtherConnectionPositions, which cascade-deletes everything the older
+// one has written so far, and every later write fails its foreign key.
+var errConnectionSuperseded = errors.New("superseded by a newer request on the same sliding sync connection")
+
+// positionSuperseded reports whether the response's connection position has
+// been deleted by a newer request on the same connection, and if so cancels
+// the request with errConnectionSuperseded, so every step after it stops the
+// way it does for a client that went away.
+func (rp *RequestPool) positionSuperseded(ctx context.Context, connState *V4ConnectionState) bool {
+	if connState == nil || connState.supersede == nil || connState.ConnectionPosition == 0 {
+		return false
+	}
+	err := rp.db.ValidateConnectionPosition(ctx, connState.ConnectionPosition, connState.ConnectionKey)
+	if !errors.Is(err, types.ErrConnectionPositionNotFound) {
+		return false
+	}
+	connState.supersede(errConnectionSuperseded)
+	return true
+}
+
+// stopAfterWriteError reports whether a failed write to the response's
+// connection position means the request is over, either because the client
+// went away or because a newer request removed the position. Otherwise the
+// failure is genuine and the caller logs it.
+func (rp *RequestPool) stopAfterWriteError(ctx context.Context, connState *V4ConnectionState) bool {
+	return ctx.Err() != nil || rp.positionSuperseded(ctx, connState)
+}
+
 // abandonV4Sync answers a sliding sync request whose context ended while its
-// response was being built. The client cannot receive the answer, so it is
-// reported once here instead of once per room or extension that failed after
-// the fact.
+// response was being built, because the client went away or a newer request
+// on the same connection superseded it. The client cannot receive the answer,
+// so it is reported once here instead of once per room or extension that
+// failed after the fact.
 //
 // The new connection position, possibly only partly written, is never handed
 // out: the response carries the position the client already holds (or none
@@ -376,7 +414,7 @@ func abandonV4Sync(ctx context.Context, since *types.SlidingSyncStreamToken, con
 	logrus.WithError(context.Cause(ctx)).WithFields(logrus.Fields{
 		"connection_key":      connState.ConnectionKey,
 		"connection_position": connState.ConnectionPosition,
-	}).Debug("[V4_SYNC] Abandoning sliding sync request, the client went away")
+	}).Debug("[V4_SYNC] Abandoning sliding sync request")
 	resp := types.SlidingSyncResponse{
 		Lists:      make(map[string]types.SlidingList),
 		Rooms:      make(map[string]types.SlidingRoomData),
@@ -427,6 +465,12 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 	defer trace.EndTask()
 	trace.SetTag("user_id", device.UserID)
 	trace.SetTag("device_id", device.ID)
+
+	// A newer request on the same connection deletes this request's position
+	// (DeleteOtherConnectionPositions); positionSuperseded then cancels the
+	// request with errConnectionSuperseded so it stops like an abandoned one.
+	ctx, supersede := context.WithCancelCause(ctx)
+	defer supersede(nil)
 
 	// Replace request context with traced context
 	req = req.WithContext(ctx)
@@ -612,6 +656,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 		ConnectionPosition:   0, // Will be set after creating position
 		PreviousStreamStates: previousStreamStates,
 		PreviousRoomConfigs:  previousRoomConfigs,
+		supersede:            supersede,
 	}
 
 	// DEBUG: Log connection state
@@ -1280,7 +1325,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 				"last_token":          lastToken,
 			}).Debug("[V4_STATE_DEBUG] Persisting stream state to database")
 			if streamErr := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, "events", roomStatus, lastToken); streamErr != nil { //nolint:contextcheck
-				if ctx.Err() != nil {
+				if rp.stopAfterWriteError(ctx, connState) { //nolint:contextcheck
 					break populate
 				}
 				logrus.WithError(streamErr).WithFields(logrus.Fields{
@@ -1331,7 +1376,7 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			}
 			if requiredStateID != 0 {
 				if configErr := rp.db.UpdateRoomConfig(ctx, connState.ConnectionPosition, roomID, config.TimelineLimit, requiredStateID); configErr != nil { //nolint:contextcheck
-					if ctx.Err() != nil {
+					if rp.stopAfterWriteError(ctx, connState) { //nolint:contextcheck
 						break populate
 					}
 					logrus.WithError(configErr).WithFields(logrus.Fields{
@@ -1399,6 +1444,13 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 		}
 		// Likewise for the rooms whose member profiles were sent (MSC4262).
 		if copyErr := rp.copyForwardProfilesState(ctx, connState); copyErr != nil { //nolint:contextcheck
+			return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
+		}
+		// A newer request on this connection may have deleted this position
+		// after its last failed write, or without any write failing at all
+		// where foreign keys are not enforced (SQLite). Check once before the
+		// position is handed out and receipts are recorded against it.
+		if rp.positionSuperseded(ctx, connState) { //nolint:contextcheck
 			return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
 		}
 		succeeded = true

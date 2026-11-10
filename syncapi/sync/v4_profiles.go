@@ -558,7 +558,7 @@ func (rp *RequestPool) persistProfilesRoomState(ctx context.Context, connState *
 			return
 		}
 		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, profilesStream, "live", fieldsKey); err != nil {
-			if ctx.Err() != nil {
+			if rp.stopAfterWriteError(ctx, connState) {
 				return
 			}
 			logrus.WithError(err).WithField("room_id", roomID).Warn("[PROFILES] Failed to persist profiles stream state")
@@ -587,8 +587,8 @@ func (rp *RequestPool) copyForwardProfilesState(ctx context.Context, connState *
 			continue
 		}
 		if err := rp.db.UpdateConnectionStream(ctx, connState.ConnectionPosition, roomID, profilesStream, prevState.RoomStatus, prevState.LastToken); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+			if rp.stopAfterWriteError(ctx, connState) {
+				return ctx.Err()
 			}
 			logrus.WithError(err).WithField("room_id", roomID).Warn("[PROFILES] Failed to copy forward profiles stream state")
 		}

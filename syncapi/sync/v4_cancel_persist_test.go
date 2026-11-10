@@ -370,3 +370,141 @@ func testSlidingSyncRetryAfterCanceledPersistence(t *testing.T, dbType test.DBTy
 		assert.Equal(t, requiredStateID, configs[roomID].RequiredStateID, roomID)
 	}
 }
+
+// supersedingWriteDB runs, just before the supersedeAt-th per-room write of a
+// response, the cleanup a newer request on the same connection runs: deleting
+// every position but the one the client holds, including the one the response
+// is being written to. Writes attempted afterwards are counted in lateWrites.
+type supersedingWriteDB struct {
+	storage.Database
+
+	connectionKey int64
+	keep          int64
+	supersedeAt   int
+	writes        atomic.Int64
+	lateWrites    atomic.Int64
+}
+
+func (db *supersedingWriteDB) write(ctx context.Context, real func() error) error {
+	n := int(db.writes.Add(1))
+	if db.supersedeAt > 0 {
+		if n == db.supersedeAt {
+			if err := db.DeleteOtherConnectionPositions(ctx, db.connectionKey, db.keep); err != nil {
+				return err
+			}
+		} else if n > db.supersedeAt {
+			db.lateWrites.Add(1)
+		}
+	}
+	return real()
+}
+
+func (db *supersedingWriteDB) UpdateConnectionStream(ctx context.Context, connectionPosition int64, roomID, stream, roomStatus, lastToken string) error {
+	return db.write(ctx, func() error {
+		return db.Database.UpdateConnectionStream(ctx, connectionPosition, roomID, stream, roomStatus, lastToken)
+	})
+}
+
+func (db *supersedingWriteDB) UpdateRoomConfig(ctx context.Context, connectionPosition int64, roomID string, timelineLimit int, requiredStateID int64) error {
+	return db.write(ctx, func() error {
+		return db.Database.UpdateRoomConfig(ctx, connectionPosition, roomID, timelineLimit, requiredStateID)
+	})
+}
+
+// A client that gives up on a sliding sync request and sends the next one on
+// the same connection, before the server notices, has the newer request delete
+// the older one's position while it is still being written. The older request
+// used to log a foreign key violation for every remaining room and could hand
+// out the deleted position; it must stop quietly and answer with the position
+// the client holds, which stays usable.
+func TestSlidingSyncSupersededByNewerRequest(t *testing.T) {
+	const rooms = 20
+	for _, tc := range []struct {
+		name        string
+		supersedeAt int
+	}{
+		{name: "during events stream state", supersedeAt: rooms / 2},
+		{name: "during room config", supersedeAt: rooms + rooms/2},
+		{name: "during account_data stream state", supersedeAt: 2*rooms + rooms/2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+				testSlidingSyncSupersededByNewerRequest(t, dbType, rooms, tc.supersedeAt)
+			})
+		})
+	}
+}
+
+func testSlidingSyncSupersededByNewerRequest(t *testing.T, dbType test.DBType, rooms, supersedeAt int) {
+	cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+	defer closeDB()
+	cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+	realDB, err := storage.NewSyncServerDatasource(processCtx.Context(), cm, &cfg.SyncAPI.Database)
+	require.NoError(t, err)
+
+	ctx := t.Context()
+	device := &userapi.Device{UserID: "@alice:localhost", ID: "DEVICE"}
+	const roomToken = "s3_1_1_1_1_1_1_1_1"
+
+	connectionKey, err := realDB.GetOrCreateConnection(ctx, device.UserID, device.ID, "default")
+	require.NoError(t, err)
+	acked, err := realDB.CreateConnectionPosition(ctx, connectionKey)
+	require.NoError(t, err)
+	requiredStateID, err := realDB.GetOrCreateRequiredStateID(ctx, connectionKey, "[]")
+	require.NoError(t, err)
+	for i := range rooms {
+		roomID := fmt.Sprintf("!room%d:localhost", i)
+		require.NoError(t, realDB.UpdateConnectionStream(ctx, acked, roomID, "events", types.HaveSentRoomLive.String(), roomToken))
+		require.NoError(t, realDB.UpdateConnectionStream(ctx, acked, roomID, accountDataStream, "live", roomToken))
+		require.NoError(t, realDB.UpdateRoomConfig(ctx, acked, roomID, 10, requiredStateID))
+	}
+	ackedPos := types.NewSlidingSyncStreamToken(acked, types.StreamingToken{}).String()
+
+	db := &supersedingWriteDB{Database: realDB, connectionKey: connectionKey, keep: acked, supersedeAt: supersedeAt}
+	rp := &RequestPool{
+		db:       db,
+		cfg:      &config.SyncAPI{Matrix: &config.Global{}},
+		lastseen: &sync.Map{},
+		presence: &sync.Map{},
+		Notifier: notifier.NewNotifier(nil),
+		rsAPI:    noPartialStateRoomserver{},
+	}
+	rp.lastseen.Store(device.UserID+device.ID, struct{}{})
+
+	doSync := func() types.SlidingSyncResponse {
+		body, marshalErr := json.Marshal(map[string]any{
+			"pos":        ackedPos,
+			"timeout":    0,
+			"extensions": map[string]any{"account_data": map[string]any{"enabled": true}},
+		})
+		require.NoError(t, marshalErr)
+		req := httptest.NewRequest(http.MethodPost, "/_matrix/client/unstable/org.matrix.simplified_msc3575/sync", strings.NewReader(string(body))).WithContext(ctx)
+		res := rp.OnIncomingSyncRequestV4(req, device)
+		require.Equal(t, http.StatusOK, res.Code)
+		resp, ok := res.JSON.(types.SlidingSyncResponse)
+		require.True(t, ok, "unexpected response %T", res.JSON)
+		return resp
+	}
+
+	hook := logrustest.NewGlobal()
+	defer hook.Reset()
+	superseded := doSync()
+
+	assert.Equal(t, ackedPos, superseded.Pos, "a superseded response must not hand out its deleted position")
+	assert.Zero(t, countLogs(hook, ""), "supersession must be reported once, below warning level")
+	if dbType == test.DBTypePostgres {
+		// SQLite does not enforce the foreign key, so its writes succeed and
+		// only the check before responding notices.
+		assert.Zero(t, db.lateWrites.Load(), "the first write to fail must end the request")
+	}
+	require.NoError(t, realDB.ValidateConnectionPosition(ctx, acked, connectionKey), "the position the client holds must survive")
+
+	// The newer request, from the same position, completes normally.
+	db.supersedeAt = 0
+	next, err := types.ParseSlidingSyncStreamToken(doSync().Pos)
+	require.NoError(t, err)
+	require.NotEqual(t, acked, next.ConnectionPosition)
+	streams, err := realDB.GetConnectionStreamsByPosition(ctx, next.ConnectionPosition)
+	require.NoError(t, err)
+	assert.Len(t, streams, rooms)
+}

@@ -793,7 +793,7 @@ func (d *Database) ValidateConnectionPosition(ctx context.Context, connectionPos
 			return err
 		}
 		if pos == nil {
-			return fmt.Errorf("connection position %d not found", connectionPosition)
+			return fmt.Errorf("connection position %d: %w", connectionPosition, types.ErrConnectionPositionNotFound)
 		}
 		if pos.ConnectionKey != expectedConnectionKey {
 			return fmt.Errorf("connection position %d belongs to connection %d, expected %d", connectionPosition, pos.ConnectionKey, expectedConnectionKey)

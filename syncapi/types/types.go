@@ -29,6 +29,10 @@ import (
 // logout.
 var ErrMalformedSyncToken = errors.New("malformed sync token")
 
+// ErrConnectionPositionNotFound is returned when a sliding sync connection
+// position does not exist, because it was never created or has been deleted.
+var ErrConnectionPositionNotFound = errors.New("sliding sync connection position not found")
+
 type StateDelta struct {
 	RoomID      string
 	StateEvents []*types.HeaderedEvent
