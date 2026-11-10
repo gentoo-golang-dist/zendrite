@@ -174,6 +174,10 @@ func (d *DatabaseTransaction) RecentEvents(ctx context.Context, roomIDs []string
 	return d.OutputEvents.SelectRecentEvents(ctx, d.txn, roomIDs, r, eventFilter, chronologicalOrder, onlySyncEvents)
 }
 
+func (d *DatabaseTransaction) RecentEventsByTopology(ctx context.Context, roomIDs []string, to types.StreamPosition, eventFilter *synctypes.RoomEventFilter) (map[string]types.RecentEvents, error) {
+	return d.Topology.SelectRecentEventsByTopology(ctx, d.txn, roomIDs, to, eventFilter)
+}
+
 func (d *DatabaseTransaction) RoomsWithEventsSince(ctx context.Context, roomIDs []string, since types.StreamPosition) ([]string, error) {
 	return d.OutputEvents.SelectRoomsWithEventsSince(ctx, d.txn, roomIDs, since)
 }

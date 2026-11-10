@@ -8,13 +8,19 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"sort"
+
+	"codefloe.com/pat-s/gomatrixserverlib"
 
 	"codefloe.com/pat-s/zendrite/internal"
 	"codefloe.com/pat-s/zendrite/internal/depth"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
+	"codefloe.com/pat-s/zendrite/roomserver/api"
 	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/tables"
+	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
 )
 
@@ -32,6 +38,9 @@ CREATE TABLE IF NOT EXISTS syncapi_output_room_events_topology (
 );
 -- The topological order will be used in events selection and ordering
 CREATE UNIQUE INDEX IF NOT EXISTS syncapi_event_topological_position_idx ON syncapi_output_room_events_topology(topological_position, stream_position, room_id);
+-- The latest events of a room in topological order, for the timelines of
+-- rooms a sync sends for the first time (MSC4445).
+CREATE INDEX IF NOT EXISTS syncapi_event_topology_room_idx ON syncapi_output_room_events_topology(room_id, topological_position, stream_position);
 `
 
 const insertEventInTopologySQL = "" +
@@ -60,6 +69,34 @@ const selectEventIDsBeforeStreamSQL = "" +
 	" WHERE t.room_id = $1 AND t.topological_position > $2" +
 	" AND (t.stream_position <= $3 OR e.exclude_from_sync)" +
 	" ORDER BY t.topological_position DESC, t.stream_position DESC LIMIT $4"
+
+// selectRecentEventsByTopologySQL selects the latest events of each room in
+// the order of the room's DAG (MSC4445): by depth, with the stream position
+// breaking ties, among the events the stream delivered up to $2. It reads
+// the topology table through its (room_id, topological_position,
+// stream_position) index, latest first.
+const selectRecentEventsByTopologySQL = `
+WITH room_ids AS (
+     SELECT unnest($1::text[]) AS room_id
+)
+SELECT    x.*
+FROM room_ids,
+          LATERAL  (
+              SELECT e.room_id, e.event_id, e.id, e.headered_event_json, e.session_id, e.exclude_from_sync, e.transaction_id, e.history_visibility, t.topological_position
+                    FROM syncapi_output_room_events_topology t
+                    JOIN syncapi_output_room_events e ON e.event_id = t.event_id
+                    WHERE
+                      t.room_id = room_ids.room_id
+                      AND t.stream_position <= $2
+                      AND e.exclude_from_sync = FALSE
+                      AND ( $3::text[] IS NULL OR     e.sender  = ANY($3)  )
+                      AND ( $4::text[] IS NULL OR NOT(e.sender  = ANY($4)) )
+                      AND ( $5::text[] IS NULL OR     e.type LIKE ANY($5)  )
+                      AND ( $6::text[] IS NULL OR NOT(e.type LIKE ANY($6)) )
+                    ORDER BY t.topological_position DESC, t.stream_position DESC
+                    LIMIT $7
+              ) AS x
+`
 
 const selectPositionInTopologySQL = "" +
 	"SELECT topological_position, stream_position FROM syncapi_output_room_events_topology" +
@@ -227,4 +264,102 @@ func (s *outputRoomEventsTopologyStatements) PurgeEventsTopology(
 	purgeEventsTopologyStmt := sqlutil.TxStmt(txn, s.purgeEventsTopologyStmt)
 	_, err := purgeEventsTopologyStmt.ExecContext(ctx, roomID)
 	return err
+}
+
+// SelectRecentEventsByTopology returns, for each room, the latest `limit`
+// events up to the stream position `to` in topological order, oldest first.
+// Events kept from sync are left out. The result is limited when the room
+// holds more such events.
+func (s *outputRoomEventsTopologyStatements) SelectRecentEventsByTopology(
+	ctx context.Context, txn *sql.Tx,
+	roomIDs []string, to types.StreamPosition, eventFilter *synctypes.RoomEventFilter,
+) (map[string]types.RecentEvents, error) {
+	senders, notSenders := getSendersRoomEventFilter(eventFilter)
+	params := []any{
+		roomIDs, to,
+		senders,
+		notSenders,
+		filterConvertTypeWildcardToSQL(eventFilter.Types),
+		filterConvertTypeWildcardToSQL(eventFilter.NotTypes),
+		eventFilter.Limit + 1,
+	}
+	// Not prepared with the others, as it reads a table that may not exist
+	// yet when this one is set up.
+	var rows *sql.Rows
+	var err error
+	if txn != nil {
+		rows, err = txn.QueryContext(ctx, selectRecentEventsByTopologySQL, params...)
+	} else {
+		rows, err = s.db.QueryContext(ctx, selectRecentEventsByTopologySQL, params...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "selectRecentEventsByTopology: rows.close() failed")
+
+	type topoEvent struct {
+		types.StreamEvent
+		topoPos types.StreamPosition
+	}
+	byRoom := make(map[string][]topoEvent)
+	for rows.Next() {
+		var (
+			roomID            string
+			eventID           string
+			streamPos         types.StreamPosition
+			topoPos           types.StreamPosition
+			eventBytes        []byte
+			excludeFromSync   bool
+			sessionID         *int64
+			txnID             *string
+			transactionID     *api.TransactionID
+			historyVisibility gomatrixserverlib.HistoryVisibility
+		)
+		if err = rows.Scan(&roomID, &eventID, &streamPos, &eventBytes, &sessionID, &excludeFromSync, &txnID, &historyVisibility, &topoPos); err != nil {
+			return nil, err
+		}
+		var ev rstypes.HeaderedEvent
+		if err = json.Unmarshal(eventBytes, &ev); err != nil {
+			return nil, err
+		}
+		if sessionID != nil && txnID != nil {
+			transactionID = &api.TransactionID{SessionID: *sessionID, TransactionID: *txnID}
+		}
+		ev.Visibility = historyVisibility
+		byRoom[roomID] = append(byRoom[roomID], topoEvent{
+			StreamEvent: types.StreamEvent{
+				HeaderedEvent:   &ev,
+				StreamPosition:  streamPos,
+				TransactionID:   transactionID,
+				ExcludeFromSync: excludeFromSync,
+			},
+			topoPos: topoPos,
+		})
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]types.RecentEvents, len(byRoom))
+	for roomID, evs := range byRoom {
+		// Oldest first. The query returns the latest first; the extra event
+		// it read beyond the limit is then the first one.
+		sort.SliceStable(evs, func(i, j int) bool {
+			if evs[i].topoPos != evs[j].topoPos {
+				return evs[i].topoPos < evs[j].topoPos
+			}
+			return evs[i].StreamPosition < evs[j].StreamPosition
+		})
+		recent := types.RecentEvents{Topological: true}
+		if len(evs) > eventFilter.Limit {
+			recent.Limited = true
+			evs = evs[len(evs)-eventFilter.Limit:]
+		}
+		recent.Events = make([]types.StreamEvent, len(evs))
+		for i := range evs {
+			recent.Events[i] = evs[i].StreamEvent
+		}
+		result[roomID] = recent
+	}
+	return result, nil
 }

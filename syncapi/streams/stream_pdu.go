@@ -1,12 +1,10 @@
 package streams
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -162,11 +160,10 @@ func (p *PDUStreamProvider) CompleteSync(
 		eventFormat = synctypes.FormatSyncFederation
 	}
 
-	limit := eventFilter.Limit
-	if limit > 0 {
-		eventFilter.Limit += depthOrderWindow
-	}
-	recentEvents, err := snapshot.RecentEvents(ctx, joinedRoomIDs, r, &eventFilter, true, true)
+	// A complete sync returns the history of each room, so its timeline holds
+	// the latest events in topological order, as /messages returns them, and
+	// not those that arrived last (MSC4445).
+	recentEvents, err := snapshot.RecentEventsByTopology(ctx, joinedRoomIDs, to, &eventFilter)
 	if err != nil {
 		return from
 	}
@@ -178,7 +175,7 @@ func (p *PDUStreamProvider) CompleteSync(
 			req.Log.WithError(ctxErr).Debugln("Abandoning complete sync, the client went away")
 			return from
 		}
-		events := latestByDepth(recentEvents[roomID], limit)
+		events := recentEvents[roomID]
 		// Invalidate the lazyLoadCache, otherwise we end up with missing displaynames/avatars
 		// TODO: This might be inefficient, when joined to many and/or large rooms.
 		joinedUsers := p.notifier.JoinedUsers(roomID)
@@ -217,14 +214,14 @@ func (p *PDUStreamProvider) CompleteSync(
 			}
 		}
 
-		recentEvents, err = snapshot.RecentEvents(ctx, peekRooms, r, &eventFilter, true, true)
+		recentEvents, err = snapshot.RecentEventsByTopology(ctx, peekRooms, to, &eventFilter)
 		if err != nil {
 			return from
 		}
 
 		for _, roomID := range peekRooms {
 			var jr *types.JoinResponse
-			events := latestByDepth(recentEvents[roomID], limit)
+			events := recentEvents[roomID]
 			jr, err = p.getJoinResponseForCompleteSync(
 				ctx, snapshot, roomID, &stateFilter, req.WantFullState, req.UseStateAfter(), req.Device, true,
 				events.Events, events.Limited, eventFormat, to, bundler,
@@ -242,9 +239,7 @@ func (p *PDUStreamProvider) CompleteSync(
 	}
 
 	if req.Filter.Room.IncludeLeave {
-		leftFilter := eventFilter
-		leftFilter.Limit = limit
-		if err = p.addLeftRooms(ctx, snapshot, req, to, &stateFilter, &leftFilter, bundler); err != nil {
+		if err = p.addLeftRooms(ctx, snapshot, req, to, &stateFilter, &eventFilter, bundler); err != nil {
 			if req.Context.Err() != nil || abandonsSync(err) {
 				logAbandoned(req, err, "", "complete")
 				return from
@@ -320,9 +315,9 @@ func (p *PDUStreamProvider) addLeftRooms(
 			}
 			r := types.Range{From: leavePos, To: 0, Backwards: true}
 			var recent map[string]types.RecentEvents
-			recent, err = snapshot.RecentEvents(ctx, []string{roomID}, r, eventFilter, true, true)
+			recent, err = snapshot.RecentEventsByTopology(ctx, []string{roomID}, leavePos, eventFilter)
 			if err != nil {
-				return fmt.Errorf("snapshot.RecentEvents: %w", err)
+				return fmt.Errorf("snapshot.RecentEventsByTopology: %w", err)
 			}
 			if _, err = p.addRoomDeltaToResponse(
 				ctx, snapshot, req.Device, r, delta, eventFilter, stateFilter, req, recent, bundler,
@@ -544,7 +539,9 @@ func (p *PDUStreamProvider) getRecentEvents(ctx context.Context, stateDeltas []t
 	}
 	if len(newlyJoinedRoomIDs) > 0 {
 		// For rooms that were joined in this sync, try to fetch
-		// as much timeline events as allowed by the filter.
+		// as much timeline events as allowed by the filter. The sync sends
+		// their history for the first time, so in topological order, as for
+		// a complete sync (MSC4445).
 
 		filter := eventFilter
 		// If we're going backwards, grep at least X events, this is mostly to satisfy Sytest
@@ -556,14 +553,7 @@ func (p *PDUStreamProvider) getRecentEvents(ctx context.Context, stateDeltas []t
 			}
 		}
 
-		events, err := snapshot.RecentEvents(
-			ctx, newlyJoinedRoomIDs, types.Range{
-				From:      r.To,
-				To:        0,
-				Backwards: true,
-			},
-			&filter, true, true,
-		)
+		events, err := snapshot.RecentEventsByTopology(ctx, newlyJoinedRoomIDs, r.To, &filter)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				return nil, err
@@ -633,28 +623,6 @@ func latestDelivered(
 	return latest
 }
 
-// depthOrderWindow is how many events a complete sync reads beyond the
-// timeline limit of a room, to order the timeline by depth.
-const depthOrderWindow = 10
-
-// latestByDepth returns the timeline of a complete sync: the given events in
-// the order of the room's DAG, cut to the limit. An event of a fork that arrived
-// late then does not end the timeline, where its state would count as older
-// than that of the events before it, and it appears in the state instead. The
-// events must be in stream order, which breaks ties in depth.
-func latestByDepth(recent types.RecentEvents, limit int) types.RecentEvents {
-	sorted := slices.Clone(recent.Events)
-	slices.SortStableFunc(sorted, func(a, b types.StreamEvent) int {
-		return cmp.Compare(a.Depth(), b.Depth())
-	})
-	if limit >= 0 && len(sorted) > limit {
-		sorted = sorted[len(sorted)-limit:]
-		recent.Limited = true
-	}
-	recent.Events = sorted
-	return recent
-}
-
 //nolint:gocyclo
 func (p *PDUStreamProvider) addRoomDeltaToResponse(
 	ctx context.Context,
@@ -671,18 +639,24 @@ func (p *PDUStreamProvider) addRoomDeltaToResponse(
 	var err error
 	recentStreamEvents := dbEvents[delta.RoomID].Events
 	limited := dbEvents[delta.RoomID].Limited
+	// The timeline of a room sent for the first time is already in
+	// topological order (MSC4445).
+	topological := dbEvents[delta.RoomID].Topological
 
-	recEvents := gomatrixserverlib.ReverseTopologicalOrdering(
-		gomatrixserverlib.ToPDUs(snapshot.StreamEventsToEvents(ctx, device, recentStreamEvents, p.rsAPI)),
-		gomatrixserverlib.TopologicalOrderByPrevEvents,
-	)
-	recentEvents := make([]*rstypes.HeaderedEvent, len(recEvents))
-	for i := range recEvents {
-		he, ok := recEvents[i].(*rstypes.HeaderedEvent)
-		if !ok {
-			continue
+	recentEvents := snapshot.StreamEventsToEvents(ctx, device, recentStreamEvents, p.rsAPI)
+	if !topological {
+		recEvents := gomatrixserverlib.ReverseTopologicalOrdering(
+			gomatrixserverlib.ToPDUs(recentEvents),
+			gomatrixserverlib.TopologicalOrderByPrevEvents,
+		)
+		recentEvents = make([]*rstypes.HeaderedEvent, len(recEvents))
+		for i := range recEvents {
+			he, ok := recEvents[i].(*rstypes.HeaderedEvent)
+			if !ok {
+				continue
+			}
+			recentEvents[i] = he
 		}
-		recentEvents[i] = he
 	}
 
 	// If we didn't return any events at all then don't bother doing anything else.
@@ -778,13 +752,22 @@ func (p *PDUStreamProvider) addRoomDeltaToResponse(
 
 	if r.Backwards && len(events) > eventFilter.Limit {
 		// We're going backwards and the events are ordered chronologically, so take the latest `limit` events
-		events = latestDelivered(events, recentStreamEvents, eventFilter.Limit)
+		if topological {
+			events = events[len(events)-eventFilter.Limit:]
+		} else {
+			events = latestDelivered(events, recentStreamEvents, eventFilter.Limit)
+		}
 		limited = true
 	}
 
 	prevBatch, err := snapshot.GetBackwardTopologyPos(ctx, events)
 	if err != nil {
 		return r.From, fmt.Errorf("p.DB.GetBackwardTopologyPos: %w", err)
+	}
+	if topological {
+		// The events before a timeline in topological order are those before
+		// its first event in that order, whenever they arrived.
+		prevBatch.StreamBound = 0
 	}
 	if err = ctx.Err(); err != nil {
 		return r.From, err

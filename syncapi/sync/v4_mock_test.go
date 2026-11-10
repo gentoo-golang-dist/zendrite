@@ -215,6 +215,37 @@ func (m *mockSnapshot) RecentEvents(ctx context.Context, roomIDs []string, r typ
 	return result, nil
 }
 
+// RecentEventsByTopology mirrors the real DB: the latest events up to `to` by
+// depth, with the stream position breaking ties, oldest first.
+func (m *mockSnapshot) RecentEventsByTopology(ctx context.Context, roomIDs []string, to types.StreamPosition, eventFilter *synctypes.RoomEventFilter) (map[string]types.RecentEvents, error) {
+	result := make(map[string]types.RecentEvents)
+	for _, roomID := range roomIDs {
+		all, ok := m.recentEvents[roomID]
+		if !ok {
+			continue
+		}
+		filtered := make([]types.StreamEvent, 0, len(all.Events))
+		for _, ev := range all.Events {
+			if ev.StreamPosition <= to {
+				filtered = append(filtered, ev)
+			}
+		}
+		sort.SliceStable(filtered, func(i, j int) bool {
+			if filtered[i].Depth() != filtered[j].Depth() {
+				return filtered[i].Depth() < filtered[j].Depth()
+			}
+			return filtered[i].StreamPosition < filtered[j].StreamPosition
+		})
+		limited := false
+		if eventFilter != nil && eventFilter.Limit > 0 && len(filtered) > eventFilter.Limit {
+			filtered = filtered[len(filtered)-eventFilter.Limit:]
+			limited = true
+		}
+		result[roomID] = types.RecentEvents{Events: filtered, Limited: limited, Topological: true}
+	}
+	return result, nil
+}
+
 func (m *mockSnapshot) GetRoomSummary(ctx context.Context, roomID, userID string) (*types.Summary, error) {
 	if summary, ok := m.roomSummaries[roomID]; ok {
 		return summary, nil

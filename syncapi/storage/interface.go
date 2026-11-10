@@ -68,6 +68,10 @@ type DatabaseTransaction interface {
 	MembershipCount(ctx context.Context, roomID, membership string, pos types.StreamPosition) (int, error)
 	GetRoomSummary(ctx context.Context, roomID, userID string) (summary *types.Summary, err error)
 	RecentEvents(ctx context.Context, roomIDs []string, r types.Range, eventFilter *synctypes.RoomEventFilter, chronologicalOrder bool, onlySyncEvents bool) (map[string]types.RecentEvents, error)
+	// RecentEventsByTopology returns the latest events of each room up to the stream
+	// position `to` in topological order, oldest first, for the timeline of a room
+	// a sync sends for the first time (MSC4445). Events kept from sync are left out.
+	RecentEventsByTopology(ctx context.Context, roomIDs []string, to types.StreamPosition, eventFilter *synctypes.RoomEventFilter) (map[string]types.RecentEvents, error)
 	// RoomsWithEventsSince returns a list of room IDs that have events with stream_position > since
 	// This is used for incremental sync to filter rooms that haven't changed
 	RoomsWithEventsSince(ctx context.Context, roomIDs []string, since types.StreamPosition) ([]string, error)

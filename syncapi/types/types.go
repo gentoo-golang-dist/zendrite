@@ -65,6 +65,9 @@ type StreamEvent struct {
 type RecentEvents struct {
 	Limited bool
 	Events  []StreamEvent
+	// Topological is set when the events are the latest of the room in
+	// topological order (MSC4445) rather than in stream order.
+	Topological bool
 }
 
 // Range represents a range between two stream positions.

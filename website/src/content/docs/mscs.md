@@ -21,6 +21,7 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480) | Sliding sync extension: sticky events | N/A | Implemented: the `org.matrix.msc4354.sticky_events` extension |
 | [MSC4262](https://github.com/matrix-org/matrix-spec-proposals/pull/4262) | Sliding sync extension: profile updates | N/A | Implemented (unstable prefix): see [profile updates in sliding sync](#profile-updates-in-sliding-sync) |
 | [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) | `state_after` in `/sync` | 1.16 | Implemented: with `use_state_after=true`, joined and left rooms carry `state_after`, the state at the end of the timeline, instead of `state`. The unstable `org.matrix.msc4222.use_state_after` parameter is answered with `org.matrix.msc4222.state_after`. See [state after the timeline](#state-after-the-timeline) |
+| [MSC4445](https://github.com/matrix-org/matrix-spec-proposals/pull/4445) | Clarify `/sync` timeline order | N/A | Implemented (unstable prefix): the timeline of a room a sync sends for the first time is in topological order, an incremental timeline in stream order. See [timeline order](#timeline-order) |
 
 ### Sticky events
 
@@ -80,6 +81,15 @@ For a room the user left, the state ends at their leave.
 `state_after` is sent even when it is empty, and the `state` filter applies to it.
 With `lazy_load_members`, it holds the memberships of the timeline senders, and an incremental sync keeps every membership change.
 Zendrite advertises `org.matrix.msc4222` in `unstable_features` for clients that check it before opting in.
+
+### Timeline order
+
+As in Synapse, the timeline of a room that a sync sends for the first time is a section of the room's history, so it holds the room's latest events in topological order, as `/messages` returns them: by depth, with the order in which the server received them breaking ties.
+That covers the rooms of an initial sync (joined, peeked and, with `include_leave`, left rooms, whose timeline ends at the leave), a room that an incremental sync newly joined, and a room that a sliding sync connection sends for the first time or with a larger `timeline_limit`.
+Its `prev_batch` continues `/messages` just before the first event of the timeline in that order, and `limited` is set when the room holds older events.
+An incremental timeline holds the events that arrived since the `since` token, in the order the server received them, so events that arrive late, such as those of a fork after a netsplit, are sent even when they are older in the DAG.
+Backfilled events never appear in `/sync` timelines.
+`/versions` advertises `org.matrix.msc4445.initial_sync_timeline_topological_ordering` in `unstable_features`, as Synapse does.
 
 ## Messaging
 

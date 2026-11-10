@@ -13,6 +13,9 @@ const (
 	FilterOrderNone = iota
 	FilterOrderAsc
 	FilterOrderDesc
+	// FilterOrderTopologyDesc orders the latest events of a room's topology
+	// first, for a query on the topology table aliased as t.
+	FilterOrderTopologyDesc
 )
 
 // prepareWithFilters returns a prepared statement with the
@@ -83,6 +86,8 @@ func prepareWithFilters(
 		query += " ORDER BY id ASC"
 	case FilterOrderDesc:
 		query += " ORDER BY id DESC"
+	case FilterOrderTopologyDesc:
+		query += " ORDER BY t.topological_position DESC, t.stream_position DESC"
 	}
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", offset+1)

@@ -324,19 +324,27 @@ func (rp *RequestPool) getTimelineEvents(
 		}).Debug("[TIMELINE] Fetching incremental events since sync token")
 	}
 
-	// Get events in the determined range
-	recentEvents, err := snapshot.RecentEvents(
-		ctx,
-		[]string{roomID},
-		types.Range{
-			From:      fromPos, // High value (current position)
-			To:        toPos,   // Low value (0 for initial, lastSentPos for incremental)
-			Backwards: true,    // Get most recent first, limit will apply
-		},
-		&filter,
-		true, // Chronological order (oldest first)
-		true, // Only sync events
-	)
+	// Get events in the determined range. A room sent for the first time gets
+	// its history: the latest events in topological order, as /messages and
+	// sync v2 return them (MSC4445). An incremental timeline holds what
+	// arrived since, in stream order.
+	var recentEvents map[string]types.RecentEvents
+	if fromToken == nil {
+		recentEvents, err = snapshot.RecentEventsByTopology(ctx, []string{roomID}, fromPos, &filter)
+	} else {
+		recentEvents, err = snapshot.RecentEvents(
+			ctx,
+			[]string{roomID},
+			types.Range{
+				From:      fromPos, // High value (current position)
+				To:        toPos,   // Low value (lastSentPos for incremental)
+				Backwards: true,    // Get most recent first, limit will apply
+			},
+			&filter,
+			true, // Chronological order (oldest first)
+			true, // Only sync events
+		)
+	}
 	if err != nil {
 		return nil, false, 0, err
 	}

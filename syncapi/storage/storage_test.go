@@ -225,6 +225,115 @@ func TestRecentEventsPDU(t *testing.T) {
 	})
 }
 
+// RecentEventsByTopology returns the latest events of a room in topological
+// order (MSC4445): by depth, not by when they arrived, up to a stream
+// position, without the events kept from sync.
+func TestRecentEventsByTopology(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, closeDB := MustCreateDatabase(t, dbType)
+		defer closeDB()
+		alice := test.NewUser(t)
+		// dummy room to make sure SQL queries are filtering on room ID
+		MustWriteEvents(t, db, test.NewRoom(t, alice).Events())
+
+		r := test.NewRoom(t, alice)
+		created := append([]*rstypes.HeaderedEvent{}, r.Events()...)
+		forkPoint := created[len(created)-1]
+		message := func(body string) *rstypes.HeaderedEvent {
+			return r.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": body})
+		}
+		// A branch that arrives late, with depths just after the fork point.
+		late := []*rstypes.HeaderedEvent{message("late 1"), message("late 2"), message("late 3")}
+		// The main branch from the fork point, deeper than the late one.
+		mainBranch := []*rstypes.HeaderedEvent{
+			r.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "main 1"}, test.WithPrevEvents(forkPoint.EventID())),
+		}
+		for i := 2; i <= 4; i++ {
+			mainBranch = append(mainBranch, message(fmt.Sprintf("main %d", i)))
+		}
+		// The deepest event, but backfilled, so kept from sync.
+		backfilled := message("backfilled")
+
+		MustWriteEvents(t, db, created)
+		mainPos := MustWriteEvents(t, db, mainBranch)
+		MustWriteEvents(t, db, late)
+		if _, err := db.WriteEvent(ctx, backfilled, nil, nil, nil, nil, true, gomatrixserverlib.HistoryVisibilityShared); err != nil {
+			t.Fatal(err)
+		}
+		MustWriteEvents(t, db, test.NewRoom(t, alice).Events())
+
+		var latest types.StreamPosition
+		WithSnapshot(t, db, func(snapshot storage.DatabaseTransaction) {
+			var err error
+			latest, err = snapshot.MaxStreamPositionForPDUs(ctx)
+			require.NoError(t, err)
+		})
+		messageType := []string{"m.room.message"}
+		concat := func(lists ...[]*rstypes.HeaderedEvent) []*rstypes.HeaderedEvent {
+			var out []*rstypes.HeaderedEvent
+			for _, l := range lists {
+				out = append(out, l...)
+			}
+			return out
+		}
+
+		for _, tc := range []struct {
+			name        string
+			to          types.StreamPosition
+			filter      synctypes.RoomEventFilter
+			wantEvents  []*rstypes.HeaderedEvent
+			wantLimited bool
+		}{
+			{
+				name:        "the deepest events, not the last to arrive",
+				to:          latest,
+				filter:      synctypes.RoomEventFilter{Limit: 3},
+				wantEvents:  mainBranch[1:],
+				wantLimited: true,
+			},
+			{
+				name:       "every event in topological order",
+				to:         latest,
+				filter:     synctypes.RoomEventFilter{Limit: 100},
+				wantEvents: concat(created, late, mainBranch),
+			},
+			{
+				name:        "only the events the stream delivered up to the position",
+				to:          mainPos[1],
+				filter:      synctypes.RoomEventFilter{Limit: 3},
+				wantEvents:  concat(created[len(created)-1:], mainBranch[:2]),
+				wantLimited: true,
+			},
+			{
+				name:       "with a type filter",
+				to:         latest,
+				filter:     synctypes.RoomEventFilter{Limit: 100, Types: &messageType},
+				wantEvents: concat(late, mainBranch),
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				WithSnapshot(t, db, func(snapshot storage.DatabaseTransaction) {
+					filter := tc.filter
+					got, err := snapshot.RecentEventsByTopology(ctx, []string{r.ID}, tc.to, &filter)
+					require.NoError(t, err)
+					recent := got[r.ID]
+					gotIDs := make([]string, len(recent.Events))
+					for i, ev := range recent.Events {
+						gotIDs[i] = ev.EventID()
+					}
+					wantIDs := make([]string, len(tc.wantEvents))
+					for i, ev := range tc.wantEvents {
+						wantIDs[i] = ev.EventID()
+					}
+					assert.Equal(t, wantIDs, gotIDs)
+					assert.Equal(t, tc.wantLimited, recent.Limited)
+					assert.True(t, recent.Topological)
+				})
+			})
+		}
+	})
+}
+
 // The purpose of this test is to ensure that backfill does indeed go backwards, using a topology token.
 func TestGetEventsInRangeWithTopologyToken(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {

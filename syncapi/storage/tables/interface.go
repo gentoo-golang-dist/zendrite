@@ -104,6 +104,11 @@ type Topology interface {
 	// that the stream delivered up to `streamBound`, and events that never came down the stream,
 	// such as backfilled ones, whose stream position says nothing about when they were sent.
 	SelectEventIDsBeforeStream(ctx context.Context, txn *sql.Tx, roomID string, minDepth, streamBound types.StreamPosition, limit int) (eventIDs []string, start, end types.TopologyToken, err error)
+	// SelectRecentEventsByTopology returns, for each room, the latest `limit` events of the
+	// filter that the stream delivered up to `to`, in topological order (depth, then stream
+	// position), oldest first (MSC4445). Events kept from sync are left out. Returns
+	// `limited=true` when the room holds more such events.
+	SelectRecentEventsByTopology(ctx context.Context, txn *sql.Tx, roomIDs []string, to types.StreamPosition, eventFilter *synctypes.RoomEventFilter) (map[string]types.RecentEvents, error)
 	// SelectPositionInTopology returns the depth and stream position of a given event in the topology of the room it belongs to.
 	SelectPositionInTopology(ctx context.Context, txn *sql.Tx, eventID string) (depth, spos types.StreamPosition, err error)
 	// SelectStreamToTopologicalPosition converts a stream position to a topological position by finding the nearest topological position in the room.
