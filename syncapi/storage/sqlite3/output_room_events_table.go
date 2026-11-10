@@ -560,15 +560,51 @@ func (s *outputRoomEventsStatements) DeleteEventsForRoom(
 	return err
 }
 
-// SelectRoomsWithEventsSince returns a list of room IDs that have events with stream_position > since
-// TODO: Implement proper SQLite version - for now returns all rooms (no filtering)
+const selectRoomsWithEventsSinceSQL = "" +
+	"SELECT DISTINCT room_id FROM syncapi_output_room_events" +
+	" WHERE id > $1 AND room_id IN ($2)"
+
+// SelectRoomsWithEventsSince returns the rooms of roomIDs that have events
+// with a stream position after since.
 func (s *outputRoomEventsStatements) SelectRoomsWithEventsSince(
 	ctx context.Context, txn *sql.Tx,
 	roomIDs []string, since types.StreamPosition,
 ) ([]string, error) {
-	// Stub implementation - returns all rooms
-	// This maintains backward compatibility while postgres gets the optimization
-	return roomIDs, nil
+	var provider sqlutil.QueryProvider = s.db
+	if txn != nil {
+		provider = txn
+	}
+	var result []string
+	// One variable holds since, the rest of each batch the room IDs.
+	batchSize := int(sqlutil.SQLite3MaxVariables) - 1
+	for start := 0; start < len(roomIDs); start += batchSize {
+		batch := roomIDs[start:min(start+batchSize, len(roomIDs))]
+		query := strings.Replace(selectRoomsWithEventsSinceSQL, "($2)", sqlutil.QueryVariadicOffset(len(batch), 1), 1)
+		params := make([]any, 0, len(batch)+1)
+		params = append(params, since)
+		for _, roomID := range batch {
+			params = append(params, roomID)
+		}
+		rows, err := provider.QueryContext(ctx, query, params...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var roomID string
+			if err = rows.Scan(&roomID); err != nil {
+				break
+			}
+			result = append(result, roomID)
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		internal.CloseAndLogIfError(ctx, rows, "SelectRoomsWithEventsSince: rows.close() failed")
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func rowsToStreamEvents(rows *sql.Rows) ([]types.StreamEvent, error) {

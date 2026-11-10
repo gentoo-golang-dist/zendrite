@@ -16,7 +16,7 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
 | [MSC4186](https://github.com/matrix-org/matrix-spec-proposals/pull/4186) | Simplified Sliding Sync | N/A | Implemented (native, no proxy needed) |
-| [MSC3575](https://github.com/matrix-org/matrix-spec-proposals/pull/3575) | Sliding Sync (v1) | N/A | Implemented (legacy, superseded by MSC4186) |
+| [MSC3575](https://github.com/matrix-org/matrix-spec-proposals/pull/3575) | Sliding Sync (v1) | N/A | Not supported: closed, superseded by MSC4186. Lists return only `count`, without MSC3575 `ops`, and `/.well-known/matrix/client` no longer advertises a sliding sync proxy |
 | [MSC4354](https://github.com/matrix-org/matrix-spec-proposals/pull/4354) | Sticky events | N/A | Implemented (unstable prefix): see [sticky events](#sticky-events) |
 | [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480) | Sliding sync extension: sticky events | N/A | Implemented: the `org.matrix.msc4354.sticky_events` extension |
 | [MSC4262](https://github.com/matrix-org/matrix-spec-proposals/pull/4262) | Sliding sync extension: profile updates | N/A | Implemented (unstable prefix): see [profile updates in sliding sync](#profile-updates-in-sliding-sync) |

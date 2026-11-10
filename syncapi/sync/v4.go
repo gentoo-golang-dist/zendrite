@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -821,36 +822,13 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			logrus.WithFields(logrus.Fields{
 				"list_name": listName,
 				"count":     list.Count,
-				"num_ops":   len(list.Ops),
+				"in_range":  len(list.RoomIDs),
+				"changed":   list.Changed,
 			}).Info("[V4_SYNC] List processed")
 
-			for i, op := range list.Ops {
-				logrus.WithFields(logrus.Fields{
-					"list_name":    listName,
-					"op_index":     i,
-					"op_type":      op.Op,
-					"range":        op.Range,
-					"num_room_ids": len(op.RoomIDs),
-				}).Debug("[V4_SYNC] List operation")
-			}
-
-			// Track rooms that appeared in lists for Phase 3 room data population
-			// Store the config from the list so we can use timeline_limit and required_state when building room data
-			for _, op := range list.Ops {
-				if (op.Op == "SYNC" || op.Op == "INSERT") && op.RoomIDs != nil {
-					for _, roomID := range op.RoomIDs {
-						// Use the max timeline_limit if room appears in multiple lists
-						// Merge required_state from multiple lists
-						existing, exists := roomsInLists[roomID]
-						if !exists || listConfig.TimelineLimit > existing.TimelineLimit {
-							roomsInLists[roomID] = types.RoomSubscriptionConfig{
-								TimelineLimit: listConfig.TimelineLimit,
-								RequiredState: listConfig.RequiredState,
-							}
-						}
-					}
-				}
-			}
+			// Every room inside the list's range is a candidate for room data;
+			// on incremental syncs Phase 3.5 keeps only those with changes.
+			addListRooms(roomsInLists, list.RoomIDs, listConfig)
 		}
 
 		// Phase 3: Process room subscriptions
@@ -1501,17 +1479,6 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			logrus.WithField("room_ids", roomIDs).Debug("[V4_SYNC] Response rooms")
 		}
 
-		// DEBUG: Log response structure to verify JSON format
-		listOpsCount := make(map[string]int)
-		for listName, list := range response.Lists {
-			listOpsCount[listName] = len(list.Ops)
-		}
-		logrus.WithFields(logrus.Fields{
-			"pos":            response.Pos,
-			"list_ops":       listOpsCount,
-			"has_extensions": response.Extensions != nil,
-		}).Debug("[V4_SYNC] Response structure")
-
 		// Check if response has meaningful updates
 		// Similar to v3 sync's HasUpdates() check
 		hasUpdates := v4ResponseHasUpdates(response)
@@ -1548,9 +1515,9 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 // v4ResponseHasUpdates checks if a sliding sync response has meaningful updates
 // Similar to v3 sync's HasUpdates() method.
 func v4ResponseHasUpdates(response types.SlidingSyncResponse) bool {
-	// Check if any list has operations
+	// Check if rooms entered or left any list's range
 	for _, list := range response.Lists {
-		if len(list.Ops) > 0 {
+		if list.Changed {
 			return true
 		}
 	}
@@ -1704,96 +1671,38 @@ func (rp *RequestPool) processRoomList(
 	// Sort by activity (most recent first)
 	SortRoomsByActivity(rooms)
 
-	// Total count before windowing
-	totalCount := len(rooms)
-
 	// Apply sliding window if range is specified
-	var windowedRooms []RoomWithBumpStamp
-	var rangeSpec []int
+	windowedRooms := rooms
 	if len(config.Range) == 2 { //nolint:mnd
-		rangeSpec = config.Range
-		windowedRooms = ApplySlidingWindow(rooms, rangeSpec)
-	} else {
-		// No range specified, return all rooms
-		windowedRooms = rooms
-		rangeSpec = []int{0, len(rooms) - 1}
+		windowedRooms = ApplySlidingWindow(rooms, config.Range)
+	}
+	roomIDs := make([]string, len(windowedRooms))
+	for i, room := range windowedRooms {
+		roomIDs[i] = room.RoomID
 	}
 
-	// Generate SYNC operation (Phase 2 only supports SYNC)
-	// Phase 3+ will implement INSERT/DELETE/INVALIDATE for incremental updates
-	ops := []types.SlidingOperation{}
-	if len(windowedRooms) > 0 {
-		// Extract room IDs for this list
-		roomIDs := make([]string, len(windowedRooms))
-		for i, room := range windowedRooms {
-			roomIDs[i] = room.RoomID
-		}
-
-		// Phase 10: Always send SYNC operations for non-empty lists
-		// This ensures notification count changes (from read receipts) are always sent,
-		// even when the room membership hasn't changed.
-		// Following Synapse's approach: rooms should be included when they have ANY updates
-		// (events, receipts, notification counts), not just membership changes.
-		// TODO: Optimize by tracking which specific rooms have updates (like Synapse's get_rooms_that_might_have_updates)
-		var previousRoomIDs []string
-		listChanged := true // Always send updates
-
-		if !forceInitialSync {
-			// Still load previous state for logging/debugging
-			previousRoomIDsJSON, exists, err := rp.db.GetConnectionList(ctx, connState.ConnectionKey, listName)
-			if err != nil {
-				logrus.WithError(err).WithField("list", listName).Error("Failed to load connection list")
-			} else if exists {
-				if err := json.Unmarshal([]byte(previousRoomIDsJSON), &previousRoomIDs); err != nil {
-					logrus.WithError(err).WithField("list", listName).Error("Failed to decode connection list JSON")
-				}
+	// Compare the window with the one last sent on this connection, so a
+	// long poll ends when rooms enter or leave it.
+	var previousRoomIDs []string
+	if !forceInitialSync {
+		previousRoomIDsJSON, exists, err := rp.db.GetConnectionList(ctx, connState.ConnectionKey, listName)
+		if err != nil {
+			logrus.WithError(err).WithField("list", listName).Error("Failed to load connection list")
+		} else if exists {
+			if err := json.Unmarshal([]byte(previousRoomIDsJSON), &previousRoomIDs); err != nil {
+				logrus.WithError(err).WithField("list", listName).Error("Failed to decode connection list JSON")
 			}
 		}
-
-		logrus.WithFields(logrus.Fields{
-			"list_name":       listName,
-			"list_changed":    listChanged,
-			"prev_room_count": len(previousRoomIDs),
-			"curr_room_count": len(roomIDs),
-			"is_first_send":   previousRoomIDs == nil,
-			"force_initial":   forceInitialSync,
-		}).Debug("[V4_SYNC] List change detection")
-
-		if listChanged {
-			// Generate optimal operations for this list update
-			// maxOps=5 means we'll fall back to SYNC if more than 5 INSERT/DELETE operations needed
-			const maxOps = 5
-			opsForList := GenerateListOperations(previousRoomIDs, roomIDs, rangeSpec, maxOps)
-			ops = append(ops, opsForList...)
-
-			// Log the generated operations
-			for _, listOp := range opsForList {
-				numRoomIDs := 0
-				if listOp.RoomIDs != nil {
-					numRoomIDs = len(listOp.RoomIDs)
-				}
-				logrus.WithFields(logrus.Fields{
-					"list_name":    listName,
-					"op_type":      listOp.Op,
-					"num_room_ids": numRoomIDs,
-					"index":        listOp.Index,
-				}).Info("[V4_SYNC] Generated list operation")
-			}
-
-			// Phase 10: Store the current room IDs for this list in database (JSON encoded)
-			roomIDsJSON, err := json.Marshal(roomIDs)
-			if err != nil {
-				logrus.WithError(err).WithField("list", listName).Error("Failed to encode room IDs to JSON")
-			} else {
-				if err := rp.db.UpdateConnectionList(ctx, connState.ConnectionKey, listName, string(roomIDsJSON)); err != nil {
-					logrus.WithError(err).WithField("list", listName).Error("Failed to persist connection list")
-					// Continue anyway - this is not fatal
-				}
-			}
-		} else {
-			logrus.WithField("list_name", listName).Debug("[V4_SYNC] List unchanged, no operations needed")
+	}
+	changed := !slices.Equal(previousRoomIDs, roomIDs)
+	if changed {
+		roomIDsJSON, err := json.Marshal(roomIDs)
+		if err != nil {
+			logrus.WithError(err).WithField("list", listName).Error("Failed to encode room IDs to JSON")
+		} else if err := rp.db.UpdateConnectionList(ctx, connState.ConnectionKey, listName, string(roomIDsJSON)); err != nil {
+			// Not fatal: the next request sees the list as changed again.
+			logrus.WithError(err).WithField("list", listName).Error("Failed to persist connection list")
 		}
-		// If list hasn't changed, return empty ops (no update needed)
 	}
 
 	matchedRoomIDs := make([]string, len(rooms))
@@ -1801,27 +1710,30 @@ func (rp *RequestPool) processRoomList(
 		matchedRoomIDs[i] = room.RoomID
 	}
 	return types.SlidingList{
-		Count:          totalCount,
-		Ops:            ops,
+		Count:          len(rooms),
+		RoomIDs:        roomIDs,
+		Changed:        changed,
 		MatchedRoomIDs: matchedRoomIDs,
 	}, nil
 }
 
-// equalStringSlices checks if two string slices have the same elements in order.
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+// addListRooms records the rooms of a list's range for room data, using the
+// list's timeline_limit and required_state. A room in several lists keeps the
+// config of the list with the largest timeline_limit.
+func addListRooms(roomsInLists map[string]types.RoomSubscriptionConfig, roomIDs []string, listConfig types.SlidingListConfig) {
+	for _, roomID := range roomIDs {
+		existing, exists := roomsInLists[roomID]
+		if !exists || listConfig.TimelineLimit > existing.TimelineLimit {
+			roomsInLists[roomID] = types.RoomSubscriptionConfig{
+				TimelineLimit: listConfig.TimelineLimit,
+				RequiredState: listConfig.RequiredState,
+			}
 		}
 	}
-	return true
 }
 
 // buildInterruptResponse builds a sync response for timeout/disconnect cases.
-// It processes requested lists, tracks rooms from operations, and populates room data.
+// It processes requested lists and populates room data for the ranges that changed.
 func (rp *RequestPool) buildInterruptResponse(
 	ctx context.Context,
 	v4Req *types.SlidingSyncRequest,
@@ -1864,24 +1776,14 @@ func (rp *RequestPool) buildInterruptResponse(
 		}
 		resp.Lists[listName] = list
 
-		// Track rooms that appear in list operations so we can populate room data
-		for _, op := range list.Ops {
-			if (op.Op == "SYNC" || op.Op == "INSERT") && op.RoomIDs != nil {
-				for _, roomID := range op.RoomIDs {
-					// Use the max timeline_limit if room appears in multiple lists
-					existing, exists := roomsInLists[roomID]
-					if !exists || listConfig.TimelineLimit > existing.TimelineLimit {
-						roomsInLists[roomID] = types.RoomSubscriptionConfig{
-							TimelineLimit: listConfig.TimelineLimit,
-							RequiredState: listConfig.RequiredState,
-						}
-					}
-				}
-			}
+		// Nothing filters this response by changes, so only a range whose
+		// rooms changed contributes room data.
+		if list.Changed {
+			addListRooms(roomsInLists, list.RoomIDs, listConfig)
 		}
 	}
 
-	// Populate room data for rooms that appear in list operations
+	// Populate room data for the rooms of the changed ranges
 	if ctx.Err() != nil {
 		return resp
 	}

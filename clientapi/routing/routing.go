@@ -40,20 +40,15 @@ type WellKnownClientHomeserver struct {
 	BaseUrl string `json:"base_url"`
 }
 
-type WellKnownSlidingSyncProxy struct {
-	Url string `json:"url"`
-}
-
 type WellKnownAuthentication struct {
 	Issuer  string `json:"issuer"`
 	Account string `json:"account,omitempty"`
 }
 
 type WellKnownClientResponse struct {
-	Homeserver       WellKnownClientHomeserver  `json:"m.homeserver"`
-	SlidingSyncProxy *WellKnownSlidingSyncProxy `json:"org.matrix.msc3575.proxy,omitempty"`
-	Authentication   *WellKnownAuthentication   `json:"m.authentication,omitempty"`
-	RTCFoci          []config.RTCFocus          `json:"org.matrix.msc4143.rtc_foci,omitempty"`
+	Homeserver     WellKnownClientHomeserver `json:"m.homeserver"`
+	Authentication *WellKnownAuthentication  `json:"m.authentication,omitempty"`
+	RTCFoci        []config.RTCFocus         `json:"org.matrix.msc4143.rtc_foci,omitempty"`
 }
 
 // Setup registers HTTP handlers with the given ServeMux. It also supplies the given http.Client
@@ -151,9 +146,6 @@ func Setup(
 		if cfg.Matrix.WellKnownClientName != "" {
 			logrus.Infof("Setting m.homeserver base_url as %s at /.well-known/matrix/client", cfg.Matrix.WellKnownClientName)
 		}
-		if cfg.Matrix.WellKnownSlidingSyncProxy != "" {
-			logrus.Infof("Setting org.matrix.msc3575.proxy url as %s at /.well-known/matrix/client", cfg.Matrix.WellKnownSlidingSyncProxy)
-		}
 		if oidcEnabled {
 			logrus.Infof("Setting m.authentication issuer as %s at /.well-known/matrix/client", mscCfg.MSC3861.Issuer)
 		}
@@ -163,11 +155,6 @@ func Setup(
 		wkMux.Handle("/client", httputil.MakeExternalAPI("wellknown", func(r *http.Request) util.JSONResponse {
 			response := WellKnownClientResponse{
 				Homeserver: WellKnownClientHomeserver{cfg.Matrix.WellKnownClientName},
-			}
-			if cfg.Matrix.WellKnownSlidingSyncProxy != "" {
-				response.SlidingSyncProxy = &WellKnownSlidingSyncProxy{
-					Url: cfg.Matrix.WellKnownSlidingSyncProxy,
-				}
 			}
 			if oidcEnabled {
 				response.Authentication = &WellKnownAuthentication{

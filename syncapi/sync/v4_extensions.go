@@ -93,11 +93,8 @@ func findRelevantRoomIDsForExtension(
 				// Wildcard means process all lists
 				if listKey == "*" {
 					for _, list := range actualLists {
-						// Extract room IDs from all operations (typically one SYNC op)
-						for _, op := range list.Ops {
-							for _, roomID := range op.RoomIDs {
-								relevantRoomIDs[roomID] = true
-							}
+						for _, roomID := range list.RoomIDs {
+							relevantRoomIDs[roomID] = true
 						}
 					}
 					break
@@ -105,10 +102,8 @@ func findRelevantRoomIDsForExtension(
 
 				// Specific list - only include if it exists
 				if list, exists := actualLists[listKey]; exists {
-					for _, op := range list.Ops {
-						for _, roomID := range op.RoomIDs {
-							relevantRoomIDs[roomID] = true
-						}
+					for _, roomID := range list.RoomIDs {
+						relevantRoomIDs[roomID] = true
 					}
 				}
 			}
@@ -116,10 +111,8 @@ func findRelevantRoomIDsForExtension(
 	} else {
 		// nil (omitted) = default to wildcard behavior (all lists)
 		for _, list := range actualLists {
-			for _, op := range list.Ops {
-				for _, roomID := range op.RoomIDs {
-					relevantRoomIDs[roomID] = true
-				}
+			for _, roomID := range list.RoomIDs {
+				relevantRoomIDs[roomID] = true
 			}
 		}
 	}

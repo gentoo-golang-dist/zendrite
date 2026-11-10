@@ -523,15 +523,14 @@ func TestV4ResponseHasUpdates(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "list with ops - has updates",
+			name: "list range changed - has updates",
 			response: types.SlidingSyncResponse{
 				Pos: "pos1",
 				Lists: map[string]types.SlidingList{
 					"rooms": {
-						Count: 5,
-						Ops: []types.SlidingOperation{
-							{Op: "SYNC", RoomIDs: []string{"!room1:test"}},
-						},
+						Count:   5,
+						RoomIDs: []string{"!room1:test"},
+						Changed: true,
 					},
 				},
 				Rooms:      make(map[string]types.SlidingRoomData),
@@ -540,13 +539,13 @@ func TestV4ResponseHasUpdates(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "list without ops - no updates",
+			name: "list range unchanged - no updates",
 			response: types.SlidingSyncResponse{
 				Pos: "pos1",
 				Lists: map[string]types.SlidingList{
 					"rooms": {
-						Count: 5,
-						Ops:   []types.SlidingOperation{},
+						Count:   5,
+						RoomIDs: []string{"!room1:test"},
 					},
 				},
 				Rooms:      make(map[string]types.SlidingRoomData),
@@ -773,7 +772,7 @@ func TestV4ResponseHasUpdates(t *testing.T) {
 			response: types.SlidingSyncResponse{
 				Pos: "pos1",
 				Lists: map[string]types.SlidingList{
-					"rooms": {Ops: []types.SlidingOperation{{Op: "SYNC"}}},
+					"rooms": {Changed: true},
 				},
 				Rooms: map[string]types.SlidingRoomData{
 					"!room1:test": {},

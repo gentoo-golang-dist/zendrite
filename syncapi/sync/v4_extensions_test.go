@@ -21,16 +21,12 @@ func TestFindRelevantRoomIDsForExtension(t *testing.T) {
 	// Setup common test data
 	actualLists := map[string]types.SlidingList{
 		"rooms": {
-			Count: 3,
-			Ops: []types.SlidingOperation{
-				{Op: "SYNC", RoomIDs: []string{"!room1:test", "!room2:test", "!room3:test"}},
-			},
+			Count:   3,
+			RoomIDs: []string{"!room1:test", "!room2:test", "!room3:test"},
 		},
 		"dms": {
-			Count: 2,
-			Ops: []types.SlidingOperation{
-				{Op: "SYNC", RoomIDs: []string{"!dm1:test", "!dm2:test"}},
-			},
+			Count:   2,
+			RoomIDs: []string{"!dm1:test", "!dm2:test"},
 		},
 	}
 
@@ -209,18 +205,15 @@ func TestFindRelevantRoomIDsForExtension(t *testing.T) {
 			requestedRooms: []string{},
 			actualLists: map[string]types.SlidingList{
 				"multi": {
-					Count: 4,
-					Ops: []types.SlidingOperation{
-						{Op: "SYNC", RoomIDs: []string{"!a:test", "!b:test"}},
-						{Op: "SYNC", RoomIDs: []string{"!c:test", "!d:test"}},
-					},
+					Count:   4,
+					RoomIDs: []string{"!a:test", "!b:test", "!c:test", "!d:test"},
 				},
 			},
 			actualRoomSubscriptions: map[string]bool{},
 			wantRoomIDs: map[string]bool{
 				"!a:test": true, "!b:test": true, "!c:test": true, "!d:test": true,
 			},
-			description: "Rooms from all operations in a list are included",
+			description: "Every room in a list's range is included",
 		},
 	}
 
@@ -246,9 +239,7 @@ func TestFindRelevantRoomIDsForExtensionDeduplication(t *testing.T) {
 	// Room appears in both list and subscription
 	actualLists := map[string]types.SlidingList{
 		"rooms": {
-			Ops: []types.SlidingOperation{
-				{Op: "SYNC", RoomIDs: []string{"!shared:test", "!listonly:test"}},
-			},
+			RoomIDs: []string{"!shared:test", "!listonly:test"},
 		},
 	}
 	actualSubscriptions := map[string]bool{

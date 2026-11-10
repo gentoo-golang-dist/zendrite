@@ -59,10 +59,6 @@ type Global struct {
 	// The server name to delegate client-server communications to, with optional port
 	WellKnownClientName string `yaml:"well_known_client_name"`
 
-	// The server name to delegate sliding sync communications to, with optional port.
-	// Requires `well_known_client_name` to also be configured.
-	WellKnownSlidingSyncProxy string `yaml:"well_known_sliding_sync_proxy"`
-
 	// MatrixRTC focus servers for VoIP/video calls (MSC4143).
 	// Advertised in .well-known/matrix/client as org.matrix.msc4143.rtc_foci
 	RTCFoci []RTCFocus `yaml:"rtc_foci,omitempty"`

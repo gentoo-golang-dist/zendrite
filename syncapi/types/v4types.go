@@ -232,33 +232,25 @@ type SlidingSyncResponse struct {
 	Extensions *ExtensionResponse `json:"extensions,omitempty"`
 }
 
-// SlidingList represents a list result with operations.
+// SlidingList is a list result. Per MSC4186 only the count goes on the
+// wire: clients order rooms by bump_stamp themselves, so the MSC3575 list
+// operations (SYNC, INSERT, DELETE, INVALIDATE) are not sent.
 type SlidingList struct {
 	// Total count of rooms matching filters
 	Count int `json:"count"`
 
-	// Operations describing how to update the list
-	Ops []SlidingOperation `json:"ops,omitempty"`
+	// RoomIDs holds the rooms inside the list's range, in order. They are
+	// the rooms the response carries data for and that extensions cover.
+	RoomIDs []string `json:"-"`
+
+	// Changed reports whether the rooms inside the range differ from the
+	// ones last sent on this connection, which ends a long poll.
+	Changed bool `json:"-"`
 
 	// MatchedRoomIDs holds every room the list's filters match, beyond its
 	// window. Extensions that cover every room the client is interested in,
 	// such as sticky events, read it.
 	MatchedRoomIDs []string `json:"-"`
-}
-
-// SlidingOperation describes a change to a room list.
-type SlidingOperation struct {
-	// Operation type: "SYNC", "INSERT", "DELETE", "INVALIDATE"
-	Op string `json:"op"`
-
-	// Range [start, end] for SYNC/INVALIDATE operations
-	Range []int `json:"range,omitempty"`
-
-	// Index for INSERT/DELETE operations
-	Index *int `json:"index,omitempty"`
-
-	// Room IDs for SYNC/INSERT operations
-	RoomIDs []string `json:"room_ids,omitempty"`
 }
 
 // SlidingRoomData represents room data in the response.
