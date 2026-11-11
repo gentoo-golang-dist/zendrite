@@ -307,6 +307,10 @@ type ClientRoomserverAPI interface {
 	// QueryKnownUsers returns a list of users that we know about from our joined rooms.
 	QueryKnownUsers(ctx context.Context, req *QueryKnownUsersRequest, res *QueryKnownUsersResponse) error
 	QueryRoomVersionForRoom(ctx context.Context, roomID string) (gomatrixserverlib.RoomVersion, error)
+	// QueryEventOrdering returns the position of each given event that is
+	// stored in the room. Unknown events and events in other rooms are
+	// left out of the map.
+	QueryEventOrdering(ctx context.Context, roomID string, eventIDs []string) (map[string]EventOrdering, error)
 	QueryPublishedRooms(ctx context.Context, req *QueryPublishedRoomsRequest, res *QueryPublishedRoomsResponse) error
 
 	GetRoomIDForAlias(ctx context.Context, req *GetRoomIDForAliasRequest, res *GetRoomIDForAliasResponse) error

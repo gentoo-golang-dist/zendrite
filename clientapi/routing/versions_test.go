@@ -51,6 +51,7 @@ func TestVersions(t *testing.T) {
 		"uk.timedout.msc4491.create_room_invite_reasons": true,
 		"io.element.msc4502":                             false,
 		"org.matrix.msc3874":                             true,
+		"com.beeper.msc4446":                             true,
 		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,
 		// MSC4445: initial sync timelines in topological order.
 		"org.matrix.msc4445.initial_sync_timeline_topological_ordering": true,

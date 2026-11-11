@@ -160,40 +160,35 @@ func SaveReadMarker(
 		return *resErr
 	}
 
-	var r eventutil.ReadMarkerJSON
+	var r struct {
+		eventutil.ReadMarkerJSON
+		AllowBackward json.RawMessage `json:"com.beeper.allow_backward"`
+	}
 	resErr = httputil.UnmarshalJSONRequest(req, &r)
+	if resErr != nil {
+		return *resErr
+	}
+	// MSC4446: com.beeper.allow_backward lets m.fully_read move backwards.
+	// Read receipts are not affected by it.
+	allowBackward, resErr := parseAllowBackward(r.AllowBackward)
 	if resErr != nil {
 		return *resErr
 	}
 
 	if r.FullyRead != "" {
-		data, err := json.Marshal(fullyReadEvent{EventID: r.FullyRead})
-		if err != nil {
-			return util.JSONResponse{
-				Code: http.StatusInternalServerError,
-				JSON: spec.InternalServerError{},
-			}
-		}
-
-		dataReq := api.InputAccountDataRequest{
-			UserID:      device.UserID,
-			DataType:    "m.fully_read",
-			RoomID:      roomID,
-			AccountData: data,
-		}
-		dataRes := api.InputAccountDataResponse{}
-		if err := userAPI.InputAccountData(req.Context(), &dataReq, &dataRes); err != nil {
-			util.GetLogger(req.Context()).WithError(err).Error("userAPI.InputAccountData failed")
-			return util.ErrorResponse(err)
+		if resErr = setFullyRead(req.Context(), rsAPI, userAPI, device.UserID, roomID, r.FullyRead, allowBackward); resErr != nil {
+			return *resErr
 		}
 	}
 
 	// Handle the read receipts that may be included in the read marker.
-	if r.Read != "" {
-		return setReceipt(req, userAPI, syncProducer, device, roomID, "m.read", r.Read, "")
-	}
-	if r.ReadPrivate != "" {
-		return setReceipt(req, userAPI, syncProducer, device, roomID, "m.read.private", r.ReadPrivate, "")
+	for _, receipt := range [][2]string{{"m.read", r.Read}, {"m.read.private", r.ReadPrivate}} {
+		if receipt[1] == "" {
+			continue
+		}
+		if res := setReceipt(req, syncProducer, device, roomID, receipt[0], receipt[1], ""); res.Code != http.StatusOK {
+			return res
+		}
 	}
 
 	return util.JSONResponse{

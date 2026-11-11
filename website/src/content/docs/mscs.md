@@ -137,6 +137,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC4308](https://github.com/matrix-org/matrix-spec-proposals/pull/4308) | Sliding sync extension: thread subscriptions | N/A | Implemented (unstable prefix): the `io.element.msc4308.thread_subscriptions` extension and `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions` |
 | [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) | Threading (generic relationships) | N/A | Opt-in (`msc2836`) |
 | [MSC2285](https://github.com/matrix-org/matrix-spec-proposals/pull/2285) | Private read receipts | 1.4 | Implemented |
+| [MSC4446](https://github.com/matrix-org/matrix-spec-proposals/pull/4446) | Allow moving the fully read marker to older events | N/A | Implemented (unstable prefix): see [moving the fully read marker backwards](#moving-the-fully-read-marker-backwards) |
 | [MSC2174](https://github.com/matrix-org/matrix-spec-proposals/pull/2174) | Move the `redacts` property to `content` | 1.8 | Implemented: from room version 11, redactions are applied from `content.redacts` and the top-level key is ignored. Clients receive `redacts` both at the top level and in `content` in every room version |
 | [MSC2815](https://github.com/matrix-org/matrix-spec-proposals/pull/2815) | Allow room moderators to view redacted event content | N/A | Implemented (unstable prefix): see [redacted event content for moderators](#redacted-event-content-for-moderators) |
 | [MSC3389](https://github.com/matrix-org/matrix-spec-proposals/pull/3389) | Redaction changes for events with a relation | N/A | Implemented (unstable room version): see [relation redactions](#relation-redactions) |
@@ -225,6 +226,23 @@ Its `subscribed` and `unsubscribed` maps hold the latest state of each changed t
 An initial request returns the latest changes of all time.
 When older changes were left out, `prev_batch` is a token for `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions?dir=b&from=...&to=...`, which pages backwards with the same limits and returns `end` while there may be more; `to` takes a thread subscriptions token or a sliding sync `pos`.
 A change wakes the user's waiting sliding sync requests, and the `/sync` token carries the stream's position without returning its changes.
+
+### Moving the fully read marker backwards
+
+Zendrite implements MSC4446 with Synapse's unstable names and advertises `com.beeper.msc4446` in `unstable_features`.
+By default, `POST /rooms/{roomId}/read_markers` and `POST /rooms/{roomId}/receipt/m.fully_read/{eventId}` only move `m.fully_read` forward, as Synapse does: an event at or before the current marker leaves the marker as it is, and the request still succeeds with 200.
+Before MSC4446, Zendrite moved the marker to whatever event a client sent.
+Events are ordered by depth, with the order in which the server stored them breaking ties, like Synapse's `(topological_ordering, stream_ordering)`.
+
+- `"com.beeper.allow_backward": true` in the request body lets either endpoint move `m.fully_read` to an older event.
+- On `/read_markers`, the flag only applies to `m.fully_read`; `m.read` and `m.read.private` in the same request are handled as without it.
+- On `/receipt/{receiptType}/{eventId}`, `true` with any receipt type other than `m.fully_read` is 400 `M_INVALID_PARAM` (`com.beeper.allow_backward is only allowed to be true for m.fully_read.`).
+- Any value other than `true` or `false` is 400 `M_INVALID_PARAM` on both endpoints.
+- `m.fully_read` must name an event the server has in the room, as in Synapse; anything else is 404 `M_UNKNOWN`.
+  A current marker whose event the server no longer has counts as older than any event.
+- Updates of one user's marker in one room are handled one at a time on each server, as Synapse's linearizer does.
+
+Read receipts (`m.read`, `m.read.private`) still replace the previous receipt even when they point at an older event; Synapse ignores such receipts.
 
 ## Rooms & Spaces
 

@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"codefloe.com/pat-s/zendrite/clientapi/producers"
@@ -26,6 +30,16 @@ func (q receiptEventQuery) QueryEventsByID(_ context.Context, req *roomapi.Query
 		}
 	}
 	return nil
+}
+
+func (q receiptEventQuery) QueryEventOrdering(_ context.Context, roomID string, eventIDs []string) (map[string]roomapi.EventOrdering, error) {
+	orderings := map[string]roomapi.EventOrdering{}
+	for i, event := range q.events {
+		if event.RoomID().String() == roomID && slices.Contains(eventIDs, event.EventID()) {
+			orderings[event.EventID()] = roomapi.EventOrdering{Depth: event.Depth(), EventNID: int64(i + 1)}
+		}
+	}
+	return orderings, nil
 }
 
 type receiptPublisher struct {
@@ -95,5 +109,145 @@ func TestSetThreadedReceipt(t *testing.T) {
 				require.Equal(t, tc.receiptType, pub.messages[0].Header.Get("type"))
 			}
 		})
+	}
+}
+
+type readMarkerRoomserver struct {
+	roomapi.ClientRoomserverAPI
+}
+
+func (readMarkerRoomserver) QueryMembershipForUser(_ context.Context, _ *roomapi.QueryMembershipForUserRequest, res *roomapi.QueryMembershipForUserResponse) error {
+	res.IsInRoom = true
+	return nil
+}
+
+// TestSaveReadMarkerSendsBothReceipts checks that /read_markers stores m.read
+// and m.read.private when a request carries both, and that MSC4446's
+// allow_backward is validated there.
+func TestSaveReadMarkerSendsBothReceipts(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	event := room.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "hi"})
+	for _, tc := range []struct {
+		name, body string
+		wantCode   int
+		wantTypes  []string
+	}{
+		{name: "both", body: `{"m.read":"` + event.EventID() + `","m.read.private":"` + event.EventID() + `"}`, wantCode: 200, wantTypes: []string{"m.read", "m.read.private"}},
+		{name: "allow_backward with receipts", body: `{"m.read":"` + event.EventID() + `","com.beeper.allow_backward":true}`, wantCode: 200, wantTypes: []string{"m.read"}},
+		{name: "allow_backward string", body: `{"m.read":"` + event.EventID() + `","com.beeper.allow_backward":"true"}`, wantCode: 400},
+		{name: "allow_backward null", body: `{"m.read":"` + event.EventID() + `","com.beeper.allow_backward":null}`, wantCode: 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &receiptPublisher{}
+			producer := &producers.SyncAPIProducer{JetStream: pub}
+			req := httptest.NewRequest("POST", "/read_markers", strings.NewReader(tc.body))
+			res := SaveReadMarker(req, nil, readMarkerRoomserver{}, producer, &userapi.Device{UserID: alice.ID}, room.ID)
+			require.Equal(t, tc.wantCode, res.Code)
+			var types []string
+			for _, msg := range pub.messages {
+				types = append(types, msg.Header.Get("type"))
+			}
+			require.Equal(t, tc.wantTypes, types)
+			if tc.wantCode == 400 {
+				raw, err := json.Marshal(res.JSON)
+				require.NoError(t, err)
+				require.Contains(t, string(raw), "M_INVALID_PARAM")
+				require.Contains(t, string(raw), "com.beeper.allow_backward must be a boolean.")
+			}
+		})
+	}
+}
+
+// TestSetReceiptAllowBackward checks MSC4446's validation on /receipt.
+func TestSetReceiptAllowBackward(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	event := room.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "hi"})
+	query := receiptEventQuery{events: []*roomtypes.HeaderedEvent{event}}
+	for _, tc := range []struct {
+		name, body, receiptType, wantError string
+	}{
+		{name: "read true", body: `{"com.beeper.allow_backward":true}`, receiptType: "m.read", wantError: "com.beeper.allow_backward is only allowed to be true for m.fully_read."},
+		{name: "private true", body: `{"com.beeper.allow_backward":true}`, receiptType: "m.read.private", wantError: "com.beeper.allow_backward is only allowed to be true for m.fully_read."},
+		{name: "read false", body: `{"com.beeper.allow_backward":false}`, receiptType: "m.read"},
+		{name: "fully read number", body: `{"com.beeper.allow_backward":1}`, receiptType: "m.fully_read", wantError: "com.beeper.allow_backward must be a boolean."},
+		{name: "read null", body: `{"com.beeper.allow_backward":null}`, receiptType: "m.read", wantError: "com.beeper.allow_backward must be a boolean."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pub := &receiptPublisher{}
+			producer := &producers.SyncAPIProducer{JetStream: pub}
+			req := httptest.NewRequest("POST", "/receipt", strings.NewReader(tc.body))
+			res := SetReceipt(req, query, nil, producer, &userapi.Device{UserID: alice.ID}, room.ID, tc.receiptType, event.EventID())
+			if tc.wantError == "" {
+				require.Equal(t, 200, res.Code)
+				require.Len(t, pub.messages, 1)
+				return
+			}
+			require.Equal(t, 400, res.Code)
+			raw, err := json.Marshal(res.JSON)
+			require.NoError(t, err)
+			require.Contains(t, string(raw), "M_INVALID_PARAM")
+			require.Contains(t, string(raw), tc.wantError)
+			require.Empty(t, pub.messages)
+		})
+	}
+}
+
+// fullyReadUserAPI stores m.fully_read in memory. After reading,
+// QueryAccountData waits briefly for a second caller, so that unserialised
+// updates would both act on the same old marker.
+type fullyReadUserAPI struct {
+	userapi.ClientUserAPI
+	mu      sync.Mutex
+	marker  json.RawMessage
+	arrived chan struct{}
+	// slow is an event whose write is delayed, so that it lands last.
+	slow string
+}
+
+func (u *fullyReadUserAPI) QueryAccountData(_ context.Context, req *userapi.QueryAccountDataRequest, res *userapi.QueryAccountDataResponse) error {
+	u.mu.Lock()
+	res.RoomAccountData = map[string]map[string]json.RawMessage{req.RoomID: {"m.fully_read": u.marker}}
+	u.mu.Unlock()
+	select {
+	case u.arrived <- struct{}{}:
+	case <-u.arrived:
+	case <-time.After(20 * time.Millisecond):
+	}
+	return nil
+}
+
+func (u *fullyReadUserAPI) InputAccountData(_ context.Context, req *userapi.InputAccountDataRequest, _ *userapi.InputAccountDataResponse) error {
+	if strings.Contains(string(req.AccountData), u.slow) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.marker = req.AccountData
+	return nil
+}
+
+// TestSetFullyReadSerialised checks that concurrent forward-only updates of
+// one user's marker in one room do not race each other backwards.
+func TestSetFullyReadSerialised(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	first := room.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "1"})
+	second := room.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "2"})
+	third := room.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "3"})
+	query := receiptEventQuery{events: []*roomtypes.HeaderedEvent{first, second, third}}
+	for range 5 {
+		userAPI := &fullyReadUserAPI{marker: json.RawMessage(`{"event_id":"` + first.EventID() + `"}`), arrived: make(chan struct{}), slow: second.EventID()}
+		var wg sync.WaitGroup
+		for _, eventID := range []string{third.EventID(), second.EventID()} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				assert.Nil(t, setFullyRead(context.Background(), query, userAPI, alice.ID, room.ID, eventID, false))
+			}()
+		}
+		wg.Wait()
+		require.JSONEq(t, `{"event_id":"`+third.EventID()+`"}`, string(userAPI.marker))
 	}
 }

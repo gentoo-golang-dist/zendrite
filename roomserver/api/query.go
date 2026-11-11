@@ -97,6 +97,22 @@ type QueryEventsByIDRequest struct {
 	ExcludeRejected bool `json:"exclude_rejected"`
 }
 
+// EventOrdering is an event's position in a room: its depth, then the order
+// in which the roomserver stored it. It is the equivalent of Synapse's
+// (topological_ordering, stream_ordering) pair.
+type EventOrdering struct {
+	Depth    int64
+	EventNID int64
+}
+
+// Before reports whether o sorts before other.
+func (o EventOrdering) Before(other EventOrdering) bool {
+	if o.Depth != other.Depth {
+		return o.Depth < other.Depth
+	}
+	return o.EventNID < other.EventNID
+}
+
 // QueryEventsByIDResponse is a response to QueryEventsByID.
 type QueryEventsByIDResponse struct {
 	// A list of events with the requested IDs.

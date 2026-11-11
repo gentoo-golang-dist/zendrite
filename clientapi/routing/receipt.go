@@ -24,7 +24,13 @@ import (
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
-func SetReceipt(req *http.Request, rsAPI receipts.EventQuerier, userAPI userapi.ClientUserAPI, syncProducer *producers.SyncAPIProducer, device *userapi.Device, roomID, receiptType, eventID string) util.JSONResponse {
+// ReceiptQuerier is what SetReceipt needs from the roomserver.
+type ReceiptQuerier interface {
+	receipts.EventQuerier
+	EventOrderingQuerier
+}
+
+func SetReceipt(req *http.Request, rsAPI ReceiptQuerier, userAPI userapi.ClientUserAPI, syncProducer *producers.SyncAPIProducer, device *userapi.Device, roomID, receiptType, eventID string) util.JSONResponse {
 	var body map[string]json.RawMessage
 	if req.Body != nil {
 		data, err := io.ReadAll(req.Body)
@@ -36,6 +42,14 @@ func SetReceipt(req *http.Request, rsAPI receipts.EventQuerier, userAPI userapi.
 				return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON("Expected a JSON object")}
 			}
 		}
+	}
+	// MSC4446: only m.fully_read may move backwards.
+	allowBackward, errRes := parseAllowBackward(body[allowBackwardField])
+	if errRes != nil {
+		return *errRes
+	}
+	if allowBackward && receiptType != "m.fully_read" {
+		return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.InvalidParam(allowBackwardField + " is only allowed to be true for m.fully_read.")}
 	}
 	var threadID string
 	if raw, present := body["thread_id"]; present {
@@ -53,10 +67,16 @@ func SetReceipt(req *http.Request, rsAPI receipts.EventQuerier, userAPI userapi.
 			return util.ErrorResponse(err)
 		}
 	}
-	return setReceipt(req, userAPI, syncProducer, device, roomID, receiptType, eventID, threadID)
+	if receiptType == "m.fully_read" {
+		if errRes := setFullyRead(req.Context(), rsAPI, userAPI, device.UserID, roomID, eventID, allowBackward); errRes != nil {
+			return *errRes
+		}
+		return util.JSONResponse{Code: http.StatusOK, JSON: struct{}{}}
+	}
+	return setReceipt(req, syncProducer, device, roomID, receiptType, eventID, threadID)
 }
 
-func setReceipt(req *http.Request, userAPI userapi.ClientUserAPI, syncProducer *producers.SyncAPIProducer, device *userapi.Device, roomID, receiptType, eventID, threadID string) util.JSONResponse {
+func setReceipt(req *http.Request, syncProducer *producers.SyncAPIProducer, device *userapi.Device, roomID, receiptType, eventID, threadID string) util.JSONResponse {
 	timestamp := spec.AsTimestamp(time.Now())
 	logrus.WithFields(logrus.Fields{
 		"roomID":      roomID,
@@ -69,27 +89,6 @@ func setReceipt(req *http.Request, userAPI userapi.ClientUserAPI, syncProducer *
 	switch receiptType {
 	case "m.read", "m.read.private":
 		if err := syncProducer.SendReceipt(req.Context(), device.UserID, roomID, eventID, receiptType, threadID, timestamp); err != nil {
-			return util.ErrorResponse(err)
-		}
-
-	case "m.fully_read":
-		data, err := json.Marshal(fullyReadEvent{EventID: eventID})
-		if err != nil {
-			return util.JSONResponse{
-				Code: http.StatusInternalServerError,
-				JSON: spec.InternalServerError{},
-			}
-		}
-
-		dataReq := userapi.InputAccountDataRequest{
-			UserID:      device.UserID,
-			DataType:    "m.fully_read",
-			RoomID:      roomID,
-			AccountData: data,
-		}
-		dataRes := userapi.InputAccountDataResponse{}
-		if err := userAPI.InputAccountData(req.Context(), &dataReq, &dataRes); err != nil {
-			util.GetLogger(req.Context()).WithError(err).Error("userAPI.InputAccountData failed")
 			return util.ErrorResponse(err)
 		}
 

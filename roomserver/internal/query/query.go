@@ -236,6 +236,31 @@ func (r *Queryer) QueryEventsByID(
 	return nil
 }
 
+// QueryEventOrdering returns the depth and event NID of each given event
+// stored in the room. Like Synapse's get_event_ordering it does not look at
+// whether an event was rejected or is an outlier.
+func (r *Queryer) QueryEventOrdering(ctx context.Context, roomID string, eventIDs []string) (map[string]api.EventOrdering, error) {
+	orderings := make(map[string]api.EventOrdering, len(eventIDs))
+	if len(eventIDs) == 0 {
+		return orderings, nil
+	}
+	roomInfo, err := r.DB.RoomInfo(ctx, roomID)
+	if err != nil || roomInfo == nil {
+		return orderings, err
+	}
+	events, err := r.DB.EventsFromIDs(ctx, roomInfo, eventIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range events {
+		if event.RoomID().String() != roomID {
+			continue
+		}
+		orderings[event.EventID()] = api.EventOrdering{Depth: event.Depth(), EventNID: int64(event.EventNID)}
+	}
+	return orderings, nil
+}
+
 // filterRejectedEvents drops events that are stored but marked rejected.
 // StateEntriesForEventIDs(excludeRejected=true) returns one entry per present,
 // non-rejected event ID, so its NID set identifies exactly the events that must
