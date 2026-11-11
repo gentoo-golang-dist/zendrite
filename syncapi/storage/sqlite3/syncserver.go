@@ -120,6 +120,10 @@ func (d *SyncServerDatasource) prepare(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	eventLabels, err := NewSqliteEventLabelsTable(d.db)
+	if err != nil {
+		return err
+	}
 	slidingSync, err := NewSqliteSlidingSyncTable(d.db)
 	if err != nil {
 		return err
@@ -151,6 +155,10 @@ func (d *SyncServerDatasource) prepare(ctx context.Context) (err error) {
 		sqlutil.Migration{
 			Version: "syncapi: exclude events announced long after they were sent from sync",
 			Up:      deltas.UpExcludeRepairedEvents, // Requires output_room_events and its topology to be created.
+		},
+		sqlutil.Migration{
+			Version: "syncapi: store the labels of stored events (MSC2326)",
+			Up:      deltas.UpEventLabels, // Requires output_room_events and event_labels to be created.
 		},
 	)
 	err = m.Up(ctx)
@@ -186,6 +194,7 @@ func (d *SyncServerDatasource) prepare(ctx context.Context) (err error) {
 		SlidingSyncRoomMetadata: slidingSyncRoomMetadata,
 		UnPartialStatedRooms:    unPartialStatedRooms,
 		StickyEvents:            stickyEvents,
+		EventLabels:             eventLabels,
 		ProfileUpdates:          profileUpdates,
 	}
 	return nil

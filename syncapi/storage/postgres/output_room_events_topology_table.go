@@ -75,7 +75,7 @@ const selectEventIDsBeforeStreamSQL = "" +
 // breaking ties, among the events the stream delivered up to $2. It reads
 // the topology table through its (room_id, topological_position,
 // stream_position) index, latest first.
-const selectRecentEventsByTopologySQL = `
+var selectRecentEventsByTopologySQL = `
 WITH room_ids AS (
      SELECT unnest($1::text[]) AS room_id
 )
@@ -93,6 +93,8 @@ FROM room_ids,
                       AND ( $4::text[] IS NULL OR NOT(e.sender  = ANY($4)) )
                       AND ( $5::text[] IS NULL OR     e.type LIKE ANY($5)  )
                       AND ( $6::text[] IS NULL OR NOT(e.type LIKE ANY($6)) )
+                      ` + relationLabelFilterSQL("e.event_id", 8) + //nolint:mnd // the parameters after the others
+	`
                     ORDER BY t.topological_position DESC, t.stream_position DESC
                     LIMIT $7
               ) AS x
@@ -275,14 +277,14 @@ func (s *outputRoomEventsTopologyStatements) SelectRecentEventsByTopology(
 	roomIDs []string, to types.StreamPosition, eventFilter *synctypes.RoomEventFilter,
 ) (map[string]types.RecentEvents, error) {
 	senders, notSenders := getSendersRoomEventFilter(eventFilter)
-	params := []any{
+	params := withRelationLabelArgs(eventFilter,
 		roomIDs, to,
 		senders,
 		notSenders,
 		filterConvertTypeWildcardToSQL(eventFilter.Types),
 		filterConvertTypeWildcardToSQL(eventFilter.NotTypes),
-		eventFilter.Limit + 1,
-	}
+		eventFilter.Limit+1,
+	)
 	// Not prepared with the others, as it reads a table that may not exist
 	// yet when this one is set up.
 	var rows *sql.Rows

@@ -118,3 +118,32 @@ func TestFilterHeaderedEvents(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+// Backfilled events are filtered in memory by relation type (MSC3874) and
+// label (MSC2326), as the database filters stored ones.
+func TestFilterHeaderedEventsByRelationAndLabel(t *testing.T) {
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice)
+	root := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "root", "org.matrix.labels": []string{"#fun"}})
+	thread := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{
+		"body": "thread", "m.relates_to": map[string]any{"rel_type": "m.thread", "event_id": root.EventID()},
+	})
+	events := []*rstypes.HeaderedEvent{root, thread}
+	aliceID := spec.NewUserIDOrPanic(alice.ID, true)
+	for _, ev := range events {
+		ev.UserID = aliceID
+	}
+	list := func(values ...string) *[]string { return &values }
+	ids := func(events []*rstypes.HeaderedEvent) []string {
+		var out []string
+		for _, ev := range events {
+			out = append(out, ev.EventID())
+		}
+		return out
+	}
+
+	assert.Equal(t, []string{thread.EventID()}, ids(filterHeaderedEvents(events, &synctypes.RoomEventFilter{RelTypes: list("m.thread")})))
+	assert.Equal(t, []string{root.EventID()}, ids(filterHeaderedEvents(events, &synctypes.RoomEventFilter{NotRelTypes: list("m.thread")})))
+	assert.Equal(t, []string{root.EventID()}, ids(filterHeaderedEvents(events, &synctypes.RoomEventFilter{Labels: list("#fun")})))
+	assert.Equal(t, []string{thread.EventID()}, ids(filterHeaderedEvents(events, &synctypes.RoomEventFilter{NotLabels: list("#fun")})))
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
+	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 )
 
 type FilterOrder int
@@ -105,4 +106,44 @@ func prepareWithFilters(
 		return nil, nil, fmt.Errorf("s.db.Prepare: %w", err)
 	}
 	return stmt, params, nil
+}
+
+// withRelationLabelFilters appends to query the conditions of a room event
+// filter's relation types (MSC3874) and labels (MSC2326) on the event whose ID
+// is in eventIDColumn, and to params their parameters, numbered after the
+// existing ones. An event without a relation never matches rel_types and
+// always passes not_rel_types, as in Synapse.
+func withRelationLabelFilters(
+	query string, params []any, filter *synctypes.RoomEventFilter, eventIDColumn string,
+) (string, []any) {
+	if filter == nil {
+		return query, params
+	}
+	condition := func(values *[]string, not bool, from string) {
+		if values == nil {
+			return
+		}
+		exists := " AND EXISTS"
+		if not {
+			exists = " AND NOT EXISTS"
+		}
+		if len(*values) == 0 {
+			if !not {
+				// An empty list of values to keep matches nothing.
+				query += " AND 0"
+			}
+			return
+		}
+		query += exists + " (" + fmt.Sprintf(from, eventIDColumn) + sqlutil.QueryVariadicOffset(len(*values), len(params)) + ")"
+		for _, v := range *values {
+			params = append(params, v)
+		}
+	}
+	const relations = "SELECT 1 FROM syncapi_relations rel WHERE rel.child_event_id = %s AND rel.rel_type IN "
+	const labels = "SELECT 1 FROM syncapi_event_labels lbl WHERE lbl.event_id = %s AND lbl.label IN "
+	condition(filter.RelTypes, false, relations)
+	condition(filter.NotRelTypes, true, relations)
+	condition(filter.Labels, false, labels)
+	condition(filter.NotLabels, true, labels)
+	return query, params
 }

@@ -783,6 +783,9 @@ func (d *Database) PurgeRoom(ctx context.Context, roomID string) error {
 		if err := d.StickyEvents.PurgeStickyEvents(ctx, txn, roomID); err != nil {
 			return fmt.Errorf("failed to purge sticky events: %w", err)
 		}
+		if err := d.EventLabels.PurgeEventLabels(ctx, txn, roomID); err != nil {
+			return fmt.Errorf("failed to purge event labels: %w", err)
+		}
 		return nil
 	})
 }

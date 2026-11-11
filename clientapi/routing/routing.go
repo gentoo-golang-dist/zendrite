@@ -115,6 +115,7 @@ func Setup(
 		"fi.mau.msc2815":                true, // MSC2815: moderators viewing redacted event content
 		// MSC4491: uk.timedout.msc4491.invite_reason in createRoom.
 		"uk.timedout.msc4491.create_room_invite_reasons": true,
+		"org.matrix.msc3874":                             true, // MSC3874: relation type filters for /messages
 		// MSC4445: the timeline of a room a sync sends for the first time is
 		// in topological order.
 		"org.matrix.msc4445.initial_sync_timeline_topological_ordering": true,

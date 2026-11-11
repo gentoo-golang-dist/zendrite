@@ -54,6 +54,7 @@ type Database struct {
 	SlidingSyncRoomMetadata tables.SlidingSyncRoomMetadata
 	UnPartialStatedRooms    tables.UnPartialStatedRooms
 	StickyEvents            tables.StickyEvents
+	EventLabels             tables.EventLabels
 	ProfileUpdates          tables.ProfileUpdates
 }
 
@@ -293,6 +294,10 @@ func (d *Database) WriteEvent(
 			return fmt.Errorf("d.handleBackwardExtremities: %w", err)
 		}
 
+		if err = d.writeRelationAndLabels(ctx, txn, ev); err != nil {
+			return err
+		}
+
 		if len(addStateEvents) == 0 && len(removeStateEventIDs) == 0 {
 			// Nothing to do, the event may have just been a message event.
 			return nil
@@ -393,6 +398,10 @@ func (d *Database) RedactEvent(ctx context.Context, redactedEventID string, reda
 	newEvent := &rstypes.HeaderedEvent{PDU: eventToRedact}
 	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		if err = d.OutputEvents.UpdateEventJSON(ctx, txn, newEvent); err != nil {
+			return err
+		}
+		// Redaction strips the labels (MSC2326).
+		if err = d.EventLabels.DeleteEventLabels(ctx, txn, redactedEventID); err != nil {
 			return err
 		}
 		// Redaction strips the sticky key, so the event stops being sticky.
@@ -711,6 +720,34 @@ func (d *Database) UpdateRelations(ctx context.Context, event *rstypes.HeaderedE
 			)
 		})
 	}
+}
+
+// writeRelationAndLabels stores the relation and the labels of an event in
+// the transaction that stores the event, so that the relation type (MSC3874)
+// and label (MSC2326) filters see the event with them as soon as it is
+// visible.
+func (d *Database) writeRelationAndLabels(ctx context.Context, txn *sql.Tx, ev *rstypes.HeaderedEvent) error {
+	if ev.Type() == spec.MRoomRedaction {
+		return nil
+	}
+	content := ev.Content()
+	if labels := synctypes.EventLabels(content); len(labels) > 0 {
+		if err := d.EventLabels.InsertEventLabels(ctx, txn, ev.RoomID().String(), ev.EventID(), labels); err != nil {
+			return fmt.Errorf("d.EventLabels.InsertEventLabels: %w", err)
+		}
+	}
+	var relation gomatrixserverlib.RelationContent
+	if json.Unmarshal(content, &relation) != nil || relation.Relations == nil ||
+		relation.Relations.EventID == "" || relation.Relations.RelationType == "" {
+		return nil
+	}
+	if err := d.Relations.InsertRelation(
+		ctx, txn, ev.RoomID().String(), relation.Relations.EventID,
+		ev.EventID(), ev.Type(), relation.Relations.RelationType,
+	); err != nil {
+		return fmt.Errorf("d.Relations.InsertRelation: %w", err)
+	}
+	return nil
 }
 
 func (d *Database) RedactRelations(ctx context.Context, roomID, redactedEventID string) error {

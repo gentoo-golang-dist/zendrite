@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS syncapi_relations (
 	rel_type TEXT NOT NULL,
 	UNIQUE (room_id, event_id, child_event_id, rel_type)
 );
+-- Finds the relation of an event, for the relation type filters of room
+-- event filters (MSC3874).
+CREATE INDEX IF NOT EXISTS syncapi_relations_child_event_id_idx ON syncapi_relations(child_event_id, rel_type);
 `
 
 const insertRelationSQL = "" +

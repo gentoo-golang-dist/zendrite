@@ -7,6 +7,7 @@
 package postgres
 
 import (
+	"fmt"
 	"strings"
 
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
@@ -49,4 +50,51 @@ func getSendersStateFilterFilter(filter *synctypes.StateFilter) (senders []strin
 		notSenders = *filter.NotSenders
 	}
 	return senders, notSenders
+}
+
+// optionalStrings passes a filter list to a query: NULL when the filter
+// leaves it out, and an array, possibly empty, when it is set.
+func optionalStrings(values *[]string) []string {
+	if values == nil {
+		return nil
+	}
+	if *values == nil {
+		return []string{}
+	}
+	return *values
+}
+
+// relationLabelFilterSQL returns the conditions of a room event filter's
+// relation types (MSC3874) and labels (MSC2326) on the event whose ID is in
+// eventIDColumn, taking the lists from relationLabelFilterArgs as the
+// parameters numbered from first. An event without a relation never matches
+// rel_types and always passes not_rel_types, as in Synapse.
+func relationLabelFilterSQL(eventIDColumn string, first int) string {
+	conditions := []string{
+		"$%[2]d::text[] IS NULL OR EXISTS (SELECT 1 FROM syncapi_relations rel WHERE rel.child_event_id = %[1]s AND rel.rel_type = ANY($%[2]d))",
+		"$%[2]d::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM syncapi_relations rel WHERE rel.child_event_id = %[1]s AND rel.rel_type = ANY($%[2]d))",
+		"$%[2]d::text[] IS NULL OR EXISTS (SELECT 1 FROM syncapi_event_labels lbl WHERE lbl.event_id = %[1]s AND lbl.label = ANY($%[2]d))",
+		"$%[2]d::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM syncapi_event_labels lbl WHERE lbl.event_id = %[1]s AND lbl.label = ANY($%[2]d))",
+	}
+	var sql string
+	for i, condition := range conditions {
+		sql += " AND ( " + fmt.Sprintf(condition, eventIDColumn, first+i) + " )"
+	}
+	return sql
+}
+
+// relationLabelFilterArgs returns the parameters of relationLabelFilterSQL.
+func relationLabelFilterArgs(filter *synctypes.RoomEventFilter) []any {
+	return []any{
+		optionalStrings(filter.RelTypes),
+		optionalStrings(filter.NotRelTypes),
+		optionalStrings(filter.Labels),
+		optionalStrings(filter.NotLabels),
+	}
+}
+
+// withRelationLabelArgs appends the parameters of relationLabelFilterSQL to
+// a query's other parameters.
+func withRelationLabelArgs(filter *synctypes.RoomEventFilter, args ...any) []any {
+	return append(args, relationLabelFilterArgs(filter)...)
 }

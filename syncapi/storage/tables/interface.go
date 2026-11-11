@@ -329,6 +329,18 @@ type ProfileUpdates interface {
 // StickyEvents tracks MSC4354 sticky events in their own stream, so that sync
 // can deliver unexpired sticky events beyond the timeline. Rows outlive their
 // expiry until they are cleaned up, so every read takes the current time.
+// EventLabels stores the labels of events (MSC2326), so that room event
+// filters can select events by label.
+type EventLabels interface {
+	// InsertEventLabels stores the labels of an event. Labels already stored
+	// for it are kept.
+	InsertEventLabels(ctx context.Context, txn *sql.Tx, roomID, eventID string, labels []string) error
+	// DeleteEventLabels removes the labels of an event, as when it is redacted.
+	DeleteEventLabels(ctx context.Context, txn *sql.Tx, eventID string) error
+	// PurgeEventLabels removes the labels of all events of a room.
+	PurgeEventLabels(ctx context.Context, txn *sql.Tx, roomID string) error
+}
+
 type StickyEvents interface {
 	// InsertStickyEvent adds an event to the sticky events stream and returns
 	// its position. An event already in the stream keeps its position.

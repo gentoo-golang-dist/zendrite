@@ -88,27 +88,29 @@ const insertEventSQL = "" +
 const selectEventsSQL = "" +
 	"SELECT event_id, id, headered_event_json, session_id, exclude_from_sync, transaction_id, history_visibility FROM syncapi_output_room_events WHERE event_id = ANY($1)"
 
-const selectEventsWithFilterSQL = "" +
+var selectEventsWithFilterSQL = "" +
 	"SELECT event_id, id, headered_event_json, session_id, exclude_from_sync, transaction_id, history_visibility FROM syncapi_output_room_events WHERE event_id = ANY($1)" +
 	" AND ( $2::text[] IS NULL OR     sender  = ANY($2)  )" +
 	" AND ( $3::text[] IS NULL OR NOT(sender  = ANY($3)) )" +
 	" AND ( $4::text[] IS NULL OR     type LIKE ANY($4)  )" +
 	" AND ( $5::text[] IS NULL OR NOT(type LIKE ANY($5)) )" +
 	" AND ( $6::bool   IS NULL OR     contains_url = $6 )" +
+	relationLabelFilterSQL("syncapi_output_room_events.event_id", 8) + //nolint:mnd // the parameters after the others
 	" LIMIT $7"
 
-const selectRecentEventsSQL = "" +
+var selectRecentEventsSQL = "" +
 	"SELECT event_id, id, headered_event_json, session_id, exclude_from_sync, transaction_id, history_visibility FROM syncapi_output_room_events" +
 	" WHERE room_id = $1 AND id > $2 AND id <= $3" +
 	" AND ( $4::text[] IS NULL OR     sender  = ANY($4)  )" +
 	" AND ( $5::text[] IS NULL OR NOT(sender  = ANY($5)) )" +
 	" AND ( $6::text[] IS NULL OR     type LIKE ANY($6)  )" +
 	" AND ( $7::text[] IS NULL OR NOT(type LIKE ANY($7)) )" +
+	relationLabelFilterSQL("syncapi_output_room_events.event_id", 9) + //nolint:mnd // the parameters after the others
 	" ORDER BY id DESC LIMIT $8"
 
 // selectRecentEventsForSyncSQL contains an optimization to get the recent events for a list of rooms, using a LATERAL JOIN
 // The sub select inside LATERAL () is executed for all room_ids it gets as a parameter $1.
-const selectRecentEventsForSyncSQL = `
+var selectRecentEventsForSyncSQL = `
 WITH room_ids AS (
      SELECT unnest($1::text[]) AS room_id
 )
@@ -125,6 +127,8 @@ FROM room_ids,
                       AND ( $5::text[] IS NULL OR NOT(sender  = ANY($5)) )
                       AND ( $6::text[] IS NULL OR     type LIKE ANY($6)  )
                       AND ( $7::text[] IS NULL OR NOT(type LIKE ANY($7)) )
+                      ` + relationLabelFilterSQL("recent_events.event_id", 9) + //nolint:mnd // the parameters after the others
+	`
                     ORDER BY recent_events.id DESC
                     LIMIT $8
               ) AS x
@@ -168,20 +172,22 @@ const deleteEventsForRoomSQL = "" +
 const selectContextEventSQL = "" +
 	"SELECT id, headered_event_json, history_visibility FROM syncapi_output_room_events WHERE room_id = $1 AND event_id = $2"
 
-const selectContextBeforeEventSQL = "" +
+var selectContextBeforeEventSQL = "" +
 	"SELECT headered_event_json, history_visibility FROM syncapi_output_room_events WHERE room_id = $1 AND id < $2" +
 	" AND ( $4::text[] IS NULL OR     sender  = ANY($4)  )" +
 	" AND ( $5::text[] IS NULL OR NOT(sender  = ANY($5)) )" +
 	" AND ( $6::text[] IS NULL OR     type LIKE ANY($6)  )" +
 	" AND ( $7::text[] IS NULL OR NOT(type LIKE ANY($7)) )" +
+	relationLabelFilterSQL("syncapi_output_room_events.event_id", 8) + //nolint:mnd // the parameters after the others
 	" ORDER BY id DESC LIMIT $3"
 
-const selectContextAfterEventSQL = "" +
+var selectContextAfterEventSQL = "" +
 	"SELECT id, headered_event_json, history_visibility FROM syncapi_output_room_events WHERE room_id = $1 AND id > $2" +
 	" AND ( $4::text[] IS NULL OR     sender  = ANY($4)  )" +
 	" AND ( $5::text[] IS NULL OR NOT(sender  = ANY($5)) )" +
 	" AND ( $6::text[] IS NULL OR     type LIKE ANY($6)  )" +
 	" AND ( $7::text[] IS NULL OR NOT(type LIKE ANY($7)) )" +
+	relationLabelFilterSQL("syncapi_output_room_events.event_id", 8) + //nolint:mnd // the parameters after the others
 	" ORDER BY id ASC LIMIT $3"
 
 // selectRoomsWithEventsSinceSQL returns distinct room IDs that have events with id > since
@@ -243,6 +249,13 @@ func NewPostgresEventsTable(ctx context.Context, db *sql.DB) (tables.Events, err
 	_, err := db.ExecContext(ctx, outputRoomEventsSchema)
 	if err != nil {
 		return nil, err
+	}
+	// The filtered statements read the relations and the labels of events
+	// (MSC3874, MSC2326), whose tables are set up after this one.
+	for _, schema := range []string{relationsSchema, eventLabelsSchema} {
+		if _, err = db.ExecContext(ctx, schema); err != nil {
+			return nil, err
+		}
 	}
 
 	migrationName := "syncapi: rename dupe index (output_room_events)"
@@ -494,14 +507,14 @@ func (s *outputRoomEventsStatements) SelectRecentEvents(
 	}
 	senders, notSenders := getSendersRoomEventFilter(eventFilter)
 
-	rows, err := stmt.QueryContext(
-		ctx, roomIDs, ra.Low(), ra.High(),
+	rows, err := stmt.QueryContext(ctx, withRelationLabelArgs(eventFilter,
+		roomIDs, ra.Low(), ra.High(),
 		senders,
 		notSenders,
 		filterConvertTypeWildcardToSQL(eventFilter.Types),
 		filterConvertTypeWildcardToSQL(eventFilter.NotTypes),
 		eventFilter.Limit+1,
-	)
+	)...)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +632,7 @@ func (s *outputRoomEventsStatements) SelectEvents(
 	} else {
 		senders, notSenders := getSendersRoomEventFilter(filter)
 		stmt = sqlutil.TxStmt(txn, s.selectEventsWitFilterStmt)
-		rows, err = stmt.QueryContext(ctx,
+		rows, err = stmt.QueryContext(ctx, withRelationLabelArgs(filter,
 			eventIDs,
 			senders,
 			notSenders,
@@ -627,7 +640,7 @@ func (s *outputRoomEventsStatements) SelectEvents(
 			filterConvertTypeWildcardToSQL(filter.NotTypes),
 			filter.ContainsURL,
 			filter.Limit,
-		)
+		)...)
 	}
 	if err != nil {
 		return nil, err
@@ -684,13 +697,13 @@ func (s *outputRoomEventsStatements) SelectContextBeforeEvent(
 ) (evts []*rstypes.HeaderedEvent, err error) {
 	senders, notSenders := getSendersRoomEventFilter(filter)
 	selectContextBeforeEventStmt := sqlutil.TxStmt(txn, s.selectContextBeforeEventStmt)
-	rows, err := selectContextBeforeEventStmt.QueryContext(
-		ctx, roomID, id, filter.Limit,
+	rows, err := selectContextBeforeEventStmt.QueryContext(ctx, withRelationLabelArgs(filter,
+		roomID, id, filter.Limit,
 		senders,
 		notSenders,
 		filterConvertTypeWildcardToSQL(filter.Types),
 		filterConvertTypeWildcardToSQL(filter.NotTypes),
-	)
+	)...)
 	if err != nil {
 		return
 	}
@@ -720,13 +733,13 @@ func (s *outputRoomEventsStatements) SelectContextAfterEvent(
 ) (lastID int, evts []*rstypes.HeaderedEvent, err error) {
 	senders, notSenders := getSendersRoomEventFilter(filter)
 	selectContextAfterEventStmt := sqlutil.TxStmt(txn, s.selectContextAfterEventStmt)
-	rows, err := selectContextAfterEventStmt.QueryContext(
-		ctx, roomID, id, filter.Limit,
+	rows, err := selectContextAfterEventStmt.QueryContext(ctx, withRelationLabelArgs(filter,
+		roomID, id, filter.Limit,
 		senders,
 		notSenders,
 		filterConvertTypeWildcardToSQL(filter.Types),
 		filterConvertTypeWildcardToSQL(filter.NotTypes),
-	)
+	)...)
 	if err != nil {
 		return
 	}

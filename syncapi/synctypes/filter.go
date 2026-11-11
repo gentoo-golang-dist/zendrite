@@ -9,7 +9,10 @@ package synctypes
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 // Filter is used by clients to specify how the server should filter responses to e.g. sync requests
@@ -88,6 +91,76 @@ type RoomEventFilter struct {
 	Rooms                     *[]string `json:"rooms,omitempty"`
 	UnreadThreadNotifications bool      `json:"unread_thread_notifications,omitempty"`
 	ContainsURL               *bool     `json:"contains_url,omitempty"`
+	// RelTypes keeps only the events with one of these relation types, and
+	// NotRelTypes leaves out the events with one of them (MSC3874). Events
+	// without a relation never match RelTypes and always pass NotRelTypes.
+	RelTypes    *[]string `json:"org.matrix.msc3874.rel_types,omitempty"`
+	NotRelTypes *[]string `json:"org.matrix.msc3874.not_rel_types,omitempty"`
+	// Labels keeps only the events with one of these labels, and NotLabels
+	// leaves out the events with one of them (MSC2326).
+	Labels    *[]string `json:"org.matrix.labels,omitempty"`
+	NotLabels *[]string `json:"org.matrix.not_labels,omitempty"`
+}
+
+// EventLabelsField is the event content field listing an event's labels
+// (MSC2326), under the unstable prefix Synapse uses.
+const EventLabelsField = "org.matrix.labels"
+
+// MatchesRelationAndLabels reports whether an event whose relation type is
+// relType ("" for none) and whose labels are labels passes the filter's
+// MSC3874 relation type and MSC2326 label constraints. As in Synapse, an
+// exclusion wins over an inclusion.
+func (f *RoomEventFilter) MatchesRelationAndLabels(relType string, labels []string) bool {
+	if f == nil {
+		return true
+	}
+	if f.NotRelTypes != nil && relType != "" && slices.Contains(*f.NotRelTypes, relType) {
+		return false
+	}
+	if f.RelTypes != nil && (relType == "" || !slices.Contains(*f.RelTypes, relType)) {
+		return false
+	}
+	if f.NotLabels != nil && slices.ContainsFunc(labels, func(l string) bool { return slices.Contains(*f.NotLabels, l) }) {
+		return false
+	}
+	if f.Labels != nil && !slices.ContainsFunc(labels, func(l string) bool { return slices.Contains(*f.Labels, l) }) {
+		return false
+	}
+	return true
+}
+
+// FiltersRelationsOrLabels reports whether the filter constrains relation
+// types (MSC3874) or labels (MSC2326).
+func (f *RoomEventFilter) FiltersRelationsOrLabels() bool {
+	return f != nil && (f.RelTypes != nil || f.NotRelTypes != nil || f.Labels != nil || f.NotLabels != nil)
+}
+
+// EventRelationType returns the relation type of an event's content, or ""
+// when it has none. Like Synapse, a relation needs both a string rel_type
+// and a string event_id.
+func EventRelationType(content []byte) string {
+	rel := gjson.GetBytes(content, `m\.relates_to`)
+	relType, eventID := rel.Get("rel_type"), rel.Get("event_id")
+	if relType.Type != gjson.String || eventID.Type != gjson.String || relType.Str == "" || eventID.Str == "" {
+		return ""
+	}
+	return relType.Str
+}
+
+// EventLabels returns the labels of an event's content (MSC2326): the
+// distinct strings of its org.matrix.labels array.
+func EventLabels(content []byte) []string {
+	field := gjson.GetBytes(content, `org\.matrix\.labels`)
+	if !field.IsArray() {
+		return nil
+	}
+	var labels []string
+	for _, l := range field.Array() {
+		if l.Type == gjson.String && !slices.Contains(labels, l.Str) {
+			labels = append(labels, l.Str)
+		}
+	}
+	return labels
 }
 
 const (

@@ -412,11 +412,9 @@ func (s *outputRoomEventsStatements) SelectRecentEvents(
 
 	result := make(map[string]types.RecentEvents, len(roomIDs))
 	for _, roomID := range roomIDs {
+		filteredQuery, filterParams := withRelationLabelFilters(query, []any{roomID, r.Low(), r.High()}, eventFilter, "syncapi_output_room_events.event_id")
 		stmt, params, err := prepareWithFilters(
-			s.db, txn, query,
-			[]any{
-				roomID, r.Low(), r.High(),
-			},
+			s.db, txn, filteredQuery, filterParams,
 			eventFilter.Senders, eventFilter.NotSenders,
 			eventFilter.Types, eventFilter.NotTypes,
 			nil, eventFilter.ContainsURL, eventFilter.Limit+1, FilterOrderDesc,
@@ -510,8 +508,9 @@ func (s *outputRoomEventsStatements) selectEvents(
 	}
 	selectSQL := strings.Replace(selectEventsSQL, "($1)", sqlutil.QueryVariadic(len(eventIDs)), 1)
 
+	selectSQL, filterParams := withRelationLabelFilters(selectSQL, iEventIDs, filter, "syncapi_output_room_events.event_id")
 	stmt, params, err := prepareWithFilters(
-		s.db, txn, selectSQL, iEventIDs,
+		s.db, txn, selectSQL, filterParams,
 		filter.Senders, filter.NotSenders,
 		filter.Types, filter.NotTypes,
 		nil, filter.ContainsURL, filter.Limit, FilterOrderAsc,
@@ -669,11 +668,9 @@ func (s *outputRoomEventsStatements) SelectContextEvent(
 func (s *outputRoomEventsStatements) SelectContextBeforeEvent(
 	ctx context.Context, txn *sql.Tx, id int, roomID string, filter *synctypes.RoomEventFilter,
 ) (evts []*rstypes.HeaderedEvent, err error) {
+	query, filterParams := withRelationLabelFilters(selectContextBeforeEventSQL, []any{roomID, id}, filter, "syncapi_output_room_events.event_id")
 	stmt, params, err := prepareWithFilters(
-		s.db, txn, selectContextBeforeEventSQL,
-		[]any{
-			roomID, id,
-		},
+		s.db, txn, query, filterParams,
 		filter.Senders, filter.NotSenders,
 		filter.Types, filter.NotTypes,
 		nil, filter.ContainsURL, filter.Limit, FilterOrderDesc,
@@ -711,11 +708,9 @@ func (s *outputRoomEventsStatements) SelectContextBeforeEvent(
 func (s *outputRoomEventsStatements) SelectContextAfterEvent(
 	ctx context.Context, txn *sql.Tx, id int, roomID string, filter *synctypes.RoomEventFilter,
 ) (lastID int, evts []*rstypes.HeaderedEvent, err error) {
+	query, filterParams := withRelationLabelFilters(selectContextAfterEventSQL, []any{roomID, id}, filter, "syncapi_output_room_events.event_id")
 	stmt, params, err := prepareWithFilters(
-		s.db, txn, selectContextAfterEventSQL,
-		[]any{
-			roomID, id,
-		},
+		s.db, txn, query, filterParams,
 		filter.Senders, filter.NotSenders,
 		filter.Types, filter.NotTypes,
 		nil, filter.ContainsURL, filter.Limit, FilterOrderAsc,

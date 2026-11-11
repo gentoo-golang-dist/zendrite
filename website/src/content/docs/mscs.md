@@ -140,6 +140,8 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC2174](https://github.com/matrix-org/matrix-spec-proposals/pull/2174) | Move the `redacts` property to `content` | 1.8 | Implemented: from room version 11, redactions are applied from `content.redacts` and the top-level key is ignored. Clients receive `redacts` both at the top level and in `content` in every room version |
 | [MSC2815](https://github.com/matrix-org/matrix-spec-proposals/pull/2815) | Allow room moderators to view redacted event content | N/A | Implemented (unstable prefix): see [redacted event content for moderators](#redacted-event-content-for-moderators) |
 | [MSC3389](https://github.com/matrix-org/matrix-spec-proposals/pull/3389) | Redaction changes for events with a relation | N/A | Implemented (unstable room version): see [relation redactions](#relation-redactions) |
+| [MSC3874](https://github.com/matrix-org/matrix-spec-proposals/pull/3874) | Filtering threads from the `/messages` endpoint | N/A | Implemented (unstable prefix): see [relation type and label filters](#relation-type-and-label-filters) |
+| [MSC2326](https://github.com/matrix-org/matrix-spec-proposals/pull/2326) | Label based filtering | N/A | Implemented (unstable prefix): see [relation type and label filters](#relation-type-and-label-filters) |
 | [MSC4169](https://github.com/matrix-org/matrix-spec-proposals/pull/4169) | Backwards-compatible redaction sending using `/send` | 1.18 | Implemented: `PUT /send/m.room.redaction` copies `content.redacts` to the top level, so it redacts in every room version. Advertised as `com.beeper.msc4169` in `/versions` |
 
 ### Bundled aggregations
@@ -179,6 +181,24 @@ Redacted relations are still left out of `/relations`, bundled aggregations and 
 As in Synapse, it also has strict byte limits: an event whose type, state key, sender or room ID is over 255 bytes is never stored, while room version 10 still stores such events fetched over federation when they are within 255 codepoints.
 `/capabilities` lists the room version as `unstable`, and `createRoom` accepts it; it is never the default room version.
 Synapse defines the room version but does not offer it, so only Zendrite servers can join such rooms for now.
+
+### Relation type and label filters
+
+Room event filters take the relation type filters of MSC3874 and the label filters of MSC2326, with Synapse's unstable names:
+
+- `org.matrix.msc3874.rel_types` keeps the events whose `m.relates_to` has one of the listed `rel_type`s, and `org.matrix.msc3874.not_rel_types` leaves them out.
+  An event without a relation never matches `rel_types` and always passes `not_rel_types`.
+  A relation needs a string `rel_type` and `event_id`, so a plain reply (`m.in_reply_to`) has none.
+- `org.matrix.labels` keeps the events with one of the listed labels in their `org.matrix.labels` content field, and `org.matrix.not_labels` leaves them out.
+  Only the strings of an `org.matrix.labels` array are labels; labels are compared as they are, without case folding.
+- An exclusion wins over an inclusion, and an empty `rel_types` or `labels` list matches nothing.
+
+The filters apply to `/messages` (including events backfilled over federation), to `/sync` timelines and to `/context`, in the database.
+`/versions` advertises `org.matrix.msc3874` in `unstable_features`; Synapse gates MSC3874 behind `experimental_features.msc3874_enabled` and does not advertise it, and MSC2326 has no flag.
+
+The sync API stores the labels of each event and indexes its relation, written in the same transaction as the event.
+Labels of events stored before the upgrade are filled in by a migration; a redaction removes an event's labels and relation.
+Zendrite does not update labels from edits (the MSC's `m.new_content` rules), as Synapse does not.
 
 ### Thread subscriptions
 

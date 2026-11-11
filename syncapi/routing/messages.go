@@ -608,15 +608,16 @@ func matchesGlob(pattern, name string) bool {
 	return ok
 }
 
-// filterHeaderedEvents filters events by the sender and type constraints in
-// filter, mirroring the SQL filtering applied to locally stored events.
+// filterHeaderedEvents filters events by the sender, type, relation type
+// (MSC3874) and label (MSC2326) constraints in filter, mirroring the SQL filtering applied to locally stored events.
 // Used to apply client-specified filters to backfilled events from federation,
 // which bypass the database query.
 func filterHeaderedEvents(events []*rstypes.HeaderedEvent, filter *synctypes.RoomEventFilter) []*rstypes.HeaderedEvent {
 	if filter == nil {
 		return events
 	}
-	if filter.Senders == nil && filter.NotSenders == nil && filter.Types == nil && filter.NotTypes == nil {
+	if filter.Senders == nil && filter.NotSenders == nil && filter.Types == nil && filter.NotTypes == nil &&
+		!filter.FiltersRelationsOrLabels() {
 		return events
 	}
 	filtered := make([]*rstypes.HeaderedEvent, 0, len(events))
@@ -673,6 +674,13 @@ func filterHeaderedEvents(events []*rstypes.HeaderedEvent, filter *synctypes.Roo
 				}
 			}
 			if excluded {
+				continue
+			}
+		}
+
+		if filter.FiltersRelationsOrLabels() {
+			content := ev.Content()
+			if !filter.MatchesRelationAndLabels(synctypes.EventRelationType(content), synctypes.EventLabels(content)) {
 				continue
 			}
 		}

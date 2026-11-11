@@ -284,9 +284,9 @@ func (s *outputRoomEventsTopologyStatements) selectRecentEventsByTopology(
 ) ([]types.StreamEvent, error) {
 	// Not prepared with the others, as it reads a table that may not exist
 	// yet when this one is set up.
+	query, filterParams := withRelationLabelFilters(selectRecentEventsByTopologySQL, []any{roomID, to}, eventFilter, "e.event_id")
 	stmt, params, err := prepareWithFilters(
-		s.db, txn, selectRecentEventsByTopologySQL,
-		[]any{roomID, to},
+		s.db, txn, query, filterParams,
 		eventFilter.Senders, eventFilter.NotSenders,
 		eventFilter.Types, eventFilter.NotTypes,
 		nil, eventFilter.ContainsURL, eventFilter.Limit+1, FilterOrderTopologyDesc,

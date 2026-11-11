@@ -493,14 +493,6 @@ func (s *OutputRoomEventConsumer) onNewRoomEvent(
 		return err
 	}
 
-	if err = s.db.UpdateRelations(ctx, ev); err != nil {
-		log.WithFields(log.Fields{
-			"event_id": ev.EventID(),
-			"type":     ev.Type(),
-		}).WithError(err).Warn("Failed to update relations")
-		return err
-	}
-
 	// Queue room for metadata recalculation if this is a relevant state event
 	s.queueRoomMetadataUpdate(ev, pduPos)
 
@@ -571,15 +563,6 @@ func (s *OutputRoomEventConsumer) onOldRoomEvent(
 			"event_id": ev.EventID(),
 			"type":     ev.Type(),
 		}).WithError(err).Warn("failed to index fulltext element")
-	}
-
-	if err = s.db.UpdateRelations(ctx, ev); err != nil {
-		log.WithFields(log.Fields{
-			"room_id":  ev.RoomID().String(),
-			"event_id": ev.EventID(),
-			"type":     ev.Type(),
-		}).WithError(err).Warn("Failed to update relations")
-		return err
 	}
 
 	if pduPos, err = s.notifyJoinedPeeks(ctx, ev, pduPos); err != nil {

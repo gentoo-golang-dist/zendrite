@@ -233,6 +233,9 @@ column syncapi_current_room_state | room_id | text | NO |
 column syncapi_current_room_state | sender | text | NO |
 column syncapi_current_room_state | state_key | text | NO |
 column syncapi_current_room_state | type | text | NO |
+column syncapi_event_labels | event_id | text | NO |
+column syncapi_event_labels | label | text | NO |
+column syncapi_event_labels | room_id | text | NO |
 column syncapi_filter | filter | text | NO |
 column syncapi_filter | id | integer | NO | nextval('syncapi_filter_id_seq'::regclass)
 column syncapi_filter | localpart | text | NO |
@@ -635,6 +638,8 @@ index syncapi_current_room_state | syncapi_current_room_state_type_state_key_idx
 index syncapi_current_room_state | syncapi_event_id_idx | CREATE UNIQUE INDEX syncapi_event_id_idx ON public.syncapi_current_room_state USING btree (event_id, room_id, type, sender, contains_url)
 index syncapi_current_room_state | syncapi_membership_idx | CREATE INDEX syncapi_membership_idx ON public.syncapi_current_room_state USING btree (type, state_key, membership) WHERE ((membership IS NOT NULL) AND (membership <> 'leave'::text))
 index syncapi_current_room_state | syncapi_room_state_unique | CREATE UNIQUE INDEX syncapi_room_state_unique ON public.syncapi_current_room_state USING btree (room_id, type, state_key)
+index syncapi_event_labels | syncapi_event_labels_room_id_idx | CREATE INDEX syncapi_event_labels_room_id_idx ON public.syncapi_event_labels USING btree (room_id, label)
+index syncapi_event_labels | syncapi_event_labels_unique | CREATE UNIQUE INDEX syncapi_event_labels_unique ON public.syncapi_event_labels USING btree (event_id, label)
 index syncapi_filter | syncapi_filter_id_key | CREATE UNIQUE INDEX syncapi_filter_id_key ON public.syncapi_filter USING btree (id)
 index syncapi_filter | syncapi_filter_localpart | CREATE INDEX syncapi_filter_localpart ON public.syncapi_filter USING btree (localpart)
 index syncapi_filter | syncapi_filter_pkey | CREATE UNIQUE INDEX syncapi_filter_pkey ON public.syncapi_filter USING btree (id, localpart)
@@ -668,6 +673,7 @@ index syncapi_profile_updates | syncapi_profile_updates_pkey | CREATE UNIQUE IND
 index syncapi_receipts | syncapi_receipts_pkey | CREATE UNIQUE INDEX syncapi_receipts_pkey ON public.syncapi_receipts USING btree (id)
 index syncapi_receipts | syncapi_receipts_room_id | CREATE INDEX syncapi_receipts_room_id ON public.syncapi_receipts USING btree (room_id)
 index syncapi_receipts | syncapi_receipts_unique | CREATE UNIQUE INDEX syncapi_receipts_unique ON public.syncapi_receipts USING btree (room_id, receipt_type, user_id, thread_id)
+index syncapi_relations | syncapi_relations_child_event_id_idx | CREATE INDEX syncapi_relations_child_event_id_idx ON public.syncapi_relations USING btree (child_event_id, rel_type)
 index syncapi_relations | syncapi_relations_pkey | CREATE UNIQUE INDEX syncapi_relations_pkey ON public.syncapi_relations USING btree (id)
 index syncapi_relations | syncapi_relations_unique | CREATE UNIQUE INDEX syncapi_relations_unique ON public.syncapi_relations USING btree (room_id, event_id, child_event_id, rel_type)
 index syncapi_send_to_device | syncapi_send_to_device_pkey | CREATE UNIQUE INDEX syncapi_send_to_device_pkey ON public.syncapi_send_to_device USING btree (id)
@@ -1035,6 +1041,10 @@ constraint syncapi_current_room_state | syncapi_current_room_state_sender_not_nu
 constraint syncapi_current_room_state | syncapi_current_room_state_state_key_not_null | NOT NULL state_key
 constraint syncapi_current_room_state | syncapi_current_room_state_type_not_null | NOT NULL type
 constraint syncapi_current_room_state | syncapi_room_state_unique | UNIQUE (room_id, type, state_key)
+constraint syncapi_event_labels | syncapi_event_labels_event_id_not_null | NOT NULL event_id
+constraint syncapi_event_labels | syncapi_event_labels_label_not_null | NOT NULL label
+constraint syncapi_event_labels | syncapi_event_labels_room_id_not_null | NOT NULL room_id
+constraint syncapi_event_labels | syncapi_event_labels_unique | UNIQUE (event_id, label)
 constraint syncapi_filter | syncapi_filter_filter_not_null | NOT NULL filter
 constraint syncapi_filter | syncapi_filter_id_key | UNIQUE (id)
 constraint syncapi_filter | syncapi_filter_id_not_null | NOT NULL id
@@ -1426,6 +1436,7 @@ migration syncapi: rename dupe index (output_room_events)
 migration syncapi: restore event IDs of redacted output events
 migration syncapi: set history visibility for existing events
 migration syncapi: store output event timestamps separately
+migration syncapi: store the labels of stored events (MSC2326)
 migration syncapi: threaded receipts
 migration userapi: add account locks
 migration userapi: add account suspensions
