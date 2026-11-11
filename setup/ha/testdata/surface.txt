@@ -492,6 +492,8 @@ column userapi_pushers | app_display_name | text | NO |
 column userapi_pushers | app_id | text | NO |
 column userapi_pushers | data | text | NO |
 column userapi_pushers | device_display_name | text | NO |
+column userapi_pushers | device_id | text | YES |
+column userapi_pushers | enabled | boolean | NO | true
 column userapi_pushers | id | bigint | NO | nextval('userapi_pushers_id_seq'::regclass)
 column userapi_pushers | kind | text | NO |
 column userapi_pushers | lang | text | NO |
@@ -1314,6 +1316,7 @@ constraint userapi_pushers | userapi_pushers_app_display_name_not_null | NOT NUL
 constraint userapi_pushers | userapi_pushers_app_id_not_null | NOT NULL app_id
 constraint userapi_pushers | userapi_pushers_data_not_null | NOT NULL data
 constraint userapi_pushers | userapi_pushers_device_display_name_not_null | NOT NULL device_display_name
+constraint userapi_pushers | userapi_pushers_enabled_not_null | NOT NULL enabled
 constraint userapi_pushers | userapi_pushers_id_not_null | NOT NULL id
 constraint userapi_pushers | userapi_pushers_kind_not_null | NOT NULL kind
 constraint userapi_pushers | userapi_pushers_lang_not_null | NOT NULL lang
@@ -1444,6 +1447,7 @@ migration userapi: add account type
 migration userapi: add delayed event sticky duration
 migration userapi: add is active
 migration userapi: add last_seen_ts
+migration userapi: add pusher enabled and device ID
 migration userapi: add refresh tokens
 migration userapi: case-fold email 3PIDs
 migration userapi: notification event threads

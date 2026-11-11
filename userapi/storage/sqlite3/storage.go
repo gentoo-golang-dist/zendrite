@@ -98,7 +98,7 @@ func NewUserDatabase(ctx context.Context, conMan *sqlutil.Connections, dbPropert
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLiteExternalIDsTable: %w", err)
 	}
-	pusherTable, err := NewSQLitePusherTable(db)
+	pusherTable, err := NewSQLitePusherTable(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("NewPostgresPusherTable: %w", err)
 	}

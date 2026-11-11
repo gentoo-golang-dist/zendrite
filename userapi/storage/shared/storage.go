@@ -1321,6 +1321,8 @@ func (d *Database) UpsertPusher(
 			string(data),
 			localpart,
 			serverName,
+			p.IsEnabled(),
+			p.DeviceID,
 		)
 	})
 }
@@ -1347,14 +1349,45 @@ func (d *Database) RemovePusher(
 	})
 }
 
-// RemovePushers deletes all pushers that match given App Id and Push Key pair.
-// Invoked when `append` parameter is false in
+// RemovePushers deletes the pushers of other users that match the given
+// App Id and Push Key pair. Invoked when `append` parameter is false in
 // https://matrix.org/docs/spec/client_server/r0.6.1#post-matrix-client-r0-pushers-set
+// The user's own pusher is updated instead, so that it keeps the device that
+// registered it (MSC3881), as in Synapse.
 func (d *Database) RemovePushers(
-	ctx context.Context, appid, pushkey string,
+	ctx context.Context, appid, pushkey, exceptLocalpart string, exceptServerName spec.ServerName,
 ) error {
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-		return d.Pushers.DeletePushers(ctx, txn, appid, pushkey)
+		return d.Pushers.DeletePushers(ctx, txn, appid, pushkey, exceptLocalpart, exceptServerName)
+	})
+}
+
+// RemovePushersByDevices deletes the user's pushers registered by the given
+// devices, as Synapse does when devices are deleted.
+func (d *Database) RemovePushersByDevices(
+	ctx context.Context, localpart string, serverName spec.ServerName, deviceIDs []string,
+) error {
+	if len(deviceIDs) == 0 {
+		return nil
+	}
+	deleted := make(map[string]struct{}, len(deviceIDs))
+	for _, id := range deviceIDs {
+		deleted[id] = struct{}{}
+	}
+	pushers, err := d.Pushers.SelectPushers(ctx, nil, localpart, serverName)
+	if err != nil {
+		return err
+	}
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		for _, p := range pushers {
+			if _, ok := deleted[p.DeviceID]; !ok || p.DeviceID == "" {
+				continue
+			}
+			if err := d.Pushers.DeletePusher(ctx, txn, p.AppID, p.PushKey, localpart, serverName); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

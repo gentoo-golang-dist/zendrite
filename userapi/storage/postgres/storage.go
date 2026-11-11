@@ -101,7 +101,7 @@ func NewDatabase(ctx context.Context, conMan *sqlutil.Connections, dbProperties 
 	if err != nil {
 		return nil, fmt.Errorf("NewPostgresExternalIDsTable: %w", err)
 	}
-	pusherTable, err := NewPostgresPusherTable(db)
+	pusherTable, err := NewPostgresPusherTable(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("NewPostgresPusherTable: %w", err)
 	}

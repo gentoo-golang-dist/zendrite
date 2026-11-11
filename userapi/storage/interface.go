@@ -176,7 +176,12 @@ type Pusher interface {
 	UpsertPusher(ctx context.Context, p api.Pusher, localpart string, serverName spec.ServerName) error
 	GetPushers(ctx context.Context, localpart string, serverName spec.ServerName) ([]api.Pusher, error)
 	RemovePusher(ctx context.Context, appid, pushkey, localpart string, serverName spec.ServerName) error
-	RemovePushers(ctx context.Context, appid, pushkey string) error
+	// RemovePushers removes the pushers with the given app ID and pushkey of
+	// every user except the given one.
+	RemovePushers(ctx context.Context, appid, pushkey, exceptLocalpart string, exceptServerName spec.ServerName) error
+	// RemovePushersByDevices removes the user's pushers registered by the
+	// given devices (MSC3881).
+	RemovePushersByDevices(ctx context.Context, localpart string, serverName spec.ServerName, deviceIDs []string) error
 }
 
 type ThreePID interface {

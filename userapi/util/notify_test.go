@@ -131,3 +131,74 @@ func TestNotifyUserCountsAsync(t *testing.T) {
 		}
 	})
 }
+
+// TestNotifyUserCountsAsyncDisabledPusher covers MSC3881: a disabled pusher
+// gets no notification count updates either.
+func TestNotifyUserCountsAsyncDisabledPusher(t *testing.T) {
+	alice := test.NewUser(t)
+	aliceLocalpart, serverName, err := gomatrixserverlib.SplitID('@', alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		requests := make(chan struct{}, 10)
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("{}"))
+			requests <- struct{}{}
+		}))
+		defer srv.Close()
+
+		connStr, closeDB := test.PrepareDBConnectionString(t, dbType)
+		defer closeDB()
+		cm := sqlutil.NewConnectionManager(nil, config.DatabaseOptions{})
+		db, err := storage.NewUserDatabase(ctx, cm, &config.DatabaseOptions{
+			ConnectionString: config.DataSource(connStr),
+		}, "test", bcrypt.MinCost, 0, 0, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		disabled := false
+		pusher := api.Pusher{
+			Kind:    api.HTTPKind,
+			AppID:   "app",
+			PushKey: "key",
+			Data:    map[string]any{"url": srv.URL},
+			Enabled: &disabled,
+		}
+		if err = db.UpsertPusher(ctx, pusher, aliceLocalpart, serverName); err != nil {
+			t.Fatal(err)
+		}
+		devices, err := userUtil.GetPushDevices(ctx, aliceLocalpart, serverName, nil, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(devices) != 0 {
+			t.Fatalf("got %d push devices for a disabled pusher, want none", len(devices))
+		}
+		if err = userUtil.NotifyUserCountsAsync(ctx, pushgateway.NewHTTPClient(true), aliceLocalpart, serverName, db); err != nil {
+			t.Fatal(err)
+		}
+
+		// Enabled again, the pusher gets the counts.
+		pusher.Enabled = nil
+		if err = db.UpsertPusher(ctx, pusher, aliceLocalpart, serverName); err != nil {
+			t.Fatal(err)
+		}
+		if err = userUtil.NotifyUserCountsAsync(ctx, pushgateway.NewHTTPClient(true), aliceLocalpart, serverName, db); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for the push gateway")
+		case <-requests:
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-requests:
+			t.Fatal("the disabled pusher was notified")
+		}
+	})
+}

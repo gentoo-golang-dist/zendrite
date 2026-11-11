@@ -127,6 +127,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC3958](https://github.com/matrix-org/matrix-spec-proposals/pull/3958) | Suppress notifications from message edits | 1.9 | Implemented: the `.m.rule.suppress_edits` default push rule, also added to existing accounts' rules |
 | [MSC3930](https://github.com/matrix-org/matrix-spec-proposals/pull/3930) | Push rules for polls | N/A | Implemented (unstable prefix): see [poll push rules](#poll-push-rules) |
 | [MSC4028](https://github.com/matrix-org/matrix-spec-proposals/pull/4028) | Push all encrypted events except for muted rooms | N/A | Opt-in (`msc4028`): see [MSC4028](#msc4028-push-all-encrypted-events) |
+| [MSC3881](https://github.com/matrix-org/matrix-spec-proposals/pull/3881) | Remotely toggle push notifications for another client | N/A | Implemented (unstable prefix): see [remote push notification toggling](#remote-push-notification-toggling) |
 | [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Implemented: relations are stored and served through `/relations`. Sending an annotation that the sender has already made, with the same event type and key on the same event and not redacted, fails with 400 `M_DUPLICATE_ANNOTATION`; retrying the original transaction still returns its event. The spec defines no server-side aggregation for annotations |
 | [MSC3970](https://github.com/matrix-org/matrix-spec-proposals/pull/3970) | Scope transaction IDs to devices | 1.7 | Implemented: `/send`, `/redact`, `/sendToDevice`, delayed events and server notices recognise a retransmission by device, endpoint and transaction ID, so it survives a refreshed access token. Application services share one scope per application service, whichever user they act as |
 | [MSC3267](https://github.com/matrix-org/matrix-spec-proposals/pull/3267) | Reference relations | 1.5 | Implemented: references are bundled under `m.reference` |
@@ -226,6 +227,22 @@ Its `subscribed` and `unsubscribed` maps hold the latest state of each changed t
 An initial request returns the latest changes of all time.
 When older changes were left out, `prev_batch` is a token for `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions?dir=b&from=...&to=...`, which pages backwards with the same limits and returns `end` while there may be more; `to` takes a thread subscriptions token or a sliding sync `pos`.
 A change wakes the user's waiting sliding sync requests, and the `/sync` token carries the stream's position without returning its changes.
+
+### Remote push notification toggling
+
+Zendrite implements MSC3881 with Synapse's unstable names and advertises `org.matrix.msc3881` in `unstable_features`.
+Pushers have an enabled flag and belong to the device that registered them, so a client can silence another device's notifications without knowing more than what `GET /pushers` returns:
+
+- `POST /pushers/set` takes `org.matrix.msc3881.enabled`. Leaving it out, or sending `null`, enables the pusher, also when it updates a disabled one, as in Synapse. Any other value than a boolean is 400 `M_BAD_JSON`.
+- `GET /pushers` returns `org.matrix.msc3881.enabled` for every pusher, and `org.matrix.msc3881.device_id`, the device whose access token registered it.
+- A disabled pusher gets no push gateway requests at all, neither for events nor for notification count updates. Notifications are still stored, so `/notifications` and unread counts are unaffected.
+- When another device of the same user updates a pusher, for example to disable it, the pusher keeps its device. A client cannot pick the device by sending `org.matrix.msc3881.device_id`.
+- Setting a pusher without `append` removes the pushers of other users with the same app ID and pushkey, and updates the user's own one in place, as in Synapse. Before MSC3881, Zendrite replaced the user's own pusher too.
+- Deleting a device, which includes logging out, deletes the pushers it registered, as in Synapse.
+
+Pushers registered before the upgrade stay enabled and take the device of the session that registered them.
+A pusher whose device was already gone has no device ID until a device updates it, and then it takes that one.
+Unlike Synapse, where it needs `experimental_features.msc3881_enabled` or a per-user admin flag, the MSC is always on, and a pusher without a device leaves `org.matrix.msc3881.device_id` out instead of returning `null`.
 
 ### Moving the fully read marker backwards
 

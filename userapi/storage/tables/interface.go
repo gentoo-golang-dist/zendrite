@@ -199,10 +199,10 @@ type ThreePIDTable interface {
 }
 
 type PusherTable interface {
-	InsertPusher(ctx context.Context, txn *sql.Tx, session_id int64, pushkey string, pushkeyTS int64, kind api.PusherKind, appid, appdisplayname, devicedisplayname, profiletag, lang, data, localpart string, serverName spec.ServerName) error
+	InsertPusher(ctx context.Context, txn *sql.Tx, session_id int64, pushkey string, pushkeyTS int64, kind api.PusherKind, appid, appdisplayname, devicedisplayname, profiletag, lang, data, localpart string, serverName spec.ServerName, enabled bool, deviceID string) error
 	SelectPushers(ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName) ([]api.Pusher, error)
 	DeletePusher(ctx context.Context, txn *sql.Tx, appid, pushkey, localpart string, serverName spec.ServerName) error
-	DeletePushers(ctx context.Context, txn *sql.Tx, appid, pushkey string) error
+	DeletePushers(ctx context.Context, txn *sql.Tx, appid, pushkey, exceptLocalpart string, exceptServerName spec.ServerName) error
 }
 
 type NotificationTable interface {

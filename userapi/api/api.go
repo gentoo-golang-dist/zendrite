@@ -694,6 +694,18 @@ type Pusher struct {
 	ProfileTag        string         `json:"profile_tag"`
 	Language          string         `json:"lang"`
 	Data              map[string]any `json:"data"`
+	// Enabled is MSC3881's enabled flag. Nil, as when a client leaves it out
+	// of /pushers/set, means enabled; pushers read from storage always have
+	// it set.
+	Enabled *bool `json:"org.matrix.msc3881.enabled,omitempty"`
+	// DeviceID is the device that registered the pusher (MSC3881), empty
+	// for pushers registered before it whose device was gone.
+	DeviceID string `json:"org.matrix.msc3881.device_id,omitempty"`
+}
+
+// IsEnabled reports whether the pusher sends notifications (MSC3881).
+func (p Pusher) IsEnabled() bool {
+	return p.Enabled == nil || *p.Enabled
 }
 
 type PusherKind string

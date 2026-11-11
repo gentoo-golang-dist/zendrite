@@ -75,10 +75,11 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // under a room that does not exist back to their room and schedules the
 // recheck again, level 29 indexes the sync API's topology by room for
 // timelines in topological order (MSC4445), level 30 keeps the content of
-// redacted events for room moderators (MSC2815), and level 31 stores the
+// redacted events for room moderators (MSC2815), level 31 stores the
 // labels of sync API events (MSC2326) and indexes their relations by child
-// event (MSC3874) for room event filters.
-const releaseLevel = 31
+// event (MSC3874) for room event filters, and level 32 stores whether a
+// pusher is enabled and which device registered it (MSC3881).
+const releaseLevel = 32
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades

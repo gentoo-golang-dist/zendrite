@@ -28,6 +28,10 @@ func GetPushDevices(ctx context.Context, localpart string, serverName spec.Serve
 
 	devices := make([]*PusherDevice, 0, len(pushers))
 	for _, pusher := range pushers {
+		// MSC3881: a disabled pusher gets no notifications of any kind.
+		if !pusher.IsEnabled() {
+			continue
+		}
 		var url, format string
 		data := pusher.Data
 		switch pusher.Kind {

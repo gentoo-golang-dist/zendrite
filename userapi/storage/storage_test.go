@@ -18,6 +18,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
@@ -691,6 +692,9 @@ func Test_Pusher(t *testing.T) {
 			gotPushers, err = db.GetPushers(ctx, aliceLocalpart, aliceDomain)
 			assert.NoError(t, err, "unable to get pushers")
 			assert.Equal(t, i+1, len(gotPushers))
+			// MSC3881: pushers read back are always marked enabled or not.
+			enabled := true
+			wantPusher.Enabled = &enabled
 			assert.Equal(t, wantPusher, gotPushers[i])
 			pushKeys = append(pushKeys, pushKey)
 		}
@@ -702,12 +706,100 @@ func Test_Pusher(t *testing.T) {
 		assert.NoError(t, err, "unable to get pushers")
 		assert.Equal(t, 1, len(gotPushers))
 
+		// removing the app ID and pushkey of other users keeps alice's
+		err = db.RemovePushers(ctx, appID, pushKeys[1], aliceLocalpart, aliceDomain)
+		assert.NoError(t, err, "unable to remove pusher")
+		gotPushers, err = db.GetPushers(ctx, aliceLocalpart, aliceDomain)
+		assert.NoError(t, err, "unable to get pushers")
+		assert.Equal(t, 1, len(gotPushers))
+
 		// remove last pusher
-		err = db.RemovePushers(ctx, appID, pushKeys[1])
+		err = db.RemovePushers(ctx, appID, pushKeys[1], "someone-else", aliceDomain)
 		assert.NoError(t, err, "unable to remove pusher")
 		gotPushers, err = db.GetPushers(ctx, aliceLocalpart, aliceDomain)
 		assert.NoError(t, err, "unable to get pushers")
 		assert.Equal(t, 0, len(gotPushers))
+	})
+}
+
+// Test_PusherMSC3881 covers the enabled flag and device of pushers.
+func Test_PusherMSC3881(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		alice := test.NewUser(t)
+		aliceLocalpart, aliceDomain, err := gomatrixserverlib.SplitID('@', alice.ID)
+		require.NoError(t, err)
+		db, closeDB := mustCreateUserDatabase(t, dbType)
+		defer closeDB()
+
+		disabled, enabled := false, true
+		newPusher := func(pushKey, deviceID string, sessionID int64, on *bool) api.Pusher {
+			return api.Pusher{
+				SessionID: sessionID, PushKey: pushKey, Kind: api.HTTPKind, AppID: "app",
+				AppDisplayName: "App", DeviceDisplayName: "Phone", Language: "en",
+				Data:    map[string]any{"url": "https://push.example.com/_matrix/push/v1/notify"},
+				Enabled: on, DeviceID: deviceID,
+			}
+		}
+		get := func(pushKey string) api.Pusher {
+			t.Helper()
+			pushers, err := db.GetPushers(ctx, aliceLocalpart, aliceDomain)
+			require.NoError(t, err)
+			for _, p := range pushers {
+				if p.PushKey == pushKey {
+					return p
+				}
+			}
+			t.Fatalf("no pusher %s", pushKey)
+			return api.Pusher{}
+		}
+
+		// Left out, enabled defaults to true.
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("phone", "PHONE", 1, nil), aliceLocalpart, aliceDomain))
+		got := get("phone")
+		require.NotNil(t, got.Enabled)
+		assert.True(t, *got.Enabled)
+		assert.Equal(t, "PHONE", got.DeviceID)
+		assert.Equal(t, int64(1), got.SessionID)
+
+		// Another device disables it: the pusher stays with the phone.
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("phone", "LAPTOP", 2, &disabled), aliceLocalpart, aliceDomain))
+		got = get("phone")
+		assert.False(t, got.IsEnabled())
+		assert.Equal(t, "PHONE", got.DeviceID)
+		assert.Equal(t, int64(1), got.SessionID)
+
+		// And enables it again.
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("phone", "LAPTOP", 2, &enabled), aliceLocalpart, aliceDomain))
+		got = get("phone")
+		assert.True(t, got.IsEnabled())
+		assert.Equal(t, "PHONE", got.DeviceID)
+
+		// An update that leaves the flag out enables a disabled pusher, as in
+		// Synapse.
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("phone", "PHONE", 1, &disabled), aliceLocalpart, aliceDomain))
+		require.False(t, get("phone").IsEnabled())
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("phone", "PHONE", 1, nil), aliceLocalpart, aliceDomain))
+		assert.True(t, get("phone").IsEnabled())
+
+		// A pusher without a device takes the one that updates it.
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("legacy", "", 0, nil), aliceLocalpart, aliceDomain))
+		assert.Equal(t, "", get("legacy").DeviceID)
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("legacy", "TABLET", 3, nil), aliceLocalpart, aliceDomain))
+		got = get("legacy")
+		assert.Equal(t, "TABLET", got.DeviceID)
+		assert.Equal(t, int64(3), got.SessionID)
+
+		// Deleting devices deletes the pushers they registered.
+		require.NoError(t, db.UpsertPusher(ctx, newPusher("laptop", "LAPTOP", 2, nil), aliceLocalpart, aliceDomain))
+		require.NoError(t, db.RemovePushersByDevices(ctx, aliceLocalpart, aliceDomain, []string{"PHONE", "TABLET", "UNKNOWN"}))
+		pushers, err := db.GetPushers(ctx, aliceLocalpart, aliceDomain)
+		require.NoError(t, err)
+		require.Len(t, pushers, 1)
+		assert.Equal(t, "laptop", pushers[0].PushKey)
+		require.NoError(t, db.RemovePushersByDevices(ctx, aliceLocalpart, aliceDomain, nil))
+		pushers, err = db.GetPushers(ctx, aliceLocalpart, aliceDomain)
+		require.NoError(t, err)
+		require.Len(t, pushers, 1)
 	})
 }
 

@@ -116,6 +116,7 @@ func Setup(
 		// MSC4491: uk.timedout.msc4491.invite_reason in createRoom.
 		"uk.timedout.msc4491.create_room_invite_reasons": true,
 		"org.matrix.msc3874":                             true, // MSC3874: relation type filters for /messages
+		"org.matrix.msc3881":                             true, // MSC3881: remotely toggling push notifications
 		"com.beeper.msc4446":                             true, // MSC4446: moving m.fully_read backwards
 		// MSC4445: the timeline of a room a sync sends for the first time is
 		// in topological order.

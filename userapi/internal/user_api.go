@@ -402,6 +402,7 @@ func (a *UserInternalAPI) PerformDeviceDeletion(ctx context.Context, req *api.Pe
 		return err
 	}
 	a.removeLocalNotificationSettings(ctx, req.UserID, local, domain, deletedDeviceIDs)
+	a.removeDevicePushers(ctx, local, domain, deletedDeviceIDs)
 	// Ask the keyserver to delete device keys and signatures for those devices
 	deleteReq := &api.PerformDeleteKeysRequest{
 		UserID: req.UserID,
@@ -1086,7 +1087,7 @@ func (a *UserInternalAPI) PerformPusherSet(ctx context.Context, req *api.Perform
 		"display_name": req.AppDisplayName,
 	}).Info("PerformPusherCreation")
 	if !req.Append {
-		err := a.DB.RemovePushers(ctx, req.AppID, req.PushKey)
+		err := a.DB.RemovePushers(ctx, req.AppID, req.PushKey, req.Localpart, req.ServerName)
 		if err != nil {
 			return err
 		}

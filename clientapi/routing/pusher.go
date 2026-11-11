@@ -97,6 +97,10 @@ func SetPusher(
 	body.Localpart = localpart
 	body.ServerName = domain
 	body.SessionID = device.SessionID
+	// MSC3881: the pusher belongs to the device whose access token set it.
+	// An update from another device keeps the original one (see the
+	// pushers table), so a client cannot move another device's pusher.
+	body.DeviceID = device.ID
 	err = userAPI.PerformPusherSet(req.Context(), &body, &struct{}{})
 	if err != nil {
 		util.GetLogger(req.Context()).WithError(err).Error("PerformPusherSet failed")
