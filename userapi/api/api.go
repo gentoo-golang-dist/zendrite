@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -542,6 +543,15 @@ type Device struct {
 	// PrevRefreshTokenValid is true while the refresh token used to obtain
 	// the access token stays valid, until the access token is first used.
 	PrevRefreshTokenValid bool
+	// Scopes are the OAuth 2.0 scope tokens granted to the access token, set
+	// only under delegated authentication (MSC3861).
+	Scopes []string
+}
+
+// HasScope reports whether the access token was granted the given OAuth 2.0
+// scope token.
+func (d *Device) HasScope(scope string) bool {
+	return slices.Contains(d.Scopes, scope)
 }
 
 func (d *Device) UserDomain() spec.ServerName {

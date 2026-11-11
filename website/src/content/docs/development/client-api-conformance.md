@@ -283,6 +283,7 @@ The explicit configurable list mirrors the implemented cases in `setup/mscs/mscs
 | `org.matrix.msc4028` | Only when `msc4028` is configured, as Synapse does with `msc4028_push_encrypted_events`. | The `.org.matrix.msc4028.encrypted_event` default push rule, which `internal/pushrules.ApplyOptions` adds to every account's rules on read and drops again when the MSC is not configured. |
 | `org.matrix.msc3861` | Only when MSC3861 is enabled. | Delegated authentication routes and token introspection. |
 | `org.matrix.msc2965`, `org.matrix.msc2967` | Implied by MSC3861, never enabled by listing those names alone. | Authentication metadata and OAuth scope integration. |
+| `io.element.msc4502` | `true` only when `msc4502` is configured, `false` otherwise, as Synapse does with `msc4502_enabled`. | `GET /_matrix/client/unstable/io.element.msc4502/rooms/{roomId}/is_joined` in `clientapi/routing/msc4502.go`, registered only with the MSC, for application services whose registration lists the `io.element.msc4502.scopes` scope and OAuth tokens granted it. |
 | `org.matrix.msc4108` | With MSC3861, unless `mscs.rendezvous.msc4108_enabled` is false. | The 2024 MSC4108 rendezvous API for QR code login in `clientapi/routing/rendezvous.go`, which Element X checks this flag for. The MSC4388 rendezvous API has no flag; clients discover it with `GET /io.element.msc4388/rendezvous`. |
 
 These retained flags describe existing feature implementations, not an exhaustive certification of every proposal revision.

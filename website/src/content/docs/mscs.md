@@ -476,6 +476,7 @@ This differs from MSC3902 and Synapse, which hold `/members`, `/joined_members` 
 | [MSC2659](https://github.com/matrix-org/matrix-spec-proposals/pull/2659) | Application service ping endpoint | 1.7 | Implemented: `POST /_matrix/client/v1/appservice/{appserviceId}/ping`, authenticated with the application service's `as_token`, calls `POST /_matrix/app/v1/ping` with the `hs_token` and the `transaction_id`, and returns `duration_ms`. Failures return `M_URL_NOT_SET`, `M_CONNECTION_FAILED`, `M_CONNECTION_TIMEOUT` (after 30 seconds) or `M_BAD_STATUS` with the status and up to 4 KiB of the body |
 | [MSC4326](https://github.com/matrix-org/matrix-spec-proposals/pull/4326) | Device masquerading for appservices | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
 | [MSC4190](https://github.com/matrix-org/matrix-spec-proposals/pull/4190) | Device management for application services | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
+| [MSC4502](https://github.com/matrix-org/matrix-spec-proposals/pull/4502) | Targeted and unrestricted room member queries | N/A | Opt-in (`msc4502`, unstable prefix): see [MSC4502](#msc4502-room-member-queries) |
 
 ### Ephemeral data for application services
 
@@ -660,6 +661,7 @@ mscs:
     - msc3814
     - msc3861
     - msc4028
+    - msc4502
 ```
 
 ### MSC2836: Threading
@@ -739,3 +741,30 @@ mscs:
 
 See [Delegated authentication (OIDC)](/administration/oidc/) for the full setup guide, the complete configuration reference, client support, account provisioning rules, migration caveats and troubleshooting.
 It is qualified for active-passive HA; [High availability](/administration/oidc/#high-availability) there lists what a takeover loses and how clients recover.
+
+### MSC4502: Room member queries
+
+MSC4502 lets application services, such as moderation tools, and OAuth clients granted a dedicated scope ask whether one user, or any user of one server, is joined to a room, without being in the room themselves.
+Zendrite follows Synapse, where it needs `msc4502_enabled`: it uses the unstable names and is off by default.
+
+**What changes when MSC4502 is enabled:**
+
+- `/versions` advertises `io.element.msc4502: true` in `unstable_features`. Without the MSC the flag is `false` and the endpoint answers 404 `M_UNRECOGNIZED`.
+- `GET /_matrix/client/unstable/io.element.msc4502/rooms/{roomId}/is_joined?mxid={userId}` answers `{"joined": true}` when the user's membership in the room's current state is `join`, and `{"joined": false}` otherwise.
+- With `?server_name={serverName}` instead, it answers whether any user of that server is joined.
+- The caller needs the scope `urn:matrix:client:io.element.msc4502:rooms:is_joined`. Application services get it by listing it in their registration file:
+
+  ```yaml
+  io.element.msc4502.scopes:
+    - "urn:matrix:client:io.element.msc4502:rooms:is_joined"
+  ```
+
+  An application service keeps the scope while it acts as one of its users with `user_id`.
+  With [delegated authentication](#msc3861-oidc-delegated-authentication), an access token the provider granted the scope may call the endpoint too.
+  Anyone else, server admins included, gets 403 `M_FORBIDDEN`, as in Synapse.
+  A registration listing any other scope, including the stable `urn:matrix:client:rooms:is_joined`, fails to load.
+- Giving both `mxid` and `server_name`, or neither, is 400 `M_MISSING_PARAM`. An invalid room ID, user ID or server name is 400 `M_INVALID_PARAM`.
+- A room this server does not know, or a user or server it has never seen in the room, answers `{"joined": false}`.
+
+Zendrite only knows the membership of rooms it is in.
+In rooms with pseudo IDs (MSC4014), a `server_name` query does not find remote servers, as memberships there are keyed by pseudo ID rather than user ID.

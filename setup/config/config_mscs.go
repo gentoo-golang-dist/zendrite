@@ -19,6 +19,7 @@ type MSCs struct {
 	// 'msc3814': Dehydrated devices v2 - https://github.com/matrix-org/matrix-spec-proposals/pull/3814
 	// 'msc3861': OIDC delegated authentication - https://github.com/matrix-org/matrix-spec-proposals/pull/3861
 	// 'msc4028': Push all encrypted events except for muted rooms - https://github.com/matrix-org/matrix-spec-proposals/pull/4028
+	// 'msc4502': Targeted and unrestricted room member queries - https://github.com/matrix-org/matrix-spec-proposals/pull/4502
 	MSCs []string `yaml:"mscs"`
 
 	Database DatabaseOptions `yaml:"database,omitempty"`

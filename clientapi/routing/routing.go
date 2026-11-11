@@ -141,6 +141,9 @@ func Setup(
 	if mscCfg.MSC4108Enabled() {
 		unstableFeatures["org.matrix.msc4108"] = true
 	}
+	// MSC4502: like Synapse, the flag is always present and tells whether
+	// GET /rooms/{roomId}/is_joined is served.
+	unstableFeatures["io.element.msc4502"] = mscCfg.Enabled("msc4502")
 
 	// singleflight protects /join endpoints from being invoked
 	// multiple times from the same user and room, otherwise
@@ -596,6 +599,21 @@ func Setup(
 	// Legacy MSC3266 path for compatibility with Element X and other existing implementations
 	unstableMux.Handle("/im.nheko.summary/rooms/{roomIDOrAlias}/summary", roomSummaryHandler(GetRoomSummaryUnstable)).
 		Methods(http.MethodGet, http.MethodOptions)
+
+	// MSC4502: targeted and unrestricted room member queries, for callers
+	// holding the io.element.msc4502 scope. Like Synapse, only registered when
+	// the MSC is enabled.
+	if mscCfg.Enabled("msc4502") {
+		unstableMux.Handle("/io.element.msc4502/rooms/{roomID}/is_joined",
+			httputil.MakeAuthAPI("msc4502_is_joined", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+				vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+				if err != nil {
+					return util.ErrorResponse(err)
+				}
+				return GetRoomIsJoined(req, device, vars["roomID"], cfg, rsAPI)
+			}),
+		).Methods(http.MethodGet, http.MethodOptions)
+	}
 
 	v3mux.Handle("/createRoom",
 		httputil.MakeAuthAPI("createRoom", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {

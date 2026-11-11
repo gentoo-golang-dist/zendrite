@@ -49,6 +49,7 @@ func TestVersions(t *testing.T) {
 		"org.matrix.msc4306":                             true,
 		"fi.mau.msc2815":                                 true,
 		"uk.timedout.msc4491.create_room_invite_reasons": true,
+		"io.element.msc4502":                             false,
 		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,
 		// MSC4445: initial sync timelines in topological order.
 		"org.matrix.msc4445.initial_sync_timeline_topological_ordering": true,
@@ -76,6 +77,11 @@ func TestVersions(t *testing.T) {
 			name:     "MSC4028 push rule for encrypted events",
 			mscs:     []string{"msc4028"},
 			features: map[string]bool{"org.matrix.msc4028": true},
+		},
+		{
+			name:     "MSC4502 room member queries",
+			mscs:     []string{"msc4502"},
+			features: map[string]bool{"io.element.msc4502": true},
 		},
 		{
 			name: "OIDC implies discovery and scopes",

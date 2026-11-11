@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,6 +84,10 @@ type ApplicationService struct {
 	RateLimited bool `yaml:"rate_limited"`
 	// Any custom protocols that this application service provides (e.g. IRC)
 	Protocols []string `yaml:"protocols"`
+	// Scopes grants the application service extra privileges on the
+	// Client-Server API (MSC4502). Only the scopes in KnownAppServiceScopes
+	// are accepted.
+	Scopes []string `yaml:"io.element.msc4502.scopes"`
 	// ReceiveEphemeral asks for typing, receipts and presence in the
 	// ephemeral field of transactions (MSC2409).
 	ReceiveEphemeral bool `yaml:"receive_ephemeral"`
@@ -92,6 +97,20 @@ type ApplicationService struct {
 	HTTPClient               *http.Client
 	isUnixSocket             bool
 	unixSocket               string
+}
+
+// ScopeQueryRoomMembership is the unstable scope token that grants access to
+// GET /rooms/{roomId}/is_joined (MSC4502).
+const ScopeQueryRoomMembership = "urn:matrix:client:io.element.msc4502:rooms:is_joined"
+
+// KnownAppServiceScopes are the scopes an application service registration
+// may list under io.element.msc4502.scopes.
+var KnownAppServiceScopes = []string{ScopeQueryRoomMembership}
+
+// HasScope reports whether the application service registration grants the
+// given scope (MSC4502).
+func (a *ApplicationService) HasScope(scope string) bool {
+	return slices.Contains(a.Scopes, scope)
 }
 
 // WantsEphemeral reports whether the application service receives typing,
@@ -358,6 +377,14 @@ func checkErrors(config *AppServiceAPI, derived *Derived) (err error) {
 		}
 		if appservice.SenderLocalpart == "" {
 			return ConfigErrors([]string{"Sender Localpart is required"})
+		}
+
+		for _, scope := range appservice.Scopes {
+			if !slices.Contains(KnownAppServiceScopes, scope) {
+				return ConfigErrors([]string{fmt.Sprintf(
+					"Unknown scope %q in io.element.msc4502.scopes of application service %s", scope, appservice.ID,
+				)})
+			}
 		}
 
 		// Check if the url has trailing /'s. If so, remove them

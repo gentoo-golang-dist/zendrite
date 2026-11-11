@@ -297,6 +297,9 @@ type ClientRoomserverAPI interface {
 	DefaultRoomVersionAPI
 	CapabilitiesAPI
 
+	// QueryServerJoinedToRoom tells whether any user of a server is joined to a room.
+	QueryServerJoinedToRoom(ctx context.Context, req *QueryServerJoinedToRoomRequest, res *QueryServerJoinedToRoomResponse) error
+
 	QueryMembershipForUser(ctx context.Context, req *QueryMembershipForUserRequest, res *QueryMembershipForUserResponse) error
 	QueryMembershipsForRoom(ctx context.Context, req *QueryMembershipsForRoomRequest, res *QueryMembershipsForRoomResponse) error
 	QueryRoomsForUser(ctx context.Context, userID spec.UserID, desiredMembership string) ([]spec.RoomID, error)

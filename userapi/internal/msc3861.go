@@ -831,6 +831,7 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 		if device != nil {
 			device.AccountType = accountType
 			device.Suspended = suspended
+			device.Scopes = strings.Fields(introspection.Scope)
 			res.Device = device
 			return nil
 		}
@@ -854,6 +855,7 @@ func (a *UserInternalAPI) queryAccessTokenMSC3861(ctx context.Context, req *api.
 	if deviceRes.Device != nil {
 		deviceRes.Device.AccountType = accountType
 		deviceRes.Device.Suspended = suspended
+		deviceRes.Device.Scopes = strings.Fields(introspection.Scope)
 		res.Device = deviceRes.Device
 	}
 
