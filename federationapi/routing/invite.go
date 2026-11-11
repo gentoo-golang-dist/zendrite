@@ -22,6 +22,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
+	roomserverVersion "codefloe.com/pat-s/zendrite/roomserver/version"
 	"codefloe.com/pat-s/zendrite/setup/config"
 )
 
@@ -48,6 +49,9 @@ func InviteV3(
 			Code: http.StatusBadRequest,
 			JSON: spec.InvalidParam("The invited user domain does not belong to this server"),
 		}
+	}
+	if res := refuseUnsupportedInviteVersion(inviteReq.RoomVersion()); res != nil {
+		return *res
 	}
 
 	input := gomatrixserverlib.HandleInviteV3Input{
@@ -132,6 +136,9 @@ func InviteV2(
 			JSON: spec.BadJSON("The invite event has no state key"),
 		}
 	}
+	if res := refuseUnsupportedInviteVersion(inviteReq.RoomVersion()); res != nil {
+		return *res
+	}
 
 	invitedUser, userErr := spec.NewUserID(*inviteReq.Event().StateKey(), true)
 	if userErr != nil {
@@ -177,6 +184,20 @@ func InviteV2(
 	return util.JSONResponse{
 		Code: http.StatusOK,
 		JSON: fclient.RespInviteV2{Event: event.JSON()},
+	}
+}
+
+// refuseUnsupportedInviteVersion answers 400 M_INCOMPATIBLE_ROOM_VERSION when
+// the invite is for a room version this server knows but does not implement,
+// so the invited user is never placed in a room the server cannot take part
+// in. Unknown versions are refused earlier, when the request is parsed.
+func refuseUnsupportedInviteVersion(roomVersion gomatrixserverlib.RoomVersion) *util.JSONResponse {
+	if _, err := roomserverVersion.SupportedRoomVersion(roomVersion); err == nil {
+		return nil
+	}
+	return &util.JSONResponse{
+		Code: http.StatusBadRequest,
+		JSON: spec.IncompatibleRoomVersion(string(roomVersion)),
 	}
 }
 

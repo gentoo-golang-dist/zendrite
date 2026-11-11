@@ -2,7 +2,9 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -10,6 +12,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 
 	"codefloe.com/pat-s/zendrite/federationapi/statistics"
+	"codefloe.com/pat-s/zendrite/roomserver/version"
 )
 
 const defaultTimeout = time.Second * 30
@@ -41,7 +44,32 @@ func (a *FederationInternalAPI) MakeJoin(
 		return &fclient.RespMakeJoin{}, err
 	}
 	stats.Success(statistics.SendDirect) //nolint:contextcheck
+	// gomatrixserverlib offers every room version it knows in the make_join
+	// ver list, including ones this server does not implement, so refuse
+	// a template for such a version before anything is signed or sent.
+	if ires.RoomVersion != "" {
+		if _, verErr := version.SupportedRoomVersion(ires.RoomVersion); verErr != nil {
+			return &fclient.RespMakeJoin{}, unsupportedRoomVersionError(ires.RoomVersion)
+		}
+	}
 	return &ires, nil
+}
+
+// unsupportedRoomVersionError is the error for a remote room whose version
+// this server does not implement. It is a 400 carrying
+// M_INCOMPATIBLE_ROOM_VERSION, so the join is not counted against the remote
+// server's backoff and the client sees why the join failed.
+func unsupportedRoomVersionError(roomVersion gomatrixserverlib.RoomVersion) error {
+	message := fmt.Sprintf("room version %q is not supported by this server", roomVersion)
+	contents, err := json.Marshal(spec.IncompatibleRoomVersion(string(roomVersion)))
+	if err != nil {
+		return fmt.Errorf("%s: %w", message, err)
+	}
+	return spec.HTTPError{
+		Code:     http.StatusBadRequest,
+		Contents: contents,
+		Message:  message,
+	}
 }
 
 func (a *FederationInternalAPI) SendJoin(

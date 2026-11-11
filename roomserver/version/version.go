@@ -18,10 +18,41 @@ func RoomVersions() map[gomatrixserverlib.RoomVersion]gomatrixserverlib.IRoomVer
 	return gomatrixserverlib.RoomVersions()
 }
 
+// unsupportedRoomVersions lists the room versions gomatrixserverlib knows
+// but this server does not implement. They are not advertised in
+// /capabilities, cannot be created or upgraded to, and the server refuses to
+// join, knock on or be invited into rooms of these versions. Events of these
+// versions can still be parsed through RoomVersion.
+//
+// To support one of these versions, implement it and drop it from this set.
+var unsupportedRoomVersions = map[gomatrixserverlib.RoomVersion]struct{}{
+	// MSC4242 state DAGs: locally built events never set prev_state_events
+	// and nothing derives auth events from the state DAG. Synapse also only
+	// enables it behind an experimental flag.
+	gomatrixserverlib.RoomVersionStateDAGs: {},
+}
+
 // SupportedRoomVersions returns a map of descriptions for room
 // versions that are supported by this homeserver.
 func SupportedRoomVersions() map[gomatrixserverlib.RoomVersion]gomatrixserverlib.IRoomVersion {
-	return gomatrixserverlib.RoomVersions()
+	known := gomatrixserverlib.RoomVersions()
+	supported := make(map[gomatrixserverlib.RoomVersion]gomatrixserverlib.IRoomVersion, len(known))
+	for v, impl := range known {
+		if IsSupportedRoomVersion(v) {
+			supported[v] = impl
+		}
+	}
+	return supported
+}
+
+// IsSupportedRoomVersion reports whether the room version is known and
+// implemented by this server.
+func IsSupportedRoomVersion(version gomatrixserverlib.RoomVersion) bool {
+	if !gomatrixserverlib.KnownRoomVersion(version) {
+		return false
+	}
+	_, unsupported := unsupportedRoomVersions[version]
+	return !unsupported
 }
 
 // RoomVersion returns information about a specific room version.
@@ -39,7 +70,14 @@ func RoomVersion(version gomatrixserverlib.RoomVersion) (gomatrixserverlib.IRoom
 // known to the server, or an UnsupportedVersionError is returned if
 // the version is known but specifically marked as unsupported.
 func SupportedRoomVersion(version gomatrixserverlib.RoomVersion) (gomatrixserverlib.IRoomVersion, error) {
-	return RoomVersion(version)
+	impl, err := RoomVersion(version)
+	if err != nil {
+		return nil, err
+	}
+	if _, unsupported := unsupportedRoomVersions[version]; unsupported {
+		return nil, UnsupportedVersionError{version}
+	}
+	return impl, nil
 }
 
 // UnknownVersionError is caused when the room version is not known.
@@ -58,5 +96,5 @@ type UnsupportedVersionError struct {
 }
 
 func (e UnsupportedVersionError) Error() string {
-	return fmt.Sprintf("room version '%s' is marked as unsupported", e.Version)
+	return fmt.Sprintf("room version '%s' is not supported by this server", e.Version)
 }

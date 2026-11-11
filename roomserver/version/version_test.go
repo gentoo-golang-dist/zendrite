@@ -6,6 +6,7 @@
 package version
 
 import (
+	"errors"
 	"testing"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -22,4 +23,40 @@ func TestSupportedRoomVersionMSC3389(t *testing.T) {
 	assert.False(t, impl.Stable())
 	_, ok := SupportedRoomVersions()[gomatrixserverlib.RoomVersionMSC3389]
 	assert.True(t, ok)
+}
+
+// The MSC4242 state-DAG room version is known to gomatrixserverlib but not
+// implemented here, so it must not count as supported. Every other known
+// version stays supported, and RoomVersion still resolves the excluded one.
+func TestUnimplementedRoomVersionsAreUnsupported(t *testing.T) {
+	stateDAGs := gomatrixserverlib.RoomVersionStateDAGs
+
+	assert.NotContains(t, SupportedRoomVersions(), stateDAGs)
+	assert.False(t, IsSupportedRoomVersion(stateDAGs))
+	_, err := SupportedRoomVersion(stateDAGs)
+	var unsupported UnsupportedVersionError
+	require.True(t, errors.As(err, &unsupported), "got %v", err)
+	assert.Equal(t, stateDAGs, unsupported.Version)
+
+	impl, err := RoomVersion(stateDAGs)
+	require.NoError(t, err)
+	assert.Equal(t, stateDAGs, impl.Version())
+
+	for v := range RoomVersions() {
+		if v == stateDAGs {
+			continue
+		}
+		assert.Contains(t, SupportedRoomVersions(), v)
+		assert.True(t, IsSupportedRoomVersion(v), v)
+		_, err = SupportedRoomVersion(v)
+		assert.NoError(t, err, v)
+	}
+	for _, v := range []gomatrixserverlib.RoomVersion{gomatrixserverlib.RoomVersionPseudoIDs, gomatrixserverlib.RoomVersionHydra, gomatrixserverlib.RoomVersionV12} {
+		assert.True(t, IsSupportedRoomVersion(v), v)
+	}
+
+	_, err = SupportedRoomVersion("org.example.nope")
+	var unknown UnknownVersionError
+	assert.True(t, errors.As(err, &unknown), "got %v", err)
+	assert.False(t, IsSupportedRoomVersion("org.example.nope"))
 }

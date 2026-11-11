@@ -8,6 +8,8 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"github.com/goccy/go-yaml"
 	log "github.com/sirupsen/logrus"
+
+	"codefloe.com/pat-s/zendrite/roomserver/version"
 )
 
 // AutoPurgeMode controls when the roomserver auto-purges rooms with no
@@ -130,7 +132,7 @@ func (c *RoomServer) Verify(configErrs *ConfigErrors) {
 		checkNotEmpty(configErrs, "room_server.database.connection_string", string(c.Database.ConnectionString))
 	}
 
-	if !gomatrixserverlib.KnownRoomVersion(c.DefaultRoomVersion) {
+	if !version.IsSupportedRoomVersion(c.DefaultRoomVersion) {
 		configErrs.Add(fmt.Sprintf("invalid value for config key 'room_server.default_room_version': unsupported room version: %q", c.DefaultRoomVersion))
 	} else if !gomatrixserverlib.StableRoomVersion(c.DefaultRoomVersion) {
 		log.Warnf("WARNING: Provided default room version %q is unstable", c.DefaultRoomVersion)

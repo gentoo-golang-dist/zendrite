@@ -241,3 +241,47 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 		})
 	}
 }
+
+// An invite into a room version this server knows but does not implement
+// (MSC4242 state DAGs) is refused with M_INCOMPATIBLE_ROOM_VERSION before it
+// reaches the roomserver. Zendrite cannot build state-DAG events, so the
+// invite is hand-written.
+func TestInviteV2UnimplementedRoomVersion(t *testing.T) {
+	stateDAGs := gomatrixserverlib.RoomVersionStateDAGs
+	inviteJSON := []byte(`{"type":"m.room.member","state_key":"@bob:localhost","sender":"@alice:remote",` +
+		`"room_id":"!AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","content":{"membership":"invite"},"prev_events":[],"prev_state_events":[],` +
+		`"depth":1,"origin":"remote","origin_server_ts":1}`)
+	invite, err := gomatrixserverlib.MustGetRoomVersion(stateDAGs).NewEventFromUntrustedJSON(inviteJSON)
+	require.NoError(t, err)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"room_version": stateDAGs,
+		"event":        json.RawMessage(invite.JSON()),
+	})
+	require.NoError(t, err)
+	path := fmt.Sprintf("/_matrix/federation/v2/invite/%s/%s", invite.RoomID().String(), invite.EventID())
+	req := fclient.NewFederationRequest(http.MethodPut, "remote", inviteLocalServer, path)
+	require.NoError(t, req.SetContent(json.RawMessage(reqBody)))
+	httpReq, err := req.HTTPRequest()
+	require.NoError(t, err)
+	cfg := &config.FederationAPI{Matrix: &config.Global{
+		SigningIdentity: fclient.SigningIdentity{ServerName: inviteLocalServer},
+	}}
+
+	rsAPI := &inviteRoomserverAPI{}
+	res := routing.InviteV2(httpReq, &req, invite.RoomID(), invite.EventID(), cfg, rsAPI, &test.NopJSONVerifier{})
+	body, err := json.Marshal(res.JSON)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, res.Code, string(body))
+	assert.Equal(t, "M_INCOMPATIBLE_ROOM_VERSION", gjson.GetBytes(body, "errcode").Str, string(body))
+	assert.Equal(t, string(stateDAGs), gjson.GetBytes(body, "room_version").Str, string(body))
+	assert.Empty(t, rsAPI.handled)
+
+	// An invite in an implemented version still goes through.
+	alice := test.NewUser(t)
+	room := test.NewRoom(t, alice, test.RoomVersion(gomatrixserverlib.RoomVersionV12))
+	v12Invite := room.CreateEvent(t, alice, spec.MRoomMember, map[string]any{"membership": spec.Invite}, test.WithStateKey("@bob:"+string(inviteLocalServer)))
+	rsAPI, code, body := sendInviteV2(t, room, v12Invite, inviteState(t, room.CurrentState(), false))
+	require.Equal(t, http.StatusOK, code, string(body))
+	assert.Len(t, rsAPI.handled, 1)
+}
