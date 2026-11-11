@@ -23,6 +23,11 @@ import (
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
 
+// joinRoomResponse is the body of a successful join.
+type joinRoomResponse struct {
+	RoomID string `json:"room_id"`
+}
+
 func JoinRoomByIDOrAlias(
 	req *http.Request,
 	device *api.Device,
@@ -123,10 +128,7 @@ func joinRoomByIDOrAlias(
 	case err == nil: // success case
 		response = util.JSONResponse{
 			Code: http.StatusOK,
-			// TODO: Put the response struct somewhere internal.
-			JSON: struct {
-				RoomID string `json:"room_id"`
-			}{roomID},
+			JSON: joinRoomResponse{RoomID: roomID},
 		}
 	case errors.As(err, &errInvalidID):
 		response = util.JSONResponse{

@@ -622,6 +622,17 @@ func Setup(
 			return CreateRoom(req, device, cfg, userAPI, rsAPI, asAPI, natsClient)
 		}, httputil.WithDenySuspended()),
 	).Methods(http.MethodPost, http.MethodOptions)
+	// The sync API receives a join's event from the roomserver after the join
+	// returns. Joins wait for it, as createRoom does, so that a sync straight
+	// after the join returns a token that includes it. Otherwise the next
+	// sync sees the room as newly joined and sends its timeline from the
+	// start in topological order (MSC4445) instead of the events since then.
+	syncedEventTopic := cfg.Matrix.JetStream.Prefixed(jetstream.RequestSyncedEvent)
+	waitForSyncedJoin := func(ctx context.Context, res util.JSONResponse) {
+		if joined, ok := res.JSON.(joinRoomResponse); ok && res.Code == http.StatusOK {
+			waitForSyncedRoom(ctx, rsAPI, natsClient, syncedEventTopic, joined.RoomID)
+		}
+	}
 	v3mux.Handle("/join/{roomIDOrAlias}",
 		httputil.MakeAuthAPI(spec.Join, userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 			if r := rateLimits.Limit(req, device); r != nil {
@@ -634,9 +645,11 @@ func Setup(
 			// Only execute a join for roomIDOrAlias and UserID once. If there is a join in progress
 			// it waits for it to complete and returns that result for subsequent requests.
 			resp, _, _ := sf.Do(vars["roomIDOrAlias"]+device.UserID, func() (any, error) {
-				return JoinRoomByIDOrAlias(
+				res := JoinRoomByIDOrAlias(
 					req, device, rsAPI, userAPI, vars["roomIDOrAlias"],
-				), nil
+				)
+				waitForSyncedJoin(req.Context(), res)
+				return res, nil
 			})
 			// once all joins are processed, drop them from the cache. Further requests
 			// will be processed as usual.
@@ -704,9 +717,11 @@ func Setup(
 			// Only execute a join for roomID and UserID once. If there is a join in progress
 			// it waits for it to complete and returns that result for subsequent requests.
 			resp, _, _ := sf.Do(vars["roomID"]+device.UserID, func() (any, error) {
-				return JoinRoomByIDOrAlias(
+				res := JoinRoomByIDOrAlias(
 					req, device, rsAPI, userAPI, vars["roomID"],
-				), nil
+				)
+				waitForSyncedJoin(req.Context(), res)
+				return res, nil
 			})
 			// once all joins are processed, drop them from the cache. Further requests
 			// will be processed as usual.
@@ -872,6 +887,9 @@ func Setup(
 				return delayedEvents.Schedule(req, device, vars["roomID"], vars["eventType"], nil, &stateKey)
 			}
 			if res, handled := SendMembershipStateEvent(req, device, vars["roomID"], vars["eventType"], stateKey, rsAPI, userAPI); handled {
+				if res.Code == http.StatusOK {
+					waitForSyncedRoom(req.Context(), rsAPI, natsClient, syncedEventTopic, vars["roomID"])
+				}
 				return res
 			}
 			return SendEvent(req, device, vars["roomID"], vars["eventType"], nil, &stateKey, cfg, rsAPI, nil, federation)

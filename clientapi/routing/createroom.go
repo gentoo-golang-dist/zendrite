@@ -164,7 +164,7 @@ func CreateRoom(
 	return res
 }
 
-// syncedRoomWait bounds how long CreateRoom waits for the sync API.
+// syncedRoomWait bounds how long createRoom and joins wait for the sync API.
 const syncedRoomWait = 5 * time.Second
 
 // waitForSyncedRoom waits until the sync API reports that a sync token taken
@@ -181,7 +181,7 @@ func waitForSyncedRoom(
 		RoomID:       roomID,
 		StateToFetch: []gomatrixserverlib.StateKeyTuple{{EventType: spec.MRoomCreate, StateKey: ""}},
 	}, &latest); err != nil {
-		util.GetLogger(ctx).WithError(err).Warn("createRoom: unable to query the room's latest events")
+		util.GetLogger(ctx).WithError(err).Warn("Unable to query the room's latest events to wait for the sync API")
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, syncedRoomWait)
