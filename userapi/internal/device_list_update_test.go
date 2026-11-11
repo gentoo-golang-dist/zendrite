@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -50,10 +51,30 @@ type mockDeviceListUpdaterDatabase struct {
 	staleUsers   map[string]bool
 	prevIDsExist func(string, []int64) bool
 	storedKeys   []api.DeviceMessage
+	forgotten    []string
 	mu           sync.Mutex // protect staleUsers
 }
 
 func (d *mockDeviceListUpdaterDatabase) DeleteStaleDeviceLists(ctx context.Context, userIDs []string) error {
+	return nil
+}
+
+func (d *mockDeviceListUpdaterDatabase) AddPartialStateDeviceListUpdate(context.Context, string, string) error {
+	return nil
+}
+
+func (d *mockDeviceListUpdaterDatabase) PartialStateDeviceListUpdates(context.Context) (map[string][]string, error) {
+	return nil, nil
+}
+
+func (d *mockDeviceListUpdaterDatabase) DeletePartialStateDeviceListUpdates(context.Context, []string) error {
+	return nil
+}
+
+func (d *mockDeviceListUpdaterDatabase) ForgetRemoteDeviceList(_ context.Context, userID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.forgotten = append(d.forgotten, userID)
 	return nil
 }
 
@@ -370,6 +391,21 @@ type mockKeyserverRoomserverAPI struct {
 	leftUsers []string
 }
 
+func (m *mockKeyserverRoomserverAPI) GetPartialStateRoomIDs(context.Context) ([]string, error) {
+	return nil, nil
+}
+
+// QueryUsersInRooms reports every user but the left ones as sharing a room.
+func (m *mockKeyserverRoomserverAPI) QueryUsersInRooms(_ context.Context, userIDs []string) ([]string, error) {
+	var in []string
+	for _, userID := range userIDs {
+		if !slices.Contains(m.leftUsers, userID) {
+			in = append(in, userID)
+		}
+	}
+	return in, nil
+}
+
 func (m *mockKeyserverRoomserverAPI) QueryLeftUsers(ctx context.Context, req *roomserver.QueryLeftUsersRequest, res *roomserver.QueryLeftUsersResponse) error {
 	res.LeftUsers = m.leftUsers
 	return nil
@@ -421,6 +457,26 @@ func TestDeviceListUpdater_CleanUp(t *testing.T) {
 			t.Fatalf("unexpected stale device list user: %s, want %s", staleUsers[0], alice.ID)
 		}
 	})
+}
+
+// TestHandleRoomUnPartialStatedForgetsUntrackedUsers checks that the device
+// lists kept of the users that a room's full state shows were not in it are
+// dropped, unless they share another room with this server (MSC3902).
+func TestHandleRoomUnPartialStatedForgetsUntrackedUsers(t *testing.T) {
+	db := &mockDeviceListUpdaterDatabase{staleUsers: map[string]bool{}}
+	rsAPI := &mockKeyserverRoomserverAPI{leftUsers: []string{"@elsie:remote"}}
+	updater := NewDeviceListUpdater(process.NewProcessContext(), db, &mockDeviceListUpdaterAPI{}, &mockKeyChangeProducer{}, nil, 1, rsAPI, "localhost", caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+
+	err := updater.HandleRoomUnPartialStated(ctx, &roomserver.OutputUnPartialStatedRoom{
+		RoomID:    "!room:remote",
+		LeftUsers: []string{"@elsie:remote", "@fred:remote"},
+	})
+	if err != nil {
+		t.Fatalf("HandleRoomUnPartialStated: %s", err)
+	}
+	if !reflect.DeepEqual(db.forgotten, []string{"@elsie:remote"}) {
+		t.Errorf("forgot %v, want only @elsie:remote, as @fred:remote shares another room", db.forgotten)
+	}
 }
 
 func Test_dedupeStateList(t *testing.T) {

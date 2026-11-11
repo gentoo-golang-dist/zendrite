@@ -8,6 +8,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -25,33 +26,45 @@ import (
 )
 
 const (
-	partialStateWorkerCount = 4
-	// Initial backoff delay after first failure.
-	partialStateMinBackoff = time.Minute * 1
+	// Initial backoff delay after a resync failed with every server.
+	partialStateMinBackoff = time.Second * 5
 	// Maximum backoff delay (cap).
 	partialStateMaxBackoff = time.Hour * 1
-	// Maximum number of retries before giving up on a room.
-	partialStateMaxRetries = 16
 	// Jitter bounds for backoff calculation.
 	maxJitterMultiplier = 1.4
 	minJitterMultiplier = 0.8
+	// How many partial-state events the resync takes from the roomserver at
+	// a time.
+	partialStateBatchSize = 50
+	// How long a /state_ids request of the resync may take: the state of a
+	// large room takes a while to serve.
+	partialStateStateIDsTimeout = 5 * time.Minute
 )
 
-// roomRetryInfo tracks retry state for a single room.
-type roomRetryInfo struct {
-	retryAt    time.Time
-	retryCount uint32
-}
-
-// PartialStateWorker handles background resync of rooms with partial state from MSC3706 faster joins.
-// After a partial state join, this worker fetches the full room state in the background.
+// PartialStateWorker resyncs the full state of rooms joined with partial
+// state (MSC3706, MSC3902) in the background, one goroutine per room, as
+// Synapse does.
+//
+// The roomserver records which events have partial state. The resync works
+// through them oldest first: it asks another server for the state before the
+// prev events this server has no full state for (/state_ids at the join's
+// prev events, to begin with), fetches the events it lacks, and has the
+// roomserver recalculate and check each event against the full state. Once
+// no event with partial state is left, the roomserver calculates the room's
+// current state and clears its partial-state flag. Everything it relies on
+// is stored, so a resync that is interrupted, by a restart or a failover,
+// resumes with the events that are left.
 type PartialStateWorker struct {
-	process  *process.ProcessContext
-	rsAPI    roomserverAPI.FederationRoomserverAPI
-	fedAPI   *FederationInternalAPI
-	workerCh chan types.RoomNID
-	retryMu  sync.Mutex
-	retryMap map[types.RoomNID]*roomRetryInfo
+	process *process.ProcessContext
+	rsAPI   roomserverAPI.FederationRoomserverAPI
+	fedAPI  *FederationInternalAPI
+
+	mu sync.Mutex
+	// active holds the rooms with a running resync. A room queued again
+	// while its resync runs is marked to be looked at again when it ends,
+	// as a new partial join may have made the room partial again.
+	active map[types.RoomNID]bool
+	again  map[types.RoomNID]bool
 }
 
 // NewPartialStateWorker creates a new partial state worker.
@@ -61,11 +74,11 @@ func NewPartialStateWorker(
 	fedAPI *FederationInternalAPI,
 ) *PartialStateWorker {
 	return &PartialStateWorker{
-		process:  processCtx,
-		rsAPI:    rsAPI,
-		fedAPI:   fedAPI,
-		workerCh: make(chan types.RoomNID, 100),
-		retryMap: make(map[types.RoomNID]*roomRetryInfo),
+		process: processCtx,
+		rsAPI:   rsAPI,
+		fedAPI:  fedAPI,
+		active:  make(map[types.RoomNID]bool),
+		again:   make(map[types.RoomNID]bool),
 	}
 }
 
@@ -79,398 +92,301 @@ func (w *PartialStateWorker) backoffDuration(retryCount uint32) time.Duration {
 	backoff := float64(partialStateMinBackoff) * math.Pow(2, float64(retryCount)) * jitter //nolint:mnd
 
 	duration := time.Duration(backoff)
-	if duration > partialStateMaxBackoff {
+	if duration > partialStateMaxBackoff || duration <= 0 {
 		duration = partialStateMaxBackoff
 	}
 	return duration
 }
 
-// Start begins the partial state worker, queuing all rooms with partial state for processing.
+// Start resumes the resync of every room that is still in partial state.
 func (w *PartialStateWorker) Start() error {
 	// Skip if rsAPI is not available (e.g., in tests)
 	if w.rsAPI == nil {
 		return nil
 	}
-
-	// Start worker goroutines
-	for i := 0; i < partialStateWorkerCount; i++ {
-		w.process.Go(func() { w.worker(i) })
-	}
-
-	// Start retry goroutine
-	w.process.Go(w.retryLoop)
-
-	// Queue all rooms with partial state for processing
 	roomNIDs, err := w.rsAPI.GetAllPartialStateRooms(w.process.Context())
 	if err != nil {
 		logrus.WithError(err).Error("Failed to load partial state rooms on startup")
 		return err
 	}
-
 	if len(roomNIDs) > 0 {
-		logrus.WithField("count", len(roomNIDs)).Info("Queuing partial state rooms for background resync")
-
-		// Stagger the initial queue to avoid thundering herd
-		offset := time.Second * 5 //nolint:mnd
-		step := time.Second
-		if max := len(roomNIDs); max > 60 { //nolint:mnd
-			step = (time.Second * 60) / time.Duration(max) //nolint:mnd
+		logrus.WithField("count", len(roomNIDs)).Info("Resuming the partial state resync of rooms")
+		// Stagger many rooms so as not to start every resync at once.
+		step := 100 * time.Millisecond   //nolint:mnd
+		if n := len(roomNIDs); n > 600 { //nolint:mnd
+			step = time.Minute / time.Duration(n)
 		}
-
-		process.Stagger(w.process.Context(), roomNIDs, offset, step, w.QueueRoom)
+		process.Stagger(w.process.Context(), roomNIDs, 0, step, w.QueueRoom)
 	}
-
 	return nil
 }
 
-// QueueRoom adds a room to the queue for partial state processing.
+// QueueRoom starts the resync of a room, unless one is running already.
 func (w *PartialStateWorker) QueueRoom(roomNID types.RoomNID) {
-	select {
-	case w.workerCh <- roomNID:
-	default:
-		// Channel full, add to retry map with no retry count increment
-		w.retryMu.Lock()
-		if _, exists := w.retryMap[roomNID]; !exists {
-			w.retryMap[roomNID] = &roomRetryInfo{
-				retryAt:    time.Now().Add(time.Second * 30), //nolint:mnd
-				retryCount: 0,
-			}
-		}
-		w.retryMu.Unlock()
+	if w.process.Context().Err() != nil {
+		return
 	}
+	w.mu.Lock()
+	if w.active[roomNID] {
+		w.again[roomNID] = true
+		w.mu.Unlock()
+		return
+	}
+	w.active[roomNID] = true
+	w.mu.Unlock()
+	w.process.Go(func() { w.run(roomNID) })
 }
 
-// worker processes rooms from the channel.
-func (w *PartialStateWorker) worker(workerID int) {
-	for {
-		var roomNID types.RoomNID
-		select {
-		case <-w.process.Context().Done():
-			return
-		case room, ok := <-w.workerCh:
-			if !ok {
-				return
-			}
-			roomNID = room
+// run resyncs a room until it has full state, it is gone, or the server shuts
+// down, retrying with backoff while no server can give the state.
+func (w *PartialStateWorker) run(roomNID types.RoomNID) {
+	defer func() {
+		w.mu.Lock()
+		again := w.again[roomNID]
+		delete(w.again, roomNID)
+		delete(w.active, roomNID)
+		w.mu.Unlock()
+		if again {
+			w.QueueRoom(roomNID)
 		}
-		if w.process.Context().Err() != nil {
+	}()
+	ctx := w.process.Context()
+	for attempt := uint32(0); ; attempt++ {
+		err := w.processRoom(ctx, roomNID)
+		if err == nil {
 			return
 		}
-
-		if err := w.processRoom(roomNID); err != nil {
-			// Get current retry count
-			w.retryMu.Lock()
-			info, exists := w.retryMap[roomNID]
-			if !exists {
-				info = &roomRetryInfo{retryCount: 0}
-			}
-			info.retryCount++
-
-			logger := logrus.WithFields(logrus.Fields{
-				"room_nid":    roomNID,
-				"worker_id":   workerID,
-				"retry_count": info.retryCount,
-			})
-
-			// Check if we've exceeded max retries
-			if info.retryCount >= partialStateMaxRetries {
-				logger.WithError(err).Error("Giving up on partial state resync after max retries")
-				// Remove from retry map - we're giving up
-				delete(w.retryMap, roomNID)
-				w.retryMu.Unlock()
-				continue
-			}
-
-			// Schedule retry with exponential backoff
-			backoff := w.backoffDuration(info.retryCount)
-			info.retryAt = time.Now().Add(backoff)
-			w.retryMap[roomNID] = info
-			w.retryMu.Unlock()
-
-			logger.WithError(err).WithField("retry_in", backoff).Warn("Failed to resync partial state room, will retry with backoff")
-		} else {
-			// Success - clear retry info
-			w.retryMu.Lock()
-			delete(w.retryMap, roomNID)
-			w.retryMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		backoff := w.backoffDuration(attempt)
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"room_nid": roomNID,
+			"attempt":  attempt + 1,
+			"retry_in": backoff,
+		}).Warn("Partial state resync failed, will retry")
+		if !process.Sleep(ctx, backoff) {
+			return
 		}
 	}
 }
 
-// retryLoop periodically retries failed rooms.
-func (w *PartialStateWorker) retryLoop() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-w.process.Context().Done():
-			return
-		case <-ticker.C:
-			w.retryMu.Lock()
-			now := time.Now()
-			var toRetry []types.RoomNID
-			for roomNID, info := range w.retryMap {
-				if now.After(info.retryAt) {
-					toRetry = append(toRetry, roomNID)
-				}
-			}
-			// Don't delete from retryMap here - the worker will update it on failure
-			// or delete it on success. We only need to re-queue the room.
-			w.retryMu.Unlock()
-
-			for _, roomNID := range toRetry {
-				// Send directly to channel instead of QueueRoom to preserve retry state
-				select {
-				case w.workerCh <- roomNID:
-				default:
-					// Channel full, will be picked up on next tick
-				}
-			}
-		}
-	}
-}
-
-// processRoom fetches the full state for a room with partial state.
-func (w *PartialStateWorker) processRoom(roomNID types.RoomNID) error {
-	trace, ctx := internal.StartTask(w.process.Context(), "PartialStateWorker.processRoom")
+// processRoom resyncs the state of a room with partial state.
+func (w *PartialStateWorker) processRoom(ctx context.Context, roomNID types.RoomNID) error {
+	trace, ctx := internal.StartTask(ctx, "PartialStateWorker.processRoom")
 	defer trace.EndTask()
 	trace.SetTag("room_nid", roomNID)
 
-	resyncStartTime := time.Now()
-	logger := logrus.WithFields(logrus.Fields{
-		"room_nid": roomNID,
-		"trace":    "join_timing",
-	})
-
-	hasPartialState, err := w.rsAPI.IsRoomPartialState(ctx, roomNID)
+	partial, err := w.rsAPI.IsRoomPartialState(ctx, roomNID)
 	if err != nil {
 		return err
 	}
-	if !hasPartialState {
-		logger.Debug("Room no longer has partial state, skipping")
+	if !partial {
 		return nil
 	}
-
-	servers, err := w.rsAPI.GetPartialStateServers(ctx, roomNID)
+	roomID, err := w.rsAPI.RoomIDFromNID(ctx, roomNID)
 	if err != nil {
-		return err
+		return fmt.Errorf("RoomIDFromNID: %w", err)
 	}
-
+	roomInfo, err := w.rsAPI.RoomInfoByNID(ctx, roomNID)
+	if err != nil {
+		return fmt.Errorf("RoomInfoByNID: %w", err)
+	}
+	if roomInfo == nil {
+		return fmt.Errorf("room %s is gone", roomID)
+	}
 	joinServer, err := w.rsAPI.GetPartialStateJoinServer(ctx, roomNID)
 	if err != nil {
 		return err
 	}
-
-	roomID, err := w.rsAPI.RoomIDFromNID(ctx, roomNID)
-	if err != nil {
-		logger.WithError(err).Warn("Room not found for partial state room")
-		_, err = w.rsAPI.ClearRoomPartialState(ctx, roomNID)
-		return err
-	}
-
-	roomInfo, err := w.rsAPI.RoomInfoByNID(ctx, roomNID)
+	servers, err := w.rsAPI.GetPartialStateServers(ctx, roomNID)
 	if err != nil {
 		return err
 	}
-	if roomInfo == nil {
-		logger.Warn("Room info not found for partial state room")
-		_, err = w.rsAPI.ClearRoomPartialState(ctx, roomNID)
-		return err
+	logger := logrus.WithFields(logrus.Fields{"room_id": roomID, "room_nid": roomNID})
+	destinations := w.buildServerList(joinServer, servers)
+	if len(destinations) == 0 {
+		return fmt.Errorf("no servers to resync the state of %s from", roomID)
 	}
-
-	logger = logger.WithField("room_id", roomID)
 	trace.SetTag("room_id", roomID)
-	logger.Info("Starting partial state resync")
+	logger.WithField("server", destinations[0]).Info("Resyncing the state of a room joined with partial state")
 
-	latestEventIDs, _, _, err := w.rsAPI.LatestEventIDs(ctx, roomNID)
-	if err != nil {
-		return fmt.Errorf("failed to get latest events: %w", err)
-	}
-	if len(latestEventIDs) == 0 {
-		return fmt.Errorf("no latest events found for room")
-	}
-
-	// Build an ordered server list: join server first (always tried, even if
-	// backing off), then other available servers.
-	origin := w.fedAPI.cfg.Matrix.ServerName
-	orderedServers := w.buildServerList(logger, joinServer, servers)
-	if len(orderedServers) == 0 {
-		return fmt.Errorf("no servers available for partial state resync (all blacklisted or backing off, no join server)")
-	}
-
-	var lastErr error
-	for i, entry := range orderedServers {
-		serverName := entry.name
-		logger := logger.WithField("server", serverName)
-
-		stateEventIDs, err := w.fetchStateViaStateIDs(
-			ctx, logger, origin, serverName, roomID, latestEventIDs[0],
-			roomInfo.RoomVersion, entry.bypassBackoff, orderedServers,
-		)
-		if err != nil {
-			logger.WithError(err).Warn("Failed to fetch state from server")
-			lastErr = err
-			// If this was the join server and it failed, don't give up — try others.
-			if i == 0 && len(orderedServers) > 1 {
+	started := time.Now()
+	current := 0
+	for {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		batch, berr := w.rsAPI.PartialStateResyncBatch(ctx, roomID, partialStateBatchSize)
+		if berr != nil {
+			return fmt.Errorf("PartialStateResyncBatch: %w", berr)
+		}
+		if len(batch) == 0 {
+			cleared, cerr := w.rsAPI.CompletePartialStateResync(ctx, roomID)
+			if cerr != nil {
+				return fmt.Errorf("CompletePartialStateResync: %w", cerr)
+			}
+			if !cleared {
+				// An event with partial state arrived meanwhile.
 				continue
 			}
-			continue
+			logger.WithField("duration", time.Since(started)).Info("Partial state resync complete")
+			return nil
 		}
-
-		if err = w.applyState(ctx, logger, roomID, roomNID, roomInfo, stateEventIDs, resyncStartTime); err != nil {
-			lastErr = err
-			continue
+		for _, eventID := range batch {
+			if current, err = w.resyncEvent(ctx, logger, roomID, roomInfo.RoomVersion, eventID, destinations, current); err != nil {
+				if errors.Is(err, roomserverAPI.ErrPartialStatePrevEvents) {
+					// Its prev event became partial meanwhile: take a new batch.
+					break
+				}
+				return err
+			}
 		}
-		return nil
 	}
-
-	return lastErr
 }
 
-type serverEntry struct {
-	name          spec.ServerName
-	bypassBackoff bool
+// resyncEvent has the roomserver recalculate the state of one partial-state
+// event, fetching the state before the prev events it has no full state for
+// from the servers in turn, starting with the current one. It returns the
+// server to start with next time.
+func (w *PartialStateWorker) resyncEvent(
+	ctx context.Context, logger *logrus.Entry, roomID string, roomVersion gomatrixserverlib.RoomVersion,
+	eventID string, destinations []spec.ServerName, current int,
+) (int, error) {
+	statesBefore := map[string][]string{}
+	failures := 0
+	for {
+		needState, err := w.rsAPI.ResyncPartialStateEvent(ctx, roomID, eventID, statesBefore)
+		if err != nil {
+			return current, err
+		}
+		if len(needState) == 0 {
+			return current, nil
+		}
+		for _, prevID := range needState {
+			server := destinations[current%len(destinations)]
+			stateIDs, ferr := w.fetchStateBefore(ctx, logger, roomID, roomVersion, prevID, server, destinations)
+			if ferr != nil {
+				logger.WithError(ferr).WithFields(logrus.Fields{
+					"server":   server,
+					"event_id": prevID,
+				}).Warn("Failed to fetch the state before an event for a partial state resync")
+				failures++
+				if failures >= len(destinations) {
+					return current, fmt.Errorf("no server gave the state before %s: %w", prevID, ferr)
+				}
+				current++
+				break
+			}
+			statesBefore[prevID] = stateIDs
+		}
+	}
 }
 
-// buildServerList constructs an ordered list of servers to try for state
-// fetching. The join server is always first and bypasses backoff checks
-// (it processed our join recently, so it's known alive). Other servers
-// are filtered by backoff/blacklist status.
-func (w *PartialStateWorker) buildServerList(logger *logrus.Entry, joinServer string, servers []string) []serverEntry {
-	var result []serverEntry
-
-	// Join server always goes first and bypasses backoff.
-	if joinServer != "" {
-		result = append(result, serverEntry{
-			name:          spec.ServerName(joinServer),
-			bypassBackoff: true,
-		})
-	}
-
-	for _, serverStr := range servers {
-		if serverStr == joinServer {
-			continue // Already added as first entry.
-		}
-		serverName := spec.ServerName(serverStr)
-		if _, err := w.fedAPI.IsBlacklistedOrBackingOff(serverName); err != nil {
-			logger.WithField("server", serverName).Debug("Skipping server for partial state resync (blacklisted or backing off)")
-			continue
-		}
-		result = append(result, serverEntry{
-			name:          serverName,
-			bypassBackoff: false,
-		})
-	}
-
-	return result
-}
-
-// fetchStateViaStateIDs fetches the room state using /state_ids to get event
-// IDs, then fetches missing events in parallel via /event. This is more
-// resilient than /state for large rooms because individual event fetches can
-// come from different servers and failures are granular.
-func (w *PartialStateWorker) fetchStateViaStateIDs(
-	ctx context.Context,
-	logger *logrus.Entry,
-	origin, serverName spec.ServerName,
-	roomID, eventID string,
-	roomVersion gomatrixserverlib.RoomVersion,
-	bypassBackoff bool,
-	allServers []serverEntry,
+// fetchStateBefore fetches the IDs of the state before an event from a
+// server with /state_ids, and stores the event and every state and auth event
+// this server lacks as outliers, fetching them with /event.
+func (w *PartialStateWorker) fetchStateBefore(
+	ctx context.Context, logger *logrus.Entry, roomID string, roomVersion gomatrixserverlib.RoomVersion,
+	eventID string, server spec.ServerName, destinations []spec.ServerName,
 ) ([]string, error) {
-	trace, ctx := internal.StartRegion(ctx, "fetchStateViaStateIDs")
+	trace, ctx := internal.StartRegion(ctx, "fetchStateBefore")
 	defer trace.EndRegion()
 
-	// Step 1: Get state event IDs from /state_ids.
-	var stateIDs gomatrixserverlib.StateIDResponse
-	var err error
-	if bypassBackoff {
-		stateIDs, err = w.fedAPI.LookupStateIDsBypassBackoff(ctx, origin, serverName, roomID, eventID)
-	} else {
-		stateIDs, err = w.fedAPI.LookupStateIDs(ctx, origin, serverName, roomID, eventID)
-	}
+	origin := w.fedAPI.cfg.Matrix.ServerName
+	reqCtx, cancel := context.WithTimeout(ctx, partialStateStateIDsTimeout)
+	defer cancel()
+	stateIDs, err := w.fedAPI.LookupStateIDsBypassBackoff(reqCtx, origin, server, roomID, eventID)
 	if err != nil {
-		return nil, fmt.Errorf("LookupStateIDs from %s: %w", serverName, err)
+		return nil, fmt.Errorf("LookupStateIDs: %w", err)
 	}
-
 	wantIDs := stateIDs.GetStateEventIDs()
-	authIDs := stateIDs.GetAuthEventIDs()
-	allIDs := make(map[string]bool, len(wantIDs)+len(authIDs))
+	if len(wantIDs) == 0 {
+		return nil, fmt.Errorf("%s returned no state before %s", server, eventID)
+	}
+	allIDs := make(map[string]bool, len(wantIDs)+len(stateIDs.GetAuthEventIDs())+1)
 	for _, id := range wantIDs {
 		allIDs[id] = true
 	}
-	for _, id := range authIDs {
+	for _, id := range stateIDs.GetAuthEventIDs() {
 		allIDs[id] = true
 	}
-
+	allIDs[eventID] = true
 	logger.WithFields(logrus.Fields{
+		"server":       server,
+		"event_id":     eventID,
 		"state_events": len(wantIDs),
-		"auth_events":  len(authIDs),
-		"server":       serverName,
-	}).Info("Fetched state IDs for partial state resync")
+		"auth_events":  len(stateIDs.GetAuthEventIDs()),
+	}).Info("Fetched state IDs for a partial state resync")
 
-	// Step 2: Figure out which events we already have locally. Treat rejected
-	// events as missing so we re-fetch them and give the input path another
-	// chance to verify and un-reject them (their signing key may be fetchable
-	// now even if it wasn't when the event first arrived).
-	missing := w.findMissingEvents(ctx, logger, roomID, roomVersion, allIDs, true)
-	logger.WithFields(logrus.Fields{
-		"missing": len(missing),
-		"total":   len(allIDs),
-	}).Info("Determined missing events for partial state resync")
-
-	if len(missing) == 0 {
-		return wantIDs, nil
+	if missing := w.findMissingEvents(ctx, logger, roomID, allIDs, false); len(missing) > 0 {
+		if err = w.fetchMissingEventsParallel(ctx, logger, origin, roomVersion, missing, server, destinations); err != nil {
+			return nil, err
+		}
 	}
 
-	// Step 3: Fetch missing events in parallel from multiple servers.
-	if err := w.fetchMissingEventsParallel(ctx, logger, origin, roomID, roomVersion, missing, bypassBackoff, serverName, allServers); err != nil {
-		return nil, fmt.Errorf("fetchMissingEventsParallel: %w", err)
-	}
-
-	// Step 4: Verify every wanted state event is now stored locally before we
-	// declare the resync complete. Individual fetches can fail silently:
-	// fetchSingleEvent drops events it cannot retrieve from any server, and
-	// InputRoomEvents batch-store errors are only logged. Without this gate a
-	// resync could "complete" with only a fraction of the room's state (e.g. 35
-	// of ~1.2k members), after which applyState clears the partial-state flag and
-	// the low member count is never retried or corrected (issue #247). Failing
-	// here lets processRoom try another server and retry with backoff instead.
-	//
-	// Completeness is measured by presence, not verification: an event that is
-	// stored but rejected (a signature we still cannot verify because its key is
-	// unavailable) is as complete as it will ever get, so counting it as missing
-	// here would loop forever. Step 2 already re-fetched rejected events to give
-	// verification another attempt; anything still rejected is tolerated by the
-	// snapshot builder in UpdateStateAfterResync.
-	wantSet := make(map[string]bool, len(wantIDs))
+	want := make(map[string]bool, len(wantIDs)+1)
 	for _, id := range wantIDs {
-		wantSet[id] = true
+		want[id] = true
 	}
-	if stillMissing := w.findMissingEvents(ctx, logger, roomID, roomVersion, wantSet, false); len(stillMissing) > 0 {
-		return nil, fmt.Errorf(
-			"resync incomplete: %d of %d state events still missing after fetch",
-			len(stillMissing), len(wantIDs),
-		)
+	want[eventID] = true
+	if stillMissing := w.findMissingEvents(ctx, logger, roomID, want, false); len(stillMissing) > 0 {
+		return nil, fmt.Errorf("%d of %d state events before %s could not be fetched", len(stillMissing), len(want), eventID)
 	}
 
+	// A state without the room's create event cannot be right.
+	var res roomserverAPI.QueryEventsByIDResponse
+	if err = w.rsAPI.QueryEventsByID(ctx, &roomserverAPI.QueryEventsByIDRequest{
+		RoomID:   roomID,
+		EventIDs: wantIDs,
+	}, &res); err != nil {
+		return nil, fmt.Errorf("QueryEventsByID: %w", err)
+	}
+	hasCreate := false
+	for _, ev := range res.Events {
+		if ev.Type() == spec.MRoomCreate && ev.StateKeyEquals("") {
+			hasCreate = true
+			break
+		}
+	}
+	if !hasCreate {
+		return nil, fmt.Errorf("the state %s returned before %s has no create event", server, eventID)
+	}
 	return wantIDs, nil
 }
 
-// findMissingEvents checks which of the wanted event IDs are not yet stored
-// locally and returns the missing ones. When excludeRejected is true, events
-// that are stored but rejected count as missing, so the resync re-fetches them
-// and the input path gets another chance to verify and un-reject them (e.g.
-// after a signing key that was previously unavailable can be fetched). When
-// false, any stored copy (rejected or not) counts as present, which is what the
-// final completeness gate wants: an event we can never verify must not keep the
-// resync retrying forever.
+// buildServerList returns the servers to resync from: the server the room was
+// joined through first, as Synapse does, then the other servers that were in
+// the room. Neither the resync's requests nor their failures count towards
+// the servers' backoff, so they are all tried.
+func (w *PartialStateWorker) buildServerList(joinServer string, servers []string) []spec.ServerName {
+	var result []spec.ServerName
+	own := spec.ServerName("")
+	if w.fedAPI != nil && w.fedAPI.cfg != nil {
+		own = w.fedAPI.cfg.Matrix.ServerName
+	}
+	if joinServer != "" {
+		result = append(result, spec.ServerName(joinServer))
+	}
+	for _, serverStr := range servers {
+		server := spec.ServerName(serverStr)
+		if serverStr == joinServer || server == own {
+			continue
+		}
+		if w.fedAPI != nil && w.fedAPI.cfg != nil && w.fedAPI.cfg.Matrix.IsLocalServerName(server) {
+			continue
+		}
+		result = append(result, server)
+	}
+	return result
+}
+
+// findMissingEvents returns which of the wanted events are not stored. When
+// excludeRejected is true, rejected events count as missing.
 func (w *PartialStateWorker) findMissingEvents(
 	ctx context.Context,
 	logger *logrus.Entry,
 	roomID string,
-	_ gomatrixserverlib.RoomVersion,
 	wantIDs map[string]bool,
 	excludeRejected bool,
 ) []string {
@@ -503,132 +419,103 @@ func (w *PartialStateWorker) findMissingEvents(
 	return missing
 }
 
-// fetchMissingEventsParallel fetches missing events using parallel workers.
-// Events are fetched in chunks and stored as outliers to keep memory bounded.
+// fetchMissingEventsParallel fetches missing events with /event, from the
+// given server first, and stores them as outliers, each after its auth events.
 func (w *PartialStateWorker) fetchMissingEventsParallel(
 	ctx context.Context,
 	logger *logrus.Entry,
 	origin spec.ServerName,
-	roomID string,
 	roomVersion gomatrixserverlib.RoomVersion,
 	missing []string,
-	primaryBypassBackoff bool,
 	primaryServer spec.ServerName,
-	allServers []serverEntry,
+	allServers []spec.ServerName,
 ) error {
-	const (
-		batchSize          = 1000
-		concurrentRequests = 8
-	)
-
-	logger.WithFields(logrus.Fields{
-		"missing":    len(missing),
-		"batch_size": batchSize,
-	}).Info("Fetching missing state events in parallel")
+	const concurrentRequests = 8
 
 	verImpl, err := gomatrixserverlib.GetRoomVersion(roomVersion)
 	if err != nil {
 		return fmt.Errorf("GetRoomVersion: %w", err)
 	}
+	logger.WithField("missing", len(missing)).Info("Fetching missing events for a partial state resync")
 
-	for start := 0; start < len(missing); start += batchSize {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("context canceled during chunked state fetch: %w", err)
-		}
-		end := start + batchSize
-		if end > len(missing) {
-			end = len(missing)
-		}
-		batch := missing[start:end]
+	workers := min(concurrentRequests, len(missing))
+	pending := make(chan string, len(missing))
+	for _, id := range missing {
+		pending <- id
+	}
+	close(pending)
 
-		logger.Infof("Fetching state chunk %d-%d of %d", start+1, end, len(missing))
-
-		workers := concurrentRequests
-		if len(batch) < workers {
-			workers = len(batch)
-		}
-		pending := make(chan string, len(batch))
-		for _, id := range batch {
-			pending <- id
-		}
-		close(pending)
-
-		var batchEvents []gomatrixserverlib.PDU
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		wg.Add(workers)
-		for range workers {
-			go func() {
-				defer wg.Done()
-				for eventID := range pending {
-					ev := w.fetchSingleEvent(ctx, origin, roomID, eventID, verImpl, primaryBypassBackoff, primaryServer, allServers)
-					if ev != nil {
-						mu.Lock()
-						batchEvents = append(batchEvents, ev)
-						mu.Unlock()
-					}
+	var fetched []gomatrixserverlib.PDU
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			for eventID := range pending {
+				if ev := w.fetchSingleEvent(ctx, origin, eventID, verImpl, primaryServer, allServers); ev != nil {
+					mu.Lock()
+					fetched = append(fetched, ev)
+					mu.Unlock()
 				}
-			}()
-		}
-		wg.Wait()
+			}
+		}()
+	}
+	wg.Wait()
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 
-		// Store this batch as outliers in a single InputRoomEvents call.
-		outlierInputs := make([]roomserverAPI.InputRoomEvent, 0, len(batchEvents))
-		for _, ev := range batchEvents {
-			outlierInputs = append(outlierInputs, roomserverAPI.InputRoomEvent{
+	// Store each event after its auth events, so that their checks find them.
+	fetched = gomatrixserverlib.ReverseTopologicalOrdering(fetched, gomatrixserverlib.TopologicalOrderByAuthEvents)
+	const batchSize = 500
+	for start := 0; start < len(fetched); start += batchSize {
+		end := min(start+batchSize, len(fetched))
+		inputs := make([]roomserverAPI.InputRoomEvent, 0, end-start)
+		for _, ev := range fetched[start:end] {
+			inputs = append(inputs, roomserverAPI.InputRoomEvent{
 				Kind:   roomserverAPI.KindOutlier,
 				Event:  &types.HeaderedEvent{PDU: ev},
-				Origin: origin,
+				Origin: primaryServer,
 			})
 		}
 		var ires roomserverAPI.InputRoomEventsResponse
-		w.rsAPI.InputRoomEvents(ctx, &roomserverAPI.InputRoomEventsRequest{
-			InputRoomEvents: outlierInputs,
-		}, &ires)
+		w.rsAPI.InputRoomEvents(ctx, &roomserverAPI.InputRoomEventsRequest{InputRoomEvents: inputs}, &ires)
 		if ires.ErrMsg != "" {
-			logger.WithField("error", ires.ErrMsg).Warn("Failed to store outlier events batch")
+			logger.WithField("error", ires.ErrMsg).Warn("Failed to store fetched events for a partial state resync")
 		}
-		batchEvents = nil // Release memory before next batch.
 	}
-
 	return nil
 }
 
-// fetchSingleEvent tries to fetch a single event from the primary server first,
-// then falls back to other servers. This spreads the load and handles individual
-// server failures gracefully.
+// fetchSingleEvent fetches an event from the primary server, then from up to
+// four others.
 func (w *PartialStateWorker) fetchSingleEvent(
 	ctx context.Context,
 	origin spec.ServerName,
-	_ /* roomID */, eventID string,
+	eventID string,
 	verImpl gomatrixserverlib.IRoomVersion,
-	primaryBypassBackoff bool,
 	primaryServer spec.ServerName,
-	allServers []serverEntry,
+	allServers []spec.ServerName,
 ) gomatrixserverlib.PDU {
-	// Try the primary server first.
-	ev, err := w.getEventFromServer(ctx, origin, primaryServer, eventID, verImpl, primaryBypassBackoff)
+	ev, err := w.getEventFromServer(ctx, origin, primaryServer, eventID, verImpl)
 	if err == nil {
 		return ev
 	}
-
-	// Fall back to other servers (up to 4 additional attempts).
 	const maxFallbacks = 4
 	tried := 0
-	for _, entry := range allServers {
-		if entry.name == primaryServer {
+	for _, server := range allServers {
+		if server == primaryServer {
 			continue
 		}
 		if tried >= maxFallbacks {
 			break
 		}
 		tried++
-		ev, err = w.getEventFromServer(ctx, origin, entry.name, eventID, verImpl, entry.bypassBackoff)
-		if err == nil {
+		if ev, err = w.getEventFromServer(ctx, origin, server, eventID, verImpl); err == nil {
 			return ev
 		}
 	}
-
 	return nil
 }
 
@@ -637,74 +524,20 @@ func (w *PartialStateWorker) getEventFromServer(
 	origin, serverName spec.ServerName,
 	eventID string,
 	verImpl gomatrixserverlib.IRoomVersion,
-	bypassBackoff bool,
 ) (gomatrixserverlib.PDU, error) {
 	reqctx, cancel := context.WithTimeout(ctx, 30*time.Second) //nolint:mnd
 	defer cancel()
 
-	var txn gomatrixserverlib.Transaction
-	var err error
-	if bypassBackoff {
-		txn, err = w.fedAPI.GetEventBypassBackoff(reqctx, origin, serverName, eventID)
-	} else {
-		txn, err = w.fedAPI.GetEvent(reqctx, origin, serverName, eventID)
-	}
+	txn, err := w.fedAPI.GetEventBypassBackoff(reqctx, origin, serverName, eventID)
 	if err != nil || len(txn.PDUs) == 0 {
 		return nil, fmt.Errorf("GetEvent %s from %s: %w", eventID, serverName, err)
 	}
-
 	ev, err := verImpl.NewEventFromUntrustedJSON(txn.PDUs[0])
 	if err != nil {
 		return nil, fmt.Errorf("parse event %s from %s: %w", eventID, serverName, err)
 	}
+	if ev.EventID() != eventID {
+		return nil, fmt.Errorf("%s returned event %s for %s", serverName, ev.EventID(), eventID)
+	}
 	return ev, nil
-}
-
-// applyState stores the fetched state and updates the room's current state.
-func (w *PartialStateWorker) applyState(
-	ctx context.Context,
-	logger *logrus.Entry,
-	roomID string,
-	roomNID types.RoomNID,
-	_ *types.RoomInfo,
-	stateEventIDs []string,
-	resyncStartTime time.Time,
-) error {
-	updateStateRegion, _ := internal.StartRegion(ctx, "UpdateCurrentStateAfterResync")
-	updateStateStartTime := time.Now()
-	updateStateRegion.SetTag("state_event_count", len(stateEventIDs))
-	if err := w.rsAPI.UpdateCurrentStateAfterResync(ctx, roomID, stateEventIDs); err != nil {
-		updateStateRegion.EndRegion()
-		logger.WithError(err).Warn("Failed to update current state after resync")
-		return err
-	}
-	updateStateRegion.EndRegion()
-	logger.WithFields(logrus.Fields{
-		"update_state_ms":   time.Since(updateStateStartTime).Milliseconds(),
-		"state_event_count": len(stateEventIDs),
-	}).Debug("UpdateCurrentStateAfterResync completed")
-
-	clearStateRegion, _ := internal.StartRegion(ctx, "ClearRoomPartialState")
-	clearStateStartTime := time.Now()
-	deviceListStreamID, err := w.rsAPI.ClearRoomPartialState(ctx, roomNID)
-	clearStateRegion.EndRegion()
-	if err != nil {
-		logger.WithError(err).Error("Failed to clear partial state flag")
-		return err
-	}
-
-	logger.WithFields(logrus.Fields{
-		"device_list_stream_id": deviceListStreamID,
-		"clear_state_ms":        time.Since(clearStateStartTime).Milliseconds(),
-		"total_resync_ms":       time.Since(resyncStartTime).Milliseconds(),
-	}).Debug("Successfully completed partial state resync")
-
-	w.rsAPI.NotifyUnPartialStated(roomID)
-
-	// TODO(MSC3902): Implement full device list replay
-	if deviceListStreamID > 0 {
-		logger.Debug("Device list replay would use changes since stream position (not yet implemented)")
-	}
-
-	return nil
 }

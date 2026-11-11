@@ -604,6 +604,16 @@ func (u *latestEventsUpdater) makeOutputNewRoomEvent() (*api.OutputEvent, error)
 		ore.StateBeforeAddsEventIDs = append(ore.StateBeforeAddsEventIDs, eventIDMap[entry.EventNID])
 	}
 
+	partial, err := u.updater.PartialStateEvents([]types.EventNID{u.stateAtEvent.EventNID})
+	if err != nil {
+		return nil, fmt.Errorf("u.updater.PartialStateEvents: %w", err)
+	}
+	if len(partial) > 0 {
+		if ore.PartialStateServers, err = u.updater.PartialStateServers(u.roomInfo.RoomNID); err != nil {
+			return nil, fmt.Errorf("u.updater.PartialStateServers: %w", err)
+		}
+	}
+
 	return &api.OutputEvent{
 		Type:         api.OutputTypeNewRoomEvent,
 		NewRoomEvent: &ore,

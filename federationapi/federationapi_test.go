@@ -74,6 +74,12 @@ func (f *fedRoomserverAPI) GetAllPartialStateRooms(ctx context.Context) ([]types
 	return []types.RoomNID{}, nil
 }
 
+// QueryRoomInfo is called to find the rooms with partial state, of which
+// these tests have none.
+func (f *fedRoomserverAPI) QueryRoomInfo(context.Context, spec.RoomID) (*types.RoomInfo, error) {
+	return nil, nil
+}
+
 // TODO: This struct isn't generic, only works for TestFederationAPIJoinThenKeyUpdate
 type fedClient struct {
 	fedClientMutex sync.Mutex

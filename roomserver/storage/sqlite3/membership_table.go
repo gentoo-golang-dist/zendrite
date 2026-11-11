@@ -129,10 +129,17 @@ const selectServerInRoomSQL = "" +
 const deleteMembershipSQL = "" +
 	"DELETE FROM roomserver_membership WHERE room_nid = $1 AND target_nid = $2"
 
+// selectJoinedUsersSQL selects the users who share a room with a local user:
+// a room that no local user is joined to (3, tables.MembershipStateJoin)
+// gets no more events, so its memberships may be out of date.
 const selectJoinedUsersSQL = `
 SELECT DISTINCT target_nid
 FROM roomserver_membership m
 WHERE membership_nid > $1 AND target_nid IN ($2)
+AND EXISTS (
+  SELECT 1 FROM roomserver_membership l
+  WHERE l.room_nid = m.room_nid AND l.target_local AND l.membership_nid = 3
+)
 `
 
 const selectAnyLocalMemberNotForgottenSQL = "" +

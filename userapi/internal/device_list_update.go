@@ -124,6 +124,15 @@ type DeviceListUpdaterDatabase interface {
 	DeviceKeysJSON(ctx context.Context, keys []api.DeviceMessage) error
 
 	DeleteStaleDeviceLists(ctx context.Context, userIDs []string) error
+
+	// AddPartialStateDeviceListUpdate records an untracked update received while rooms are in partial state.
+	AddPartialStateDeviceListUpdate(ctx context.Context, userID, deviceID string) error
+	// PartialStateDeviceListUpdates returns the recorded updates by user ID.
+	PartialStateDeviceListUpdates(ctx context.Context) (map[string][]string, error)
+	// DeletePartialStateDeviceListUpdates removes the recorded updates of the users, or of all if nil.
+	DeletePartialStateDeviceListUpdates(ctx context.Context, userIDs []string) error
+	// ForgetRemoteDeviceList drops the device list kept of a remote user.
+	ForgetRemoteDeviceList(ctx context.Context, userID string) error
 }
 
 type DeviceListUpdaterAPI interface {
@@ -257,6 +266,17 @@ func (u *DeviceListUpdater) ManualUpdate(ctx context.Context, serverName spec.Se
 // Update blocks until the update has been stored in the database. It blocks primarily for satisfying sytest,
 // which assumes when /send 200 OKs that the device lists have been updated.
 func (u *DeviceListUpdater) Update(ctx context.Context, event gomatrixserverlib.DeviceListUpdateEvent) error {
+	// As in Synapse, the device lists of users who share no room with this
+	// server are not tracked. While rooms are in partial state, such a user
+	// may still turn out to share one, so the update is kept, and reported
+	// once the room has its full state (MSC3902).
+	tracked, err := u.IsTracked(ctx, event.UserID)
+	if err != nil {
+		return err
+	}
+	if !tracked {
+		return u.keepPartialStateUpdate(ctx, event)
+	}
 	isDeviceListStale, err := u.update(ctx, event)
 	if err != nil {
 		return err
@@ -686,4 +706,121 @@ func dedupeStaleLists(staleLists []string) []string {
 		seenDomains[domain] = struct{}{}
 	}
 	return newStaleLists
+}
+
+// IsTracked reports whether this server tracks the device list of the remote
+// user, which it does while they share a room it knows the membership of.
+// In a room with partial state, only the members it knows about count.
+func (u *DeviceListUpdater) IsTracked(ctx context.Context, userID string) (bool, error) {
+	if u.rsAPI == nil {
+		return true, nil
+	}
+	inRooms, err := u.rsAPI.QueryUsersInRooms(ctx, []string{userID})
+	if err != nil {
+		return false, fmt.Errorf("u.rsAPI.QueryUsersInRooms: %w", err)
+	}
+	return len(inRooms) > 0, nil
+}
+
+// ForgetUntrackedUsers drops the device lists kept of those of the users who
+// share no room with this server, so that they are fetched again should the
+// users join one.
+func (u *DeviceListUpdater) ForgetUntrackedUsers(ctx context.Context, userIDs []string) error {
+	if len(userIDs) == 0 || u.rsAPI == nil {
+		return nil
+	}
+	inRooms, err := u.rsAPI.QueryUsersInRooms(ctx, userIDs)
+	if err != nil {
+		return fmt.Errorf("u.rsAPI.QueryUsersInRooms: %w", err)
+	}
+	tracked := make(map[string]bool, len(inRooms))
+	for _, userID := range inRooms {
+		tracked[userID] = true
+	}
+	for _, userID := range userIDs {
+		if tracked[userID] {
+			continue
+		}
+		mu := u.mutex(userID)
+		mu.Lock()
+		err = u.db.ForgetRemoteDeviceList(ctx, userID)
+		mu.Unlock()
+		if err != nil {
+			return fmt.Errorf("u.db.ForgetRemoteDeviceList: %w", err)
+		}
+	}
+	return nil
+}
+
+// keepPartialStateUpdate records an update of a user this server does not
+// track, if any room is in partial state.
+func (u *DeviceListUpdater) keepPartialStateUpdate(ctx context.Context, event gomatrixserverlib.DeviceListUpdateEvent) error {
+	partialRooms, err := u.rsAPI.GetPartialStateRoomIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("u.rsAPI.GetPartialStateRoomIDs: %w", err)
+	}
+	if len(partialRooms) == 0 {
+		return nil
+	}
+	return u.db.AddPartialStateDeviceListUpdate(ctx, event.UserID, event.DeviceID)
+}
+
+// HandleRoomUnPartialStated reports the device list updates of the users the
+// room's full state shows are in it, which arrived while it was in partial
+// state, as Synapse does (MSC3902). Their device lists are not fetched now,
+// but the next time they are asked for. The device lists kept of the users
+// the full state shows were not in the room, and who share no other room
+// with this server, are dropped, since they were never tracked.
+func (u *DeviceListUpdater) HandleRoomUnPartialStated(ctx context.Context, msg *rsapi.OutputUnPartialStatedRoom) error {
+	roomID := msg.RoomID
+	if err := u.ForgetUntrackedUsers(ctx, msg.LeftUsers); err != nil {
+		return err
+	}
+	pending, err := u.db.PartialStateDeviceListUpdates(ctx)
+	if err != nil {
+		return fmt.Errorf("u.db.PartialStateDeviceListUpdates: %w", err)
+	}
+	if len(pending) > 0 && u.rsAPI != nil {
+		userIDs := make([]string, 0, len(pending))
+		for userID := range pending {
+			userIDs = append(userIDs, userID)
+		}
+		var tracked []string
+		if tracked, err = u.rsAPI.QueryUsersInRooms(ctx, userIDs); err != nil {
+			return fmt.Errorf("u.rsAPI.QueryUsersInRooms: %w", err)
+		}
+		var changes []api.DeviceMessage
+		for _, userID := range tracked {
+			for _, deviceID := range pending[userID] {
+				changes = append(changes, api.DeviceMessage{
+					Type:       api.TypeDeviceKeyUpdate,
+					DeviceKeys: &api.DeviceKeys{UserID: userID, DeviceID: deviceID},
+				})
+			}
+		}
+		if len(changes) > 0 {
+			logrus.WithFields(logrus.Fields{
+				"room_id": roomID,
+				"users":   len(tracked),
+			}).Info("Reporting device list updates received while the room had partial state")
+			if err = u.producer.ProduceKeyChanges(changes); err != nil {
+				return fmt.Errorf("u.producer.ProduceKeyChanges: %w", err)
+			}
+			if err = u.db.DeletePartialStateDeviceListUpdates(ctx, tracked); err != nil {
+				return fmt.Errorf("u.db.DeletePartialStateDeviceListUpdates: %w", err)
+			}
+		}
+	}
+	// The updates of users in no room are only kept while a room may still
+	// show they are in it.
+	if u.rsAPI != nil {
+		partialRooms, perr := u.rsAPI.GetPartialStateRoomIDs(ctx)
+		if perr != nil {
+			return fmt.Errorf("u.rsAPI.GetPartialStateRoomIDs: %w", perr)
+		}
+		if len(partialRooms) == 0 {
+			return u.db.DeletePartialStateDeviceListUpdates(ctx, nil)
+		}
+	}
+	return nil
 }

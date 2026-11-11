@@ -58,7 +58,6 @@ func newPartialJoinHarness(t *testing.T, dbType test.DBType) *partialJoinHarness
 	t.Cleanup(func() { jetstream.DeleteAllStreams(jsctx, &cfg.Global.JetStream) })
 	rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
 	rsAPI.SetFederationAPI(nil, nil)
-	cfg.FederationAPI.ServePartialStateJoins = true
 	return &partialJoinHarness{t: t, cfg: cfg, rsAPI: rsAPI}
 }
 
@@ -255,16 +254,6 @@ func TestSendJoinPartialState(t *testing.T) {
 			for _, u := range append([]*test.User{alice, bob, carol, dave, frank, joiner}, extra...) {
 				assert.Contains(t, keys, "m.room.member|"+u.ID)
 			}
-		})
-
-		t.Run("serve_partial_state_joins off ignores omit_members", func(t *testing.T) {
-			h.cfg.FederationAPI.ServePartialStateJoins = false
-			defer func() { h.cfg.FederationAPI.ServePartialStateJoins = true }()
-			other := test.NewUser(t, test.WithSigningServer(partialJoinRemote, partialJoinRemoteKeyID, test.PrivateKeyB))
-			_, code, body := h.join(room, other, "?omit_members=true")
-			require.Equal(t, http.StatusOK, code, body.Raw)
-			assert.False(t, body.Get("members_omitted").Exists())
-			assert.Contains(t, stateKeys(body.Get("state").Array()), "m.room.member|"+frank.ID)
 		})
 	})
 }

@@ -89,6 +89,12 @@ func GetJoinedMembers(
 		}
 	}
 
+	// The members of a room joined with partial state are only known once
+	// its full state is (MSC3902), so wait for that, as Synapse does.
+	if res, ok := awaitFullState(req.Context(), rsAPI, validRoomID.String()); !ok {
+		return res
+	}
+
 	// Get the current membership events
 	var membershipsForRoomResp api.QueryMembershipsForRoomResponse
 	if err = rsAPI.QueryMembershipsForRoom(req.Context(), &api.QueryMembershipsForRoomRequest{

@@ -20,6 +20,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 
+	"codefloe.com/pat-s/zendrite/internal/depth"
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
@@ -1110,9 +1111,21 @@ func (d *Database) PopulateRoomStateAfterResync(ctx context.Context, stateEvents
 		if upsertErr != nil {
 			return upsertErr
 		}
-		// Also update the memberships table for sync API
-		if upsertErr = d.Memberships.UpsertMemberships(ctx, txn, members, pduPosition, 0); upsertErr != nil {
-			return fmt.Errorf("d.Memberships.UpsertMemberships: %w", upsertErr)
+		// Also update the memberships table for sync API. Each membership
+		// keeps its place in the room's topology, its depth, as when it is
+		// written with its event: a membership at 0 would sort below one it
+		// replaced, such as a member's leave before their rejoin, which
+		// backfill can bring back, and make that one current again.
+		for _, member := range members {
+			topoPos := types.StreamPosition(depth.Clamp(member.Depth()))
+			if upsertErr = d.Memberships.UpsertMemberships(ctx, txn, []*rstypes.HeaderedEvent{member}, pduPosition, topoPos); upsertErr != nil {
+				return fmt.Errorf("d.Memberships.UpsertMemberships: %w", upsertErr)
+			}
+		}
+		// The full state replaces the partial state, which may hold events
+		// that the full state does not, such as ones it rejected (MSC3902).
+		if upsertErr = d.CurrentRoomState.DeleteRoomStateForRoom(ctx, txn, stateEvents[0].RoomID().String()); upsertErr != nil {
+			return fmt.Errorf("d.CurrentRoomState.DeleteRoomStateForRoom: %w", upsertErr)
 		}
 		if upsertErr = d.CurrentRoomState.UpsertRoomStates(ctx, txn, upserts, pduPosition); upsertErr != nil {
 			return fmt.Errorf("d.CurrentRoomState.UpsertRoomStates: %w", upsertErr)
@@ -1122,4 +1135,23 @@ func (d *Database) PopulateRoomStateAfterResync(ctx context.Context, stateEvents
 	})
 
 	return pduPosition, err
+}
+
+// DeleteRejectedEvent removes an event that the roomserver rejected after the
+// sync API received it, when the full state of a room joined with partial
+// state showed that it is not allowed (MSC3902), so that it is no longer
+// served.
+func (d *Database) DeleteRejectedEvent(ctx context.Context, eventID string) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		if err := d.OutputEvents.DeleteEvent(ctx, txn, eventID); err != nil {
+			return fmt.Errorf("d.OutputEvents.DeleteEvent: %w", err)
+		}
+		if err := d.Topology.DeleteEventTopology(ctx, txn, eventID); err != nil {
+			return fmt.Errorf("d.Topology.DeleteEventTopology: %w", err)
+		}
+		if err := d.CurrentRoomState.DeleteRoomStateByEventID(ctx, txn, eventID); err != nil {
+			return fmt.Errorf("d.CurrentRoomState.DeleteRoomStateByEventID: %w", err)
+		}
+		return nil
+	})
 }

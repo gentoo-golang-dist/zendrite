@@ -57,6 +57,10 @@ const (
 	OutputTypePurgeRoom OutputType = "purge_room"
 	// OutputTypeUnPartialStatedRoom indicates a room has completed partial state resync (MSC3706).
 	OutputTypeUnPartialStatedRoom OutputType = "un_partial_stated_room"
+	// OutputTypeRejectedEvent indicates that an event accepted against the
+	// partial state of a room after a faster join was rejected against its
+	// full state (MSC3902), so that it is no longer served.
+	OutputTypeRejectedEvent OutputType = "rejected_event"
 )
 
 // An OutputEvent is an entry in the roomserver output JetStream stream.
@@ -86,6 +90,8 @@ type OutputEvent struct {
 	PurgeRoom *OutputPurgeRoom `json:"purge_room,omitempty"`
 	// The content of the event with type OutputTypeUnPartialStatedRoom
 	UnPartialStatedRoom *OutputUnPartialStatedRoom `json:"un_partial_stated_room,omitempty"`
+	// RejectedEvent is set if the type is OutputTypeRejectedEvent.
+	RejectedEvent *OutputRejectedEvent `json:"rejected_event,omitempty"`
 }
 
 // Type of the OutputNewRoomEvent.
@@ -150,6 +156,12 @@ type OutputNewRoomEvent struct {
 	// The state event IDs that are part of the current state, but not part
 	// of the state at the event.
 	StateBeforeRemovesEventIDs []string `json:"state_before_removes_event_ids,omitempty"`
+	// PartialStateServers are set when the event was stored with partial
+	// state (MSC3902): this server does not know who is in the room then,
+	// and approximates the servers in it with the servers the resident
+	// server named at the join, as Synapse does. They hold whether or not
+	// the room has its full state by the time the event is sent on.
+	PartialStateServers []string `json:"partial_state_servers,omitempty"`
 	// The server name to use to push this event to other servers.
 	// Or empty if this event shouldn't be pushed to other servers.
 	//
@@ -307,4 +319,20 @@ type OutputUnPartialStatedRoom struct {
 	// The local user IDs who were joined to the room during partial state
 	// These users should see the room as "newly joined" in their next sync
 	JoinedUserIDs []string `json:"joined_user_ids"`
+	// DeviceListServers are the servers that the device list updates of
+	// local users, sent while the room had partial state, may have missed
+	// (MSC3902).
+	DeviceListServers []string `json:"device_list_servers,omitempty"`
+	// LeftUsers are the remote users whose join the full state removed from
+	// the room's current state. A user who shares no other room with this
+	// server was never tracked, and the device list kept of them is dropped
+	// (MSC3902).
+	LeftUsers []string `json:"left_users,omitempty"`
+}
+
+// OutputRejectedEvent is an event that a partial-state resync rejected after
+// it was accepted against the room's partial state (MSC3902).
+type OutputRejectedEvent struct {
+	RoomID  string `json:"room_id"`
+	EventID string `json:"event_id"`
 }

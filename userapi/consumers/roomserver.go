@@ -51,6 +51,24 @@ type OutputRoomEventConsumer struct {
 	lastUpdate   time.Time
 	countsLock   sync.Mutex
 	serverName   spec.ServerName
+	// unPartialStated handles a room that got its full state after a
+	// partial-state join (MSC3902).
+	unPartialStated func(ctx context.Context, msg *rsapi.OutputUnPartialStatedRoom) error
+	// forgetUntracked drops the device lists kept of those of the given
+	// remote users who share no room with this server any more.
+	forgetUntracked func(ctx context.Context, userIDs []string) error
+}
+
+// OnUnPartialStated sets what handles a room that got its full state after a
+// partial-state join (MSC3902).
+func (s *OutputRoomEventConsumer) OnUnPartialStated(f func(ctx context.Context, msg *rsapi.OutputUnPartialStatedRoom) error) {
+	s.unPartialStated = f
+}
+
+// OnMembershipLeft sets what drops the device lists of the remote users who
+// no longer share a room with this server once a membership leaves a room.
+func (s *OutputRoomEventConsumer) OnMembershipLeft(f func(ctx context.Context, userIDs []string) error) {
+	s.forgetUntracked = f
 }
 
 func NewOutputRoomEventConsumer(
@@ -116,6 +134,19 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 	var event *rstypes.HeaderedEvent
 	var isNewRoomEvent bool
 	switch rsapi.OutputType(msg.Header.Get(jetstream.RoomEventType)) {
+	case rsapi.OutputTypeUnPartialStatedRoom:
+		var output rsapi.OutputEvent
+		if err := json.Unmarshal(msg.Data, &output); err != nil || output.UnPartialStatedRoom == nil {
+			log.WithError(err).Errorf("roomserver output log: message parse failure")
+			return true
+		}
+		if s.unPartialStated != nil {
+			if err := s.unPartialStated(ctx, output.UnPartialStatedRoom); err != nil {
+				log.WithError(err).WithField("room_id", output.UnPartialStatedRoom.RoomID).Error("Failed to handle a room that got its full state")
+				return false
+			}
+		}
+		return true
 	case rsapi.OutputTypeNewRoomEvent:
 		isNewRoomEvent = true
 		fallthrough
@@ -130,6 +161,7 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 			event = output.NewRoomEvent.Event
 			if event != nil {
 				s.cancelDelayedStateEvents(ctx, output.NewRoomEvent)
+				s.forgetLeftDeviceLists(ctx, output.NewRoomEvent)
 			}
 		} else {
 			event = output.NewInviteEvent.Event
@@ -164,6 +196,56 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 	}
 
 	return true
+}
+
+// forgetLeftDeviceLists drops the device lists kept of the remote users who
+// share no room with this server any more after a membership left a room:
+// their servers no longer send their updates, so the lists would go stale,
+// and are fetched again should the users share a room again. A remote user's
+// leave can end their last shared room, and a local user's leave that of the
+// room's remote members.
+func (s *OutputRoomEventConsumer) forgetLeftDeviceLists(ctx context.Context, output *rsapi.OutputNewRoomEvent) {
+	event := output.Event
+	if s.forgetUntracked == nil || event.Type() != spec.MRoomMember || event.StateKey() == nil ||
+		!slices.Contains(output.AddsStateEventIDs, event.EventID()) {
+		return
+	}
+	membership, err := event.Membership()
+	if err != nil || (membership != spec.Leave && membership != spec.Ban) {
+		return
+	}
+	target, err := spec.NewUserID(*event.StateKey(), true)
+	if err != nil {
+		// Pseudo IDs are not user IDs, and are left alone.
+		return
+	}
+	var candidates []string
+	if !s.cfg.Matrix.IsLocalServerName(target.Domain()) {
+		candidates = []string{target.String()}
+	} else {
+		res := rsapi.QueryMembershipsForRoomResponse{}
+		if err = s.rsAPI.QueryMembershipsForRoom(ctx, &rsapi.QueryMembershipsForRoomRequest{
+			RoomID: event.RoomID().String(), JoinedOnly: true,
+		}, &res); err != nil {
+			log.WithError(err).WithField("room_id", event.RoomID().String()).Warn("Failed to get the members of a room a local user left")
+			return
+		}
+		for i := range res.JoinEvents {
+			if res.JoinEvents[i].StateKey == nil {
+				continue
+			}
+			member, merr := spec.NewUserID(*res.JoinEvents[i].StateKey, true)
+			if merr == nil && !s.cfg.Matrix.IsLocalServerName(member.Domain()) {
+				candidates = append(candidates, member.String())
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	if err = s.forgetUntracked(ctx, candidates); err != nil {
+		log.WithError(err).WithField("room_id", event.RoomID().String()).Warn("Failed to drop the device lists of users who no longer share a room")
+	}
 }
 
 // cancelDelayedStateEvents cancels other users' MSC4140 delayed events for

@@ -44,6 +44,9 @@ const selectStaleDeviceListsWithDomainsSQL = "" +
 const selectStaleDeviceListsSQL = "" +
 	"SELECT user_id FROM keyserver_stale_device_lists WHERE is_stale = $1 ORDER BY ts_added_secs DESC"
 
+const selectDeviceListSyncedSQL = "" +
+	"SELECT is_stale FROM keyserver_stale_device_lists WHERE user_id = $1"
+
 const deleteStaleDevicesSQL = "" +
 	"DELETE FROM keyserver_stale_device_lists WHERE user_id IN ($1)"
 
@@ -52,6 +55,7 @@ type staleDeviceListsStatements struct {
 	upsertStaleDeviceListStmt             *sql.Stmt
 	selectStaleDeviceListsWithDomainsStmt *sql.Stmt
 	selectStaleDeviceListsStmt            *sql.Stmt
+	selectDeviceListSyncedStmt            *sql.Stmt
 	// deleteStaleDeviceListsStmt            *sql.Stmt // Prepared at runtime
 }
 
@@ -66,6 +70,7 @@ func NewSqliteStaleDeviceListsTable(db *sql.DB) (tables.StaleDeviceLists, error)
 	return s, sqlutil.StatementList{
 		{&s.upsertStaleDeviceListStmt, upsertStaleDeviceListSQL},
 		{&s.selectStaleDeviceListsStmt, selectStaleDeviceListsSQL},
+		{&s.selectDeviceListSyncedStmt, selectDeviceListSyncedSQL},
 		{&s.selectStaleDeviceListsWithDomainsStmt, selectStaleDeviceListsWithDomainsSQL},
 		// { &s.deleteStaleDeviceListsStmt, deleteStaleDevicesSQL}, // Prepared at runtime
 	}.Prepare(db)
@@ -135,4 +140,15 @@ func rowsToUserIDs(ctx context.Context, rows *sql.Rows) (result []string, err er
 		result = append(result, userID)
 	}
 	return result, rows.Err()
+}
+
+// SelectDeviceListSynced reports whether the user's device list was fetched
+// and is not stale.
+func (s *staleDeviceListsStatements) SelectDeviceListSynced(ctx context.Context, userID string) (bool, error) {
+	var stale bool
+	err := s.selectDeviceListSyncedStmt.QueryRowContext(ctx, userID).Scan(&stale)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil && !stale, err
 }

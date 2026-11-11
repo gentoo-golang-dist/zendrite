@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -24,7 +25,56 @@ func (f *FederationInternalAPI) QueryJoinedHostServerNamesInRoom(
 	}
 	response.ServerNames = joinedHosts
 
-	return
+	// While a room has partial state, its memberships are not known, so the
+	// servers in it are approximated by those the resident server named
+	// when it was joined, as Synapse does (MSC3902).
+	partialServers, err := f.partialStateServers(ctx, request.RoomID)
+	if err != nil {
+		return err
+	}
+	for _, server := range partialServers {
+		if request.ExcludeSelf && f.cfg.Matrix.IsLocalServerName(server) {
+			continue
+		}
+		if request.ExcludeBlacklisted {
+			if blacklisted, berr := f.db.IsServerBlacklisted(server); berr == nil && blacklisted {
+				continue
+			}
+		}
+		if !slices.Contains(response.ServerNames, server) {
+			response.ServerNames = append(response.ServerNames, server)
+		}
+	}
+	return nil
+}
+
+// partialStateServers returns the servers the resident server named when the
+// room was joined with partial state, or nothing if the room has full state.
+func (f *FederationInternalAPI) partialStateServers(ctx context.Context, roomID string) ([]spec.ServerName, error) {
+	if f.rsAPI == nil {
+		return nil, nil
+	}
+	validRoomID, err := spec.NewRoomID(roomID)
+	if err != nil {
+		return nil, nil //nolint:nilerr // an invalid room ID has no servers
+	}
+	roomInfo, err := f.rsAPI.QueryRoomInfo(ctx, *validRoomID)
+	if err != nil || roomInfo == nil {
+		return nil, err
+	}
+	partial, err := f.rsAPI.IsRoomPartialState(ctx, roomInfo.RoomNID)
+	if err != nil || !partial {
+		return nil, err
+	}
+	servers, err := f.rsAPI.GetPartialStateServers(ctx, roomInfo.RoomNID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]spec.ServerName, 0, len(servers))
+	for _, server := range servers {
+		result = append(result, spec.ServerName(server))
+	}
+	return result, nil
 }
 
 func (a *FederationInternalAPI) fetchServerKeysDirectly(ctx context.Context, serverName spec.ServerName) (*gomatrixserverlib.ServerKeys, error) {

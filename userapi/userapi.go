@@ -155,6 +155,8 @@ func NewInternalAPI(
 	eventConsumer := consumers.NewOutputRoomEventConsumer(
 		processContext, &zendriteCfg.UserAPI, js, db, pgClient, rsAPI, syncProducer,
 	)
+	eventConsumer.OnUnPartialStated(updater.HandleRoomUnPartialStated)
+	eventConsumer.OnMembershipLeft(updater.ForgetUntrackedUsers)
 	if err := eventConsumer.Start(); err != nil {
 		logrus.WithError(err).Panic("failed to start user API streamed event consumer")
 	}

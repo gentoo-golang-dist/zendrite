@@ -188,6 +188,10 @@ func NewKeyDatabase(conMan *sqlutil.Connections, dbProperties *config.DatabaseOp
 	if err != nil {
 		return nil, err
 	}
+	psdl, err := NewPostgresPartialStateDeviceListsTable(db)
+	if err != nil {
+		return nil, err
+	}
 	csk, err := NewPostgresCrossSigningKeysTable(db)
 	if err != nil {
 		return nil, err
@@ -198,13 +202,14 @@ func NewKeyDatabase(conMan *sqlutil.Connections, dbProperties *config.DatabaseOp
 	}
 
 	return &shared.KeyDatabase{
-		OneTimeKeysTable:      otk,
-		FallbackKeysTable:     fk,
-		DeviceKeysTable:       dk,
-		KeyChangesTable:       kc,
-		StaleDeviceListsTable: sdl,
-		CrossSigningKeysTable: csk,
-		CrossSigningSigsTable: css,
-		Writer:                writer,
+		OneTimeKeysTable:             otk,
+		FallbackKeysTable:            fk,
+		DeviceKeysTable:              dk,
+		KeyChangesTable:              kc,
+		StaleDeviceListsTable:        sdl,
+		PartialStateDeviceListsTable: psdl,
+		CrossSigningKeysTable:        csk,
+		CrossSigningSigsTable:        css,
+		Writer:                       writer,
 	}, nil
 }

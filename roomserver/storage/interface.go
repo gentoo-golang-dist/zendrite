@@ -190,6 +190,9 @@ type Database interface {
 
 	GetHistoryVisibilityState(ctx context.Context, roomInfo *types.RoomInfo, eventID string, domain string) ([]gomatrixserverlib.PDU, error)
 	GetLeftUsers(ctx context.Context, userIDs []string) ([]string, error)
+	// GetUsersInRooms returns which of the given users are joined, invited or
+	// knocking in a room this server knows the membership of.
+	GetUsersInRooms(ctx context.Context, userIDs []string) ([]string, error)
 	PurgeRoom(ctx context.Context, roomID string) error
 	UpgradeRoom(ctx context.Context, oldRoomID, newRoomID, eventSender string) error
 
@@ -251,6 +254,16 @@ type Database interface {
 	GetPartialStateDeviceListStreamID(ctx context.Context, roomNID types.RoomNID) (int64, error)
 	// GetAllPartialStateRooms returns all rooms that currently have partial state
 	GetAllPartialStateRooms(ctx context.Context) ([]types.RoomNID, error)
+	// MarkPartialStateEvent records that the state of an event was calculated
+	// from partial state (MSC3902); a join is also recorded as the room's join
+	// event unless it has one already.
+	MarkPartialStateEvent(ctx context.Context, roomNID types.RoomNID, eventNID types.EventNID, isJoin bool) error
+	// PartialStateEventNIDs returns up to limit partial-state events of the room, oldest first.
+	PartialStateEventNIDs(ctx context.Context, roomNID types.RoomNID, limit int) ([]types.EventNID, error)
+	// PartialStateEvents returns which of the given events have partial state.
+	PartialStateEvents(ctx context.Context, eventNIDs []types.EventNID) ([]types.EventNID, error)
+	// GetPartialStateJoinEventNID returns the join event of a partial state room, or 0.
+	GetPartialStateJoinEventNID(ctx context.Context, roomNID types.RoomNID) (types.EventNID, error)
 	// ResyncRepairPendingRooms returns the rooms whose forward extremities still
 	// need repairing after a partial state resync.
 	ResyncRepairPendingRooms(ctx context.Context) ([]types.RoomNID, error)
@@ -329,6 +342,16 @@ type RoomDatabase interface {
 	// ResyncRepairPendingRooms returns the rooms whose forward extremities still
 	// need repairing after a partial state resync.
 	ResyncRepairPendingRooms(ctx context.Context) ([]types.RoomNID, error)
+	// MarkPartialStateEvent records that the state of an event was calculated
+	// from partial state (MSC3902); a join is also recorded as the room's join
+	// event unless it has one already.
+	MarkPartialStateEvent(ctx context.Context, roomNID types.RoomNID, eventNID types.EventNID, isJoin bool) error
+	// PartialStateEventNIDs returns up to limit partial-state events of the room, oldest first.
+	PartialStateEventNIDs(ctx context.Context, roomNID types.RoomNID, limit int) ([]types.EventNID, error)
+	// PartialStateEvents returns which of the given events have partial state.
+	PartialStateEvents(ctx context.Context, eventNIDs []types.EventNID) ([]types.EventNID, error)
+	// GetPartialStateJoinEventNID returns the join event of a partial state room, or 0.
+	GetPartialStateJoinEventNID(ctx context.Context, roomNID types.RoomNID) (types.EventNID, error)
 	// StateKeyRepairCursor returns the event NID up to which the repair of
 	// state events stored under the wrong state key NID has checked events,
 	// and false if the repair is not pending.

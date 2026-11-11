@@ -135,6 +135,9 @@ func (d *Database) create(db *sql.DB) error {
 	if err := CreatePartialStateTable(db); err != nil {
 		return err
 	}
+	if err := CreatePartialStateEventsTable(db); err != nil {
+		return err
+	}
 	if err := CreateErasedUsersTable(db); err != nil {
 		return err
 	}
@@ -230,6 +233,10 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 	if err != nil {
 		return err
 	}
+	partialStateEvents, err := PreparePartialStateEventsTable(db)
+	if err != nil {
+		return err
+	}
 	clientTransactions, err := PrepareClientTransactionsTable(db)
 	if err != nil {
 		return err
@@ -294,6 +301,7 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 		ReportedRoomsTable:      reportedRooms,
 		ReportedUsersTable:      reportedUsers,
 		PartialStateTable:       partialState,
+		PartialStateEventsTable: partialStateEvents,
 		ClientTransactionsTable: clientTransactions,
 		StateKeyRepairTable:     stateKeyRepair,
 		RejectedRecheckTable:    rejectedRecheck,

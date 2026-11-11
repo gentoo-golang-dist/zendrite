@@ -53,6 +53,8 @@ type Database struct {
 	Purge              tables.Purge
 	UserRoomKeyTable   tables.UserRoomKeys
 	PartialStateTable  tables.PartialState
+	// PartialStateEventsTable tracks the events with partial state (MSC3902).
+	PartialStateEventsTable tables.PartialStateEvents
 	// ErasedUsersTable records users erased on deactivation (MSC4025).
 	ErasedUsersTable tables.ErasedUsers
 	// ReportedRoomsTable stores room reports (MSC4151).
@@ -333,6 +335,24 @@ func (d *Database) addState(
 			if err != nil {
 				return fmt.Errorf("d.StateBlockTable.BulkInsertStateData: %w", err)
 			}
+			if len(stateBlockNIDs) > 0 && stateBlockNID <= slices.Max(stateBlockNIDs) {
+				// Blocks are shared between snapshots with the same entries,
+				// and a snapshot keeps its blocks sorted, so that a later
+				// block overrides an earlier one only while blocks are
+				// created in order. An older block reused for the new
+				// entries would be overridden by the blocks it should
+				// override, as when a partial-state resync recalculates the
+				// state of events (MSC3902). Store the whole state in one
+				// block instead.
+				var full []types.StateEntry
+				if full, err = d.combineStateBlocks(ctx, txn, stateBlockNIDs, state); err != nil {
+					return err
+				}
+				if stateBlockNID, err = d.StateBlockTable.BulkInsertStateData(ctx, txn, full); err != nil {
+					return fmt.Errorf("d.StateBlockTable.BulkInsertStateData: %w", err)
+				}
+				stateBlockNIDs = nil
+			}
 			stateBlockNIDs = append(stateBlockNIDs[:len(stateBlockNIDs):len(stateBlockNIDs)], stateBlockNID)
 		}
 		stateNID, err = d.StateSnapshotTable.InsertState(ctx, txn, roomNID, stateBlockNIDs)
@@ -469,6 +489,38 @@ func (d *Database) StateEntries(
 	ctx context.Context, stateBlockNIDs []types.StateBlockNID,
 ) ([]types.StateEntryList, error) {
 	return d.stateEntries(ctx, nil, stateBlockNIDs)
+}
+
+// combineStateBlocks returns the state of the given blocks, in which a later
+// block overrides an earlier one, with the given entries overriding them all.
+func (d *Database) combineStateBlocks(
+	ctx context.Context, txn *sql.Tx, stateBlockNIDs []types.StateBlockNID, state []types.StateEntry,
+) ([]types.StateEntry, error) {
+	sorted := slices.Clone(stateBlockNIDs)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	lists, err := d.stateEntries(ctx, txn, sorted)
+	if err != nil {
+		return nil, err
+	}
+	byBlock := make(map[types.StateBlockNID][]types.StateEntry, len(lists))
+	for _, list := range lists {
+		byBlock[list.StateBlockNID] = list.StateEntries
+	}
+	byKey := map[types.StateKeyTuple]types.StateEntry{}
+	for _, blockNID := range stateBlockNIDs {
+		for _, entry := range byBlock[blockNID] {
+			byKey[entry.StateKeyTuple] = entry
+		}
+	}
+	for _, entry := range state {
+		byKey[entry.StateKeyTuple] = entry
+	}
+	full := make([]types.StateEntry, 0, len(byKey))
+	for _, entry := range byKey {
+		full = append(full, entry)
+	}
+	return full, nil
 }
 
 func (d *Database) stateEntries(
@@ -1765,6 +1817,35 @@ func (d *Database) GetLeftUsers(ctx context.Context, userIDs []string) ([]string
 	return leftUsers, nil
 }
 
+// GetUsersInRooms returns which of the given users are joined, invited or
+// knocking in a room this server knows the membership of.
+func (d *Database) GetUsersInRooms(ctx context.Context, userIDs []string) ([]string, error) {
+	stateKeyNIDMap, err := d.EventStateKeyNIDs(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	userNIDs := make([]types.EventStateKeyNID, 0, len(stateKeyNIDMap))
+	userNIDtoUserID := make(map[types.EventStateKeyNID]string, len(stateKeyNIDMap))
+	for userID, nid := range stateKeyNIDMap {
+		userNIDs = append(userNIDs, nid)
+		userNIDtoUserID[nid] = userID
+	}
+	if len(userNIDs) == 0 {
+		return nil, nil
+	}
+	inRooms, err := d.MembershipTable.SelectJoinedUsers(ctx, nil, userNIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(inRooms))
+	for _, nid := range inRooms {
+		if userID, ok := userNIDtoUserID[nid]; ok {
+			result = append(result, userID)
+		}
+	}
+	return result, nil
+}
+
 // GetLocalServerInRoom returns true if we think we're in a given room or false otherwise.
 func (d *Database) GetLocalServerInRoom(ctx context.Context, roomNID types.RoomNID) (bool, error) {
 	return d.MembershipTable.SelectLocalServerInRoom(ctx, nil, roomNID)
@@ -1946,6 +2027,9 @@ func (d *Database) PurgeRoom(ctx context.Context, roomID string) error {
 		// room purged mid-resync would otherwise leave orphaned rows behind.
 		if _, err = d.PartialStateTable.DeletePartialStateRoom(ctx, txn, roomNID); err != nil {
 			return fmt.Errorf("failed to purge partial state: %w", err)
+		}
+		if err = d.PartialStateEventsTable.DeletePartialStateEventsForRoom(ctx, txn, roomNID); err != nil {
+			return fmt.Errorf("failed to purge partial state events: %w", err)
 		}
 		return d.Purge.PurgeRoom(ctx, txn, roomNID, roomID)
 	})
@@ -2469,6 +2553,39 @@ func (d *Database) ClearRoomPartialState(ctx context.Context, roomNID types.Room
 		return err
 	})
 	return deviceListStreamID, err
+}
+
+// MarkPartialStateEvent records that the state of an event was calculated
+// from partial state (MSC3902). A join event is also recorded as the room's
+// join event, unless the room has one already.
+func (d *Database) MarkPartialStateEvent(ctx context.Context, roomNID types.RoomNID, eventNID types.EventNID, isJoin bool) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		if err := d.PartialStateEventsTable.InsertPartialStateEvent(ctx, txn, roomNID, eventNID); err != nil {
+			return fmt.Errorf("InsertPartialStateEvent: %w", err)
+		}
+		if isJoin {
+			if err := d.PartialStateTable.UpdatePartialStateJoinEventNID(ctx, txn, roomNID, eventNID); err != nil {
+				return fmt.Errorf("UpdatePartialStateJoinEventNID: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// PartialStateEventNIDs returns up to limit partial-state events of the
+// room, oldest first.
+func (d *Database) PartialStateEventNIDs(ctx context.Context, roomNID types.RoomNID, limit int) ([]types.EventNID, error) {
+	return d.PartialStateEventsTable.SelectPartialStateEventsForRoom(ctx, nil, roomNID, limit)
+}
+
+// PartialStateEvents returns which of the given events have partial state.
+func (d *Database) PartialStateEvents(ctx context.Context, eventNIDs []types.EventNID) ([]types.EventNID, error) {
+	return d.PartialStateEventsTable.SelectPartialStateEvents(ctx, nil, eventNIDs)
+}
+
+// GetPartialStateJoinEventNID returns the join event of a partial state room.
+func (d *Database) GetPartialStateJoinEventNID(ctx context.Context, roomNID types.RoomNID) (types.EventNID, error) {
+	return d.PartialStateTable.SelectPartialStateJoinEventNID(ctx, nil, roomNID)
 }
 
 // GetPartialStateDeviceListStreamID returns the device list stream ID for a partial state room.

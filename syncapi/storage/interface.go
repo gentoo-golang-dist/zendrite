@@ -256,6 +256,9 @@ type Database interface {
 	// PopulateRoomStateAfterResync populates the sync API's current_room_state table after a
 	// partial state resync completes (MSC3706). This is needed because state events stored as
 	// outliers don't go through the normal WriteEvent flow that populates this table.
+	// DeleteRejectedEvent removes an event the roomserver rejected after the
+	// sync API received it (MSC3902).
+	DeleteRejectedEvent(ctx context.Context, eventID string) error
 	PopulateRoomStateAfterResync(ctx context.Context, stateEvents []*rstypes.HeaderedEvent) (types.StreamPosition, error)
 }
 

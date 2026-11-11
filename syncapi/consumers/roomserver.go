@@ -210,8 +210,20 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 			log.WithField("room_id", output.PurgeRoom.RoomID).WithError(err).Error("Failed to purge room from sync API")
 			return true // non-fatal, as otherwise we end up in a loop of trying to purge the room
 		}
+	case api.OutputTypeRejectedEvent:
+		if output.RejectedEvent != nil {
+			if err = s.db.DeleteRejectedEvent(s.ctx, output.RejectedEvent.EventID); err != nil { //nolint:contextcheck
+				log.WithError(err).WithField("event_id", output.RejectedEvent.EventID).Error("Failed to remove a rejected event")
+			}
+		}
 	case api.OutputTypeUnPartialStatedRoom:
 		err = s.onUnPartialStatedRoom(s.ctx, *output.UnPartialStatedRoom) //nolint:contextcheck
+		if err == nil {
+			// The user API reports the device list updates held back while
+			// the room had partial state (MSC3902), once the sync API has
+			// its full state.
+			err = s.producePushEvent(msg)
+		}
 	default:
 		log.WithField("type", output.Type).Debug(
 			"roomserver output log: ignoring unknown output type",
@@ -888,6 +900,9 @@ func (s *OutputRoomEventConsumer) onUnPartialStatedRoom(
 		}
 		lastPos = pos
 	}
+
+	// Requests that waited for the room's full state can go on.
+	s.notifier.OnUnPartialStated(msg.RoomID)
 
 	// Wake up any waiting sync requests for users in this room
 	// The room will appear as "newly joined" in their next sync response

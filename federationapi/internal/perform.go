@@ -255,6 +255,19 @@ func (r *FederationInternalAPI) performJoinUsingServer(
 		"update_room_ms": time.Since(updateRoomStartTime).Milliseconds(),
 	}).Debug("UpdateRoom completed")
 
+	// A join with partial state marks the room as partial before the join is
+	// stored, so that the roomserver records the join, and every event after
+	// it, as having partial state, for the resync to recalculate (MSC3902).
+	var partialRoomNID types.RoomNID
+	if isPartialState {
+		if partialRoomNID, err = r.rsAPI.AssignRoomNID(ctx, *room, response.JoinEvent.Version()); err != nil {
+			return fmt.Errorf("r.rsAPI.AssignRoomNID: %w", err)
+		}
+		if err = r.rsAPI.SetRoomPartialState(ctx, partialRoomNID, 0, string(serverName), serversInRoom, 0); err != nil {
+			return fmt.Errorf("r.rsAPI.SetRoomPartialState: %w", err)
+		}
+	}
+
 	// TODO: Can I change this to not take respState but instead just take an opaque list of events?
 	sendEventStartTime := time.Now()
 	if err = roomserverAPI.SendEventWithState( //nolint:contextcheck
@@ -274,32 +287,11 @@ func (r *FederationInternalAPI) performJoinUsingServer(
 		"send_event_ms": time.Since(sendEventStartTime).Milliseconds(),
 	}).Debug("SendEventWithState completed")
 
-	// If this was a partial state join, store the partial state info (MSC3706)
-	if isPartialState {
-		setPartialStateStartTime := time.Now()
-		roomNID, err := r.rsAPI.AssignRoomNID(ctx, *room, response.JoinEvent.Version())
-		if err != nil {
-			logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get room NID for partial state tracking")
-		} else {
-			// We don't have the join event NID here, so pass 0 for now
-			// The resync worker will handle this properly
-			// Pass 0 for deviceListStreamID for now - this will be populated when we have
-			// access to the userapi to get the current device list stream position
-			if err := r.rsAPI.SetRoomPartialState(ctx, roomNID, 0, string(serverName), serversInRoom, 0); err != nil {
-				logrus.WithError(err).WithField("room_id", roomID).Error("Failed to store partial state info")
-			} else {
-				traceLogger.WithFields(logrus.Fields{
-					"set_partial_state_ms": time.Since(setPartialStateStartTime).Milliseconds(),
-					"room_nid":             roomNID,
-				}).Debug("SetRoomPartialState completed")
-
-				// Queue the room for background state resync (MSC3706)
-				if r.partialStateWorker != nil {
-					r.partialStateWorker.QueueRoom(roomNID)
-					traceLogger.WithField("room_nid", roomNID).Debug("Queued room for partial state resync")
-				}
-			}
-		}
+	// Resync the full state in the background (MSC3706, MSC3902). A resync
+	// that is running already picks up this join.
+	if isPartialState && r.partialStateWorker != nil {
+		r.partialStateWorker.QueueRoom(partialRoomNID) //nolint:contextcheck // the resync outlives the join request
+		traceLogger.WithField("room_nid", partialRoomNID).Debug("Queued room for partial state resync")
 	}
 
 	// Final summary log

@@ -361,8 +361,8 @@ func GetVisibility(
 	}
 }
 
-// SetVisibility implements PUT /directory/list/room/{roomID}
-// TODO: Allow admin users to edit the room visibility
+// SetVisibility implements PUT /directory/list/room/{roomID}. Server admins
+// may change it whatever their power level, as in Synapse.
 func SetVisibility(
 	req *http.Request, rsAPI roomserverAPI.ClientRoomserverAPI, dev *userapi.Device,
 	roomID string,
@@ -411,7 +411,7 @@ func SetVisibility(
 			JSON: spec.InternalServerError{},
 		}
 	}
-	privileged := isPrivilegedCreator(req.Context(), rsAPI, roomID, *senderID)
+	privileged := dev.AccountType == userapi.AccountTypeAdmin || isPrivilegedCreator(req.Context(), rsAPI, roomID, *senderID)
 
 	// NOTSPEC: Check if the user's power is greater than power required to change m.room.canonical_alias event
 	power, _ := gomatrixserverlib.NewPowerLevelContentFromEvent(queryEventsRes.StateEvents[0].PDU)

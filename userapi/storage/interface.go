@@ -335,6 +335,18 @@ type KeyDatabase interface {
 		ctx context.Context,
 		userIDs []string,
 	) error
+
+	// DeviceListSynced reports whether the user's device list was fetched and is not stale.
+	DeviceListSynced(ctx context.Context, userID string) (bool, error)
+	// ForgetRemoteDeviceList drops the cached device list of a remote user this server no longer tracks.
+	ForgetRemoteDeviceList(ctx context.Context, userID string) error
+	// AddPartialStateDeviceListUpdate records an untracked device list update received while
+	// rooms are in partial state (MSC3902).
+	AddPartialStateDeviceListUpdate(ctx context.Context, userID, deviceID string) error
+	// PartialStateDeviceListUpdates returns the recorded device list updates by user ID.
+	PartialStateDeviceListUpdates(ctx context.Context) (map[string][]string, error)
+	// DeletePartialStateDeviceListUpdates removes the recorded updates of the users, or of all if nil.
+	DeletePartialStateDeviceListUpdates(ctx context.Context, userIDs []string) error
 }
 
 type Statistics interface {

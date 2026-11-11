@@ -37,9 +37,10 @@ CREATE INDEX IF NOT EXISTS syncapi_unpartialstated_rooms_user_id ON syncapi_unpa
 CREATE INDEX IF NOT EXISTS syncapi_unpartialstated_rooms_room_id ON syncapi_unpartialstated_rooms(room_id);
 `
 
+// The position is one of the PDU stream, which the sync compares it with.
 const insertUnPartialStatedRoomSQL = "" +
-	"INSERT INTO syncapi_unpartialstated_rooms (room_id, user_id)" +
-	" VALUES ($1, $2)" +
+	"INSERT INTO syncapi_unpartialstated_rooms (id, room_id, user_id)" +
+	" VALUES (nextval('syncapi_stream_id'), $1, $2)" +
 	" RETURNING id"
 
 const selectUnPartialStatedRoomsInRangeSQL = "" +

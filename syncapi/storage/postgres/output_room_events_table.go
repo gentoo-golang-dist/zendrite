@@ -196,6 +196,9 @@ const selectRoomsWithEventsSinceSQL = "" +
 	"SELECT DISTINCT room_id FROM syncapi_output_room_events" +
 	" WHERE room_id = ANY($1) AND id > $2"
 
+const deleteEventSQL = "" +
+	"DELETE FROM syncapi_output_room_events WHERE event_id = $1"
+
 const purgeEventsSQL = "" +
 	"DELETE FROM syncapi_output_room_events WHERE room_id = $1"
 
@@ -240,6 +243,7 @@ type outputRoomEventsStatements struct {
 	selectContextAfterEventStmt          *sql.Stmt
 	selectRoomsWithEventsSinceStmt       *sql.Stmt
 	purgeEventsStmt                      *sql.Stmt
+	deleteEventStmt                      *sql.Stmt
 	selectSearchStmt                     *sql.Stmt
 	selectMaxStreamPositionsForRoomsStmt *sql.Stmt
 }
@@ -316,6 +320,7 @@ func NewPostgresEventsTable(ctx context.Context, db *sql.DB) (tables.Events, err
 		{&s.selectContextAfterEventStmt, selectContextAfterEventSQL},
 		{&s.selectRoomsWithEventsSinceStmt, selectRoomsWithEventsSinceSQL},
 		{&s.purgeEventsStmt, purgeEventsSQL},
+		{&s.deleteEventStmt, deleteEventSQL},
 		{&s.selectSearchStmt, selectSearchSQL},
 		{&s.selectMaxStreamPositionsForRoomsStmt, selectMaxStreamPositionsForRoomsSQL},
 	}.Prepare(db)
@@ -801,6 +806,12 @@ func rowsToStreamEvents(rows *sql.Rows) ([]types.StreamEvent, error) {
 		})
 	}
 	return result, rows.Err()
+}
+
+// DeleteEvent removes an event, such as one rejected after it was served.
+func (s *outputRoomEventsStatements) DeleteEvent(ctx context.Context, txn *sql.Tx, eventID string) error {
+	_, err := sqlutil.TxStmt(txn, s.deleteEventStmt).ExecContext(ctx, eventID)
+	return err
 }
 
 func (s *outputRoomEventsStatements) PurgeEvents(

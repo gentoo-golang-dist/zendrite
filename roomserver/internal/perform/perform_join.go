@@ -304,13 +304,18 @@ func (r *Joiner) performJoinRoomByID(
 
 	// MSC3706: Force federated join if room is in partial state and user is not already joined.
 	// This ensures authorization happens with complete state on the remote server.
-	if info != nil && !forceFederatedJoin && len(req.ServerNames) > 0 {
+	if info != nil {
 		isPartialState, partialStateErr := r.DB.IsRoomPartialState(ctx, info.RoomNID)
 		if partialStateErr == nil && isPartialState {
 			// Check if the user is already joined - if so, they can proceed with local operations
 			membershipRes := &rsAPI.QueryMembershipForUserResponse{}
 			_ = r.Queryer.QueryMembershipForSenderID(ctx, *roomID, senderID, membershipRes)
-			if !membershipRes.IsInRoom {
+			// A ban this server knows about stands, even though the
+			// resident server may let the join through (MSC3902).
+			if membershipRes.Membership == spec.Ban {
+				return "", "", rsAPI.ErrNotAllowed{Err: fmt.Errorf("user %s is banned from the room", req.UserID)}
+			}
+			if !membershipRes.IsInRoom && !forceFederatedJoin && len(req.ServerNames) > 0 {
 				logrus.WithFields(logrus.Fields{
 					"room_id": req.RoomIDOrAlias,
 					"user_id": req.UserID,

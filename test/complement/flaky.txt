@@ -1,4 +1,3 @@
 # Complement tests whose result changes between runs on unchanged code.
 # They are not gated, and a full run does not suggest them for passing.txt.
 # Same format as passing.txt.
-tests/TestSendJoinPartialStateResponse

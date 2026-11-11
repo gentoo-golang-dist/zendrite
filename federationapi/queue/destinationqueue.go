@@ -81,12 +81,15 @@ func (oq *destinationQueue) sendEvent(event *types.HeaderedEvent, dbReceipt *rec
 		// If there's room in memory to hold the event then add it to the
 		// list.
 		oq.pendingMutex.Lock()
-		if len(oq.pendingPDUs) < maxPDUsInMemory {
+		switch {
+		case slices.ContainsFunc(oq.pendingPDUs, func(q *queuedPDU) bool { return sameReceipt(q.dbReceipt, dbReceipt) }):
+			// A queue that just woke up read it from the database already.
+		case len(oq.pendingPDUs) < maxPDUsInMemory:
 			oq.pendingPDUs = append(oq.pendingPDUs, &queuedPDU{
 				pdu:       event,
 				dbReceipt: dbReceipt,
 			})
-		} else {
+		default:
 			oq.overflowed.Store(true)
 		}
 		oq.pendingMutex.Unlock()
@@ -112,12 +115,16 @@ func (oq *destinationQueue) sendEDU(event *gomatrixserverlib.EDU, dbReceipt *rec
 		// If there's room in memory to hold the event then add it to the
 		// list.
 		oq.pendingMutex.Lock()
-		if len(oq.pendingEDUs) < maxEDUsInMemory {
+		switch {
+		case slices.ContainsFunc(oq.pendingEDUs, func(q *queuedEDU) bool { return sameReceipt(q.dbReceipt, dbReceipt) }):
+			// A queue that just woke up read it from the database already,
+			// and sending it twice would hand the destination a duplicate.
+		case len(oq.pendingEDUs) < maxEDUsInMemory:
 			oq.pendingEDUs = append(oq.pendingEDUs, &queuedEDU{
 				edu:       event,
 				dbReceipt: dbReceipt,
 			})
-		} else {
+		default:
 			oq.overflowed.Store(true)
 		}
 		oq.pendingMutex.Unlock()
@@ -126,6 +133,11 @@ func (oq *destinationQueue) sendEDU(event *gomatrixserverlib.EDU, dbReceipt *rec
 			oq.wakeQueueAndNotify()
 		}
 	}
+}
+
+// sameReceipt reports whether two receipts name the same queued event.
+func sameReceipt(a, b *receipt.Receipt) bool {
+	return a != nil && b != nil && a.GetNID() == b.GetNID()
 }
 
 // handleBackoffNotifier is registered as the backoff notification

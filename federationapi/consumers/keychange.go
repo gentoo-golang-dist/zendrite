@@ -138,6 +138,7 @@ func (t *KeyChangeConsumer) onDeviceKeyMessage(m api.DeviceMessage) bool {
 		// Transient, as above: no joined hosts means no destinations.
 		return false
 	}
+	destinations = withPartialStateServers(t.ctx, t.rsAPI, t.isLocalServerName, roomIDStrs, destinations)
 
 	if len(destinations) == 0 {
 		return true
@@ -210,6 +211,7 @@ func (t *KeyChangeConsumer) onCrossSigningMessage(m api.DeviceMessage) bool {
 		// Transient, as above: no joined hosts means no destinations.
 		return false
 	}
+	destinations = withPartialStateServers(t.ctx, t.rsAPI, t.isLocalServerName, roomIDStrs, destinations)
 
 	if len(destinations) == 0 {
 		return true

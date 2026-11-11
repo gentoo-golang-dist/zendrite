@@ -130,25 +130,14 @@ func SendEventWithState(
 		})
 	}
 
-	// Build state event IDs from state events. When members_omitted=true in
-	// send_join response (MSC3706), member events are only in auth_events,
-	// not state_events. We need to include them in the state snapshot.
+	// The state is the state the remote server returned. A partial state
+	// (MSC3706) leaves out memberships, which the auth chain may hold in
+	// older versions: they are not the state, and the partial-state resync
+	// fills it in (MSC3902).
 	stateEvents := state.GetStateEvents().UntrustedEvents(event.Version())
-	stateEventIDSet := make(map[string]bool, len(stateEvents))
+	stateEventIDs := make([]string, 0, len(stateEvents))
 	for _, ev := range stateEvents {
-		stateEventIDSet[ev.EventID()] = true
-	}
-	// Also include any member events from auth_events that have state_keys
-	// (i.e., are state events). This handles the members_omitted case.
-	authEvents := state.GetAuthEvents().UntrustedEvents(event.Version())
-	for _, ev := range authEvents {
-		if ev.StateKey() != nil && ev.Type() == spec.MRoomMember {
-			stateEventIDSet[ev.EventID()] = true
-		}
-	}
-	stateEventIDs := make([]string, 0, len(stateEventIDSet))
-	for id := range stateEventIDSet {
-		stateEventIDs = append(stateEventIDs, id)
+		stateEventIDs = append(stateEventIDs, ev.EventID())
 	}
 
 	logrus.WithContext(ctx).WithFields(logrus.Fields{

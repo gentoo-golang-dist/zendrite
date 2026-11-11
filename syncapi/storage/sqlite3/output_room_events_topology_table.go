@@ -84,6 +84,9 @@ const selectStreamToTopologicalPositionAscSQL = "" +
 const selectStreamToTopologicalPositionDescSQL = "" +
 	"SELECT topological_position FROM syncapi_output_room_events_topology WHERE room_id = $1 AND stream_position <= $2 ORDER BY topological_position DESC LIMIT 1;"
 
+const deleteEventTopologySQL = "" +
+	"DELETE FROM syncapi_output_room_events_topology WHERE event_id = $1"
+
 const purgeEventsTopologySQL = "" +
 	"DELETE FROM syncapi_output_room_events_topology WHERE room_id = $1"
 
@@ -96,6 +99,7 @@ type outputRoomEventsTopologyStatements struct {
 	selectStreamToTopologicalPositionAscStmt  *sql.Stmt
 	selectStreamToTopologicalPositionDescStmt *sql.Stmt
 	purgeEventsTopologyStmt                   *sql.Stmt
+	deleteEventTopologyStmt                   *sql.Stmt
 }
 
 func NewSqliteTopologyTable(db *sql.DB) (tables.Topology, error) {
@@ -114,6 +118,7 @@ func NewSqliteTopologyTable(db *sql.DB) (tables.Topology, error) {
 		{&s.selectStreamToTopologicalPositionAscStmt, selectStreamToTopologicalPositionAscSQL},
 		{&s.selectStreamToTopologicalPositionDescStmt, selectStreamToTopologicalPositionDescSQL},
 		{&s.purgeEventsTopologyStmt, purgeEventsTopologySQL},
+		{&s.deleteEventTopologyStmt, deleteEventTopologySQL},
 	}.Prepare(db)
 }
 
@@ -237,6 +242,12 @@ func (s *outputRoomEventsTopologyStatements) SelectStreamToTopologicalPosition(
 		err = sqlutil.TxStmt(txn, s.selectStreamToTopologicalPositionAscStmt).QueryRowContext(ctx, roomID, streamPos).Scan(&topoPos)
 	}
 	return
+}
+
+// DeleteEventTopology removes an event from the topology.
+func (s *outputRoomEventsTopologyStatements) DeleteEventTopology(ctx context.Context, txn *sql.Tx, eventID string) error {
+	_, err := sqlutil.TxStmt(txn, s.deleteEventTopologyStmt).ExecContext(ctx, eventID)
+	return err
 }
 
 func (s *outputRoomEventsTopologyStatements) PurgeEventsTopology(

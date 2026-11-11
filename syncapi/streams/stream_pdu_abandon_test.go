@@ -29,8 +29,12 @@ func (s departingClientSnapshot) StreamEventsToEvents(ctx context.Context, devic
 	return s.failoverSnapshot.StreamEventsToEvents(ctx, device, in, rsAPI)
 }
 
-func (s departingClientSnapshot) UnPartialStatedRoomsInRange(context.Context, string, types.Range) ([]string, error) {
-	s.t.Error("kept building the room after the client went away")
+func (s departingClientSnapshot) UnPartialStatedRoomsInRange(ctx context.Context, _ string, _ types.Range) ([]string, error) {
+	// An eager sync also asks before it builds any room, for the rooms whose
+	// partial state was resynced (MSC3902).
+	if ctx.Err() != nil {
+		s.t.Error("kept building the room after the client went away")
+	}
 	return nil, nil
 }
 

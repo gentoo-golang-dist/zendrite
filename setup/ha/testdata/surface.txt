@@ -74,6 +74,8 @@ column keyserver_one_time_keys | key_id | text | NO |
 column keyserver_one_time_keys | key_json | text | NO |
 column keyserver_one_time_keys | ts_added_secs | bigint | NO |
 column keyserver_one_time_keys | user_id | text | NO |
+column keyserver_partial_state_device_lists | device_id | text | NO |
+column keyserver_partial_state_device_lists | user_id | text | NO |
 column keyserver_stale_device_lists | domain | text | NO |
 column keyserver_stale_device_lists | is_stale | boolean | NO |
 column keyserver_stale_device_lists | ts_added_secs | bigint | NO |
@@ -154,6 +156,8 @@ column roomserver_membership | room_nid | bigint | NO |
 column roomserver_membership | sender_nid | bigint | NO | 0
 column roomserver_membership | target_local | boolean | NO | false
 column roomserver_membership | target_nid | bigint | NO |
+column roomserver_partial_state_events | event_nid | bigint | NO |
+column roomserver_partial_state_events | room_nid | bigint | NO |
 column roomserver_partial_state_rooms | created_at | timestamp without time zone | NO | now()
 column roomserver_partial_state_rooms | device_lists_stream_id | bigint | NO | 0
 column roomserver_partial_state_rooms | join_event_nid | bigint | NO |
@@ -580,6 +584,7 @@ index keyserver_key_changes | keyserver_key_changes_pkey | CREATE UNIQUE INDEX k
 index keyserver_key_changes | keyserver_key_changes_unique_per_user | CREATE UNIQUE INDEX keyserver_key_changes_unique_per_user ON public.keyserver_key_changes USING btree (user_id)
 index keyserver_one_time_keys | keyserver_one_time_keys_idx | CREATE INDEX keyserver_one_time_keys_idx ON public.keyserver_one_time_keys USING btree (user_id, device_id)
 index keyserver_one_time_keys | keyserver_one_time_keys_unique | CREATE UNIQUE INDEX keyserver_one_time_keys_unique ON public.keyserver_one_time_keys USING btree (user_id, device_id, key_id, algorithm)
+index keyserver_partial_state_device_lists | keyserver_partial_state_device_lists_pkey | CREATE UNIQUE INDEX keyserver_partial_state_device_lists_pkey ON public.keyserver_partial_state_device_lists USING btree (user_id, device_id)
 index keyserver_stale_device_lists | keyserver_stale_device_lists_idx | CREATE INDEX keyserver_stale_device_lists_idx ON public.keyserver_stale_device_lists USING btree (domain, is_stale)
 index keyserver_stale_device_lists | keyserver_stale_device_lists_pkey | CREATE UNIQUE INDEX keyserver_stale_device_lists_pkey ON public.keyserver_stale_device_lists USING btree (user_id)
 index mediaapi_media_repository | mediaapi_media_repository_index | CREATE UNIQUE INDEX mediaapi_media_repository_index ON public.mediaapi_media_repository USING btree (media_id, media_origin)
@@ -609,6 +614,8 @@ index roomserver_events | roomserver_events_pkey | CREATE UNIQUE INDEX roomserve
 index roomserver_invites | roomserver_invites_active_idx | CREATE INDEX roomserver_invites_active_idx ON public.roomserver_invites USING btree (target_nid, room_nid) WHERE (NOT retired)
 index roomserver_invites | roomserver_invites_pkey | CREATE UNIQUE INDEX roomserver_invites_pkey ON public.roomserver_invites USING btree (invite_event_id)
 index roomserver_membership | roomserver_membership_room_nid_target_nid_key | CREATE UNIQUE INDEX roomserver_membership_room_nid_target_nid_key ON public.roomserver_membership USING btree (room_nid, target_nid)
+index roomserver_partial_state_events | roomserver_partial_state_events_pkey | CREATE UNIQUE INDEX roomserver_partial_state_events_pkey ON public.roomserver_partial_state_events USING btree (event_nid)
+index roomserver_partial_state_events | roomserver_partial_state_events_room_idx | CREATE INDEX roomserver_partial_state_events_room_idx ON public.roomserver_partial_state_events USING btree (room_nid, event_nid)
 index roomserver_partial_state_rooms | idx_partial_state_rooms_created | CREATE INDEX idx_partial_state_rooms_created ON public.roomserver_partial_state_rooms USING btree (created_at)
 index roomserver_partial_state_rooms | roomserver_partial_state_rooms_pkey | CREATE UNIQUE INDEX roomserver_partial_state_rooms_pkey ON public.roomserver_partial_state_rooms USING btree (room_nid)
 index roomserver_partial_state_rooms_servers | roomserver_partial_state_rooms_servers_pkey | CREATE UNIQUE INDEX roomserver_partial_state_rooms_servers_pkey ON public.roomserver_partial_state_rooms_servers USING btree (room_nid, server_name)
@@ -854,6 +861,9 @@ constraint keyserver_one_time_keys | keyserver_one_time_keys_key_json_not_null |
 constraint keyserver_one_time_keys | keyserver_one_time_keys_ts_added_secs_not_null | NOT NULL ts_added_secs
 constraint keyserver_one_time_keys | keyserver_one_time_keys_unique | UNIQUE (user_id, device_id, key_id, algorithm)
 constraint keyserver_one_time_keys | keyserver_one_time_keys_user_id_not_null | NOT NULL user_id
+constraint keyserver_partial_state_device_lists | keyserver_partial_state_device_lists_device_id_not_null | NOT NULL device_id
+constraint keyserver_partial_state_device_lists | keyserver_partial_state_device_lists_pkey | PRIMARY KEY (user_id, device_id)
+constraint keyserver_partial_state_device_lists | keyserver_partial_state_device_lists_user_id_not_null | NOT NULL user_id
 constraint keyserver_stale_device_lists | keyserver_stale_device_lists_domain_not_null | NOT NULL domain
 constraint keyserver_stale_device_lists | keyserver_stale_device_lists_is_stale_not_null | NOT NULL is_stale
 constraint keyserver_stale_device_lists | keyserver_stale_device_lists_pkey | PRIMARY KEY (user_id)
@@ -949,6 +959,9 @@ constraint roomserver_membership | roomserver_membership_room_nid_target_nid_key
 constraint roomserver_membership | roomserver_membership_sender_nid_not_null | NOT NULL sender_nid
 constraint roomserver_membership | roomserver_membership_target_local_not_null | NOT NULL target_local
 constraint roomserver_membership | roomserver_membership_target_nid_not_null | NOT NULL target_nid
+constraint roomserver_partial_state_events | roomserver_partial_state_events_event_nid_not_null | NOT NULL event_nid
+constraint roomserver_partial_state_events | roomserver_partial_state_events_pkey | PRIMARY KEY (event_nid)
+constraint roomserver_partial_state_events | roomserver_partial_state_events_room_nid_not_null | NOT NULL room_nid
 constraint roomserver_partial_state_rooms | roomserver_partial_state_rooms_created_at_not_null | NOT NULL created_at
 constraint roomserver_partial_state_rooms | roomserver_partial_state_rooms_device_lists_stream_id_not_null | NOT NULL device_lists_stream_id
 constraint roomserver_partial_state_rooms | roomserver_partial_state_rooms_join_event_nid_not_null | NOT NULL join_event_nid

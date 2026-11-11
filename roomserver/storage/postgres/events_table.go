@@ -157,6 +157,9 @@ const selectRejectedEventNIDsSQL = "" +
 	"SELECT event_nid FROM roomserver_events" +
 	" WHERE room_nid = $1 AND is_rejected = TRUE ORDER BY event_nid ASC"
 
+const updateEventRejectedSQL = "" +
+	"UPDATE roomserver_events SET is_rejected = TRUE WHERE event_nid = $1"
+
 const updateEventUnrejectedSQL = "" +
 	"UPDATE roomserver_events SET is_rejected = FALSE WHERE event_nid = $1"
 
@@ -187,6 +190,7 @@ type eventStatements struct {
 	selectRejectedEventNIDsOfTypeStmt             *sql.Stmt
 	selectAcceptedOutlierEventNIDsOfTypeStmt      *sql.Stmt
 	updateEventUnrejectedStmt                     *sql.Stmt
+	updateEventRejectedStmt                       *sql.Stmt
 	selectRejectedEventNIDsStmt                   *sql.Stmt
 }
 
@@ -233,6 +237,7 @@ func PrepareEventsTable(db *sql.DB) (tables.Events, error) {
 		{&s.selectRejectedEventNIDsOfTypeStmt, selectRejectedEventNIDsOfTypeSQL},
 		{&s.selectAcceptedOutlierEventNIDsOfTypeStmt, selectAcceptedOutlierEventNIDsOfTypeSQL},
 		{&s.updateEventUnrejectedStmt, updateEventUnrejectedSQL},
+		{&s.updateEventRejectedStmt, updateEventRejectedSQL},
 		{&s.selectRejectedEventNIDsStmt, selectRejectedEventNIDsSQL},
 	}.Prepare(db)
 }
@@ -677,6 +682,11 @@ func (s *eventStatements) SelectAcceptedOutlierEventNIDsOfType(
 		result = append(result, eventNID)
 	}
 	return result, rows.Err()
+}
+
+func (s *eventStatements) UpdateEventRejected(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error {
+	_, err := sqlutil.TxStmt(txn, s.updateEventRejectedStmt).ExecContext(ctx, eventNID)
+	return err
 }
 
 func (s *eventStatements) UpdateEventUnrejected(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error {

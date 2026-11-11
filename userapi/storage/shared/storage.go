@@ -83,10 +83,13 @@ type KeyDatabase struct {
 	DeviceKeysTable       tables.DeviceKeys
 	KeyChangesTable       tables.KeyChanges
 	StaleDeviceListsTable tables.StaleDeviceLists
-	CrossSigningKeysTable tables.CrossSigningKeys
-	CrossSigningSigsTable tables.CrossSigningSigs
-	DB                    *sql.DB
-	Writer                sqlutil.Writer
+	// PartialStateDeviceListsTable holds untracked device list updates
+	// received while rooms were in partial state (MSC3902).
+	PartialStateDeviceListsTable tables.PartialStateDeviceLists
+	CrossSigningKeysTable        tables.CrossSigningKeys
+	CrossSigningSigsTable        tables.CrossSigningSigs
+	DB                           *sql.DB
+	Writer                       sqlutil.Writer
 }
 
 const (
@@ -1672,5 +1675,49 @@ func (d *KeyDatabase) DeleteStaleDeviceLists(
 ) error {
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		return d.StaleDeviceListsTable.DeleteStaleDeviceLists(ctx, txn, userIDs)
+	})
+}
+
+// DeviceListSynced reports whether the user's device list was fetched and is
+// not stale.
+func (d *KeyDatabase) DeviceListSynced(ctx context.Context, userID string) (bool, error) {
+	return d.StaleDeviceListsTable.SelectDeviceListSynced(ctx, userID)
+}
+
+// ForgetRemoteDeviceList drops the cached device list of a remote user this
+// server no longer tracks, so that it is fetched again should it be tracked
+// again.
+func (d *KeyDatabase) ForgetRemoteDeviceList(ctx context.Context, userID string) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		if err := d.DeviceKeysTable.DeleteAllDeviceKeys(ctx, txn, userID); err != nil {
+			return fmt.Errorf("d.DeviceKeysTable.DeleteAllDeviceKeys: %w", err)
+		}
+		return d.StaleDeviceListsTable.DeleteStaleDeviceLists(ctx, txn, []string{userID})
+	})
+}
+
+// AddPartialStateDeviceListUpdate records a device list update of a remote
+// user this server does not track, received while rooms are in partial state
+// (MSC3902).
+func (d *KeyDatabase) AddPartialStateDeviceListUpdate(ctx context.Context, userID, deviceID string) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		return d.PartialStateDeviceListsTable.InsertPartialStateDeviceList(ctx, txn, userID, deviceID)
+	})
+}
+
+// PartialStateDeviceListUpdates returns the recorded device list updates by
+// user ID.
+func (d *KeyDatabase) PartialStateDeviceListUpdates(ctx context.Context) (map[string][]string, error) {
+	return d.PartialStateDeviceListsTable.SelectPartialStateDeviceLists(ctx, nil)
+}
+
+// DeletePartialStateDeviceListUpdates removes the recorded device list
+// updates of the given users, or of every user if userIDs is nil.
+func (d *KeyDatabase) DeletePartialStateDeviceListUpdates(ctx context.Context, userIDs []string) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		if userIDs == nil {
+			return d.PartialStateDeviceListsTable.DeleteAllPartialStateDeviceLists(ctx, txn)
+		}
+		return d.PartialStateDeviceListsTable.DeletePartialStateDeviceLists(ctx, txn, userIDs)
 	})
 }

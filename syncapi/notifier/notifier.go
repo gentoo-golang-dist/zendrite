@@ -30,8 +30,10 @@ import (
 // the event, but the token has already advanced by the time they fetch it, resulting
 // in missed events.
 type Notifier struct {
-	lock  *sync.RWMutex
-	rsAPI api.SyncRoomserverAPI
+	lock *sync.RWMutex
+	// unPartialStated wakes requests waiting for the full state of a room (MSC3902).
+	unPartialStated unPartialStated
+	rsAPI           api.SyncRoomserverAPI
 	// A map of RoomID => Set<UserID> : Must only be accessed by the OnNewEvent goroutine
 	roomIDToJoinedUsers map[string]*userIDSet
 	// A map of RoomID => Set<UserID> : Must only be accessed by the OnNewEvent goroutine

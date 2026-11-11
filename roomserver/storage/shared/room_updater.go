@@ -344,3 +344,83 @@ func (u *RoomUpdater) RejectedEventNIDs() ([]types.EventNID, error) {
 	}
 	return u.d.EventsTable.SelectRejectedEventNIDs(u.ctx, u.txn, u.roomInfo.RoomNID)
 }
+
+// SetEventRejected marks an accepted event as rejected.
+func (u *RoomUpdater) SetEventRejected(eventNID types.EventNID) error {
+	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		return u.d.EventsTable.UpdateEventRejected(u.ctx, txn, eventNID)
+	})
+}
+
+// PartialStateEvents returns which of the given events have partial state
+// (MSC3902), as stored in this transaction.
+func (u *RoomUpdater) PartialStateEvents(eventNIDs []types.EventNID) ([]types.EventNID, error) {
+	return u.d.PartialStateEventsTable.SelectPartialStateEvents(u.ctx, u.txn, eventNIDs)
+}
+
+// UnmarkPartialStateEvent records that the state of the event was
+// recalculated from the full state.
+func (u *RoomUpdater) UnmarkPartialStateEvent(eventNID types.EventNID) error {
+	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		return u.d.PartialStateEventsTable.DeletePartialStateEvent(u.ctx, txn, eventNID)
+	})
+}
+
+// ClearRoomPartialState removes the room's partial-state flag, unless events
+// with partial state are left, in which case it reports false.
+func (u *RoomUpdater) ClearRoomPartialState(roomNID types.RoomNID) (cleared bool, err error) {
+	err = u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		left, cerr := u.d.PartialStateEventsTable.SelectPartialStateEventCount(u.ctx, txn, roomNID)
+		if cerr != nil {
+			return cerr
+		}
+		if left > 0 {
+			return nil
+		}
+		if _, cerr = u.d.PartialStateTable.DeletePartialStateRoom(u.ctx, txn, roomNID); cerr != nil {
+			return cerr
+		}
+		cleared = true
+		return nil
+	})
+	return cleared, err
+}
+
+// IsRoomPartialState reports whether the room is in partial state, as stored
+// in this transaction.
+func (u *RoomUpdater) IsRoomPartialState(roomNID types.RoomNID) (bool, error) {
+	return u.d.PartialStateTable.SelectPartialStateRoom(u.ctx, u.txn, roomNID)
+}
+
+// MarkPartialStateEvent records that the state of the event was calculated
+// from partial state (MSC3902). A join is also recorded as the room's join
+// event, unless it has one already.
+func (u *RoomUpdater) MarkPartialStateEvent(roomNID types.RoomNID, eventNID types.EventNID, isJoin bool) error {
+	return u.d.Writer.Do(u.d.DB, u.txn, func(txn *sql.Tx) error {
+		if err := u.d.PartialStateEventsTable.InsertPartialStateEvent(u.ctx, txn, roomNID, eventNID); err != nil {
+			return err
+		}
+		if isJoin {
+			return u.d.PartialStateTable.UpdatePartialStateJoinEventNID(u.ctx, txn, roomNID, eventNID)
+		}
+		return nil
+	})
+}
+
+// StateEntriesForEventIDs returns the state entries of the given state
+// events, as stored in this transaction.
+func (u *RoomUpdater) StateEntriesForEventIDs(ctx context.Context, eventIDs []string, excludeRejected bool) ([]types.StateEntry, error) {
+	return u.d.EventsTable.BulkSelectStateEventByID(ctx, u.txn, eventIDs, excludeRejected)
+}
+
+// PartialStateJoinEventNID returns the join event of a room in partial state,
+// as stored in this transaction.
+func (u *RoomUpdater) PartialStateJoinEventNID(roomNID types.RoomNID) (types.EventNID, error) {
+	return u.d.PartialStateTable.SelectPartialStateJoinEventNID(u.ctx, u.txn, roomNID)
+}
+
+// PartialStateServers returns the servers the resident server named when the
+// room was joined with partial state, as stored in this transaction.
+func (u *RoomUpdater) PartialStateServers(roomNID types.RoomNID) ([]string, error) {
+	return u.d.PartialStateTable.SelectPartialStateServers(u.ctx, u.txn, roomNID)
+}

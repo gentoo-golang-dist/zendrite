@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS roomserver_partial_state_rooms_servers (
 `
 
 const insertPartialStateRoomSQL = "" +
-	"INSERT OR REPLACE INTO roomserver_partial_state_rooms (room_nid, join_event_nid, joined_via, created_at, device_lists_stream_id)" +
+	"INSERT OR IGNORE INTO roomserver_partial_state_rooms (room_nid, join_event_nid, joined_via, created_at, device_lists_stream_id)" +
 	" VALUES ($1, $2, $3, strftime('%s', 'now'), $4)"
 
 const insertPartialStateRoomServerSQL = "" +
@@ -65,6 +65,15 @@ const selectAllPartialStateRoomsSQL = "" +
 const selectPartialStateJoinedViaSQL = "" +
 	"SELECT joined_via FROM roomserver_partial_state_rooms WHERE room_nid = $1"
 
+// The first join keeps its event: a second join to a room that is still in
+// partial state is resynced along with the other partial-state events. SQLite
+// numbers $-parameters by first appearance, so they appear in order.
+const updatePartialStateJoinEventNIDSQL = "" +
+	"UPDATE roomserver_partial_state_rooms SET join_event_nid = $1 WHERE room_nid = $2 AND join_event_nid = 0"
+
+const selectPartialStateJoinEventNIDSQL = "" +
+	"SELECT join_event_nid FROM roomserver_partial_state_rooms WHERE room_nid = $1"
+
 const selectDeviceListStreamIDSQL = "" +
 	"SELECT device_lists_stream_id FROM roomserver_partial_state_rooms WHERE room_nid = $1"
 
@@ -75,16 +84,18 @@ const deletePartialStateServersSQL = "" +
 	"DELETE FROM roomserver_partial_state_rooms_servers WHERE room_nid = $1"
 
 type partialStateStatements struct {
-	db                               *sql.DB
-	insertPartialStateRoomStmt       *sql.Stmt
-	insertPartialStateRoomServerStmt *sql.Stmt
-	selectPartialStateRoomStmt       *sql.Stmt
-	selectPartialStateServersStmt    *sql.Stmt
-	selectPartialStateJoinedViaStmt  *sql.Stmt
-	selectAllPartialStateRoomsStmt   *sql.Stmt
-	selectDeviceListStreamIDStmt     *sql.Stmt
-	deletePartialStateRoomStmt       *sql.Stmt
-	deletePartialStateServersStmt    *sql.Stmt
+	db                                 *sql.DB
+	insertPartialStateRoomStmt         *sql.Stmt
+	insertPartialStateRoomServerStmt   *sql.Stmt
+	selectPartialStateRoomStmt         *sql.Stmt
+	selectPartialStateServersStmt      *sql.Stmt
+	selectPartialStateJoinedViaStmt    *sql.Stmt
+	selectAllPartialStateRoomsStmt     *sql.Stmt
+	selectDeviceListStreamIDStmt       *sql.Stmt
+	updatePartialStateJoinEventNIDStmt *sql.Stmt
+	selectPartialStateJoinEventNIDStmt *sql.Stmt
+	deletePartialStateRoomStmt         *sql.Stmt
+	deletePartialStateServersStmt      *sql.Stmt
 }
 
 func CreatePartialStateTable(db *sql.DB) error {
@@ -111,6 +122,8 @@ func PreparePartialStateTable(db *sql.DB) (tables.PartialState, error) {
 		{&s.selectPartialStateJoinedViaStmt, selectPartialStateJoinedViaSQL},
 		{&s.selectAllPartialStateRoomsStmt, selectAllPartialStateRoomsSQL},
 		{&s.selectDeviceListStreamIDStmt, selectDeviceListStreamIDSQL},
+		{&s.updatePartialStateJoinEventNIDStmt, updatePartialStateJoinEventNIDSQL},
+		{&s.selectPartialStateJoinEventNIDStmt, selectPartialStateJoinEventNIDSQL},
 		{&s.deletePartialStateRoomStmt, deletePartialStateRoomSQL},
 		{&s.deletePartialStateServersStmt, deletePartialStateServersSQL},
 	}.Prepare(db)
@@ -249,4 +262,22 @@ func (s *partialStateStatements) DeletePartialStateRoom(
 		return 0, err
 	}
 	return deviceListStreamID, nil
+}
+
+func (s *partialStateStatements) UpdatePartialStateJoinEventNID(
+	ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, joinEventNID types.EventNID,
+) error {
+	_, err := sqlutil.TxStmt(txn, s.updatePartialStateJoinEventNIDStmt).ExecContext(ctx, joinEventNID, roomNID)
+	return err
+}
+
+func (s *partialStateStatements) SelectPartialStateJoinEventNID(
+	ctx context.Context, txn *sql.Tx, roomNID types.RoomNID,
+) (types.EventNID, error) {
+	var nid types.EventNID
+	err := sqlutil.TxStmt(txn, s.selectPartialStateJoinEventNIDStmt).QueryRowContext(ctx, roomNID).Scan(&nid)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return nid, err
 }

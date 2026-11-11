@@ -713,6 +713,9 @@ func (rp *RequestPool) OnIncomingKeyChangeRequest(req *http.Request, device *use
 			JSON: spec.InternalServerError{},
 		}
 	}
+	// Device list changes in rooms with partial state count (MSC3902), as
+	// the device lists of a lazy-loading sync show them.
+	syncReq.IncludePartialState = true
 	snapshot, err := rp.db.NewDatabaseSnapshot(req.Context())
 	if err != nil {
 		logrus.WithError(err).Error("Failed to acquire database snapshot for key change")

@@ -94,7 +94,7 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 
 	// Only handle events we care about, avoids unneeded unmarshalling
 	switch receivedType {
-	case api.OutputTypeNewRoomEvent, api.OutputTypeNewInboundPeek, api.OutputTypePurgeRoom:
+	case api.OutputTypeNewRoomEvent, api.OutputTypeNewInboundPeek, api.OutputTypePurgeRoom, api.OutputTypeUnPartialStatedRoom:
 	default:
 		return true
 	}
@@ -108,6 +108,15 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 	}
 
 	switch output.Type {
+	case api.OutputTypeUnPartialStatedRoom:
+		if output.UnPartialStatedRoom == nil {
+			return true
+		}
+		if err := s.onUnPartialStatedRoom(*output.UnPartialStatedRoom); err != nil { //nolint:contextcheck
+			log.WithError(err).WithField("room_id", output.UnPartialStatedRoom.RoomID).Error("Failed to handle a room that got its full state")
+			return !interrupted(err) && s.ctx.Err() == nil
+		}
+		return true
 	case api.OutputTypeNewRoomEvent:
 		ev := output.NewRoomEvent.Event
 		// A database that is only unreachable, as during a PostgreSQL
@@ -294,7 +303,18 @@ func (s *OutputRoomEventConsumer) processMessage(ore api.OutputNewRoomEvent, rew
 	// joined (issue #186).
 	isLocalEvent := spec.ServerName(ore.SendAsServer) == s.cfg.Matrix.ServerName
 	var partialStateServers []spec.ServerName
-	if roomID, roomIDErr := spec.NewRoomID(ore.Event.RoomID().String()); roomIDErr == nil {
+	if len(ore.PartialStateServers) > 0 {
+		// The event was stored with partial state: it goes to the servers
+		// named at the join even if the resync has finished since, before
+		// this consumer got to the event, as the joined hosts only take in
+		// the full state with the resync's own message (MSC3902).
+		if !isLocalEvent {
+			return nil
+		}
+		for _, server := range ore.PartialStateServers {
+			partialStateServers = append(partialStateServers, spec.ServerName(server))
+		}
+	} else if roomID, roomIDErr := spec.NewRoomID(ore.Event.RoomID().String()); roomIDErr == nil {
 		servers, skip, psErr := s.partialStateServersForEvent(*roomID, isLocalEvent)
 		switch {
 		case psErr != nil:

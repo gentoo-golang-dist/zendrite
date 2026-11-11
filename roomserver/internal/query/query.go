@@ -1065,6 +1065,12 @@ func (r *Queryer) QueryLeftUsers(ctx context.Context, req *api.QueryLeftUsersReq
 	return err
 }
 
+// QueryUsersInRooms returns which of the given users are in a room this
+// server knows the membership of. Their device lists are the ones it tracks.
+func (r *Queryer) QueryUsersInRooms(ctx context.Context, userIDs []string) ([]string, error) {
+	return r.DB.GetUsersInRooms(ctx, userIDs)
+}
+
 func (r *Queryer) QuerySharedUsers(ctx context.Context, req *api.QuerySharedUsersRequest, res *api.QuerySharedUsersResponse) error {
 	parsedUserID, err := spec.NewUserID(req.UserID, true)
 	if err != nil {

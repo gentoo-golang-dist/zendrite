@@ -129,7 +129,7 @@ func (p *PDUStreamProvider) CompleteSync(
 	// MSC3706: Filter out partial state rooms for non-lazy syncs
 	// Partial state rooms may have incomplete state which can cause issues for clients
 	// expecting full room state. Lazy-load syncs can include partial state rooms.
-	if !stateFilter.LazyLoadMembers {
+	if !stateFilter.LazyLoadMembers && !req.IncludePartialState {
 		partialStateRoomIDs, partialErr := p.rsAPI.GetPartialStateRoomIDs(ctx)
 		if partialErr != nil {
 			req.Log.WithError(partialErr).Warn("Failed to get partial state rooms")
@@ -376,7 +376,7 @@ func (p *PDUStreamProvider) IncrementalSync(
 	}
 
 	// MSC3706: Filter out partial state rooms for non-lazy syncs
-	if !stateFilter.LazyLoadMembers && len(stateDeltas) > 0 {
+	if !stateFilter.LazyLoadMembers && !req.IncludePartialState && len(stateDeltas) > 0 {
 		partialStateRoomIDs, partialErr := p.rsAPI.GetPartialStateRoomIDs(ctx)
 		if partialErr != nil {
 			req.Log.WithError(partialErr).Warn("Failed to get partial state rooms")
@@ -388,7 +388,9 @@ func (p *PDUStreamProvider) IncrementalSync(
 			filteredDeltas := make([]types.StateDelta, 0, len(stateDeltas))
 			filteredJoinedRooms := make([]string, 0, len(syncJoinedRooms))
 			for _, delta := range stateDeltas {
-				if !partialStateRooms[delta.RoomID] {
+				// A room the user left, which may still be in partial
+				// state, comes down as left all the same.
+				if !partialStateRooms[delta.RoomID] || delta.Membership == spec.Leave || delta.Membership == spec.Ban {
 					filteredDeltas = append(filteredDeltas, delta)
 				} else {
 					req.Log.WithField("room_id", delta.RoomID).Debug("Excluding partial state room from non-lazy incremental sync")
@@ -401,6 +403,18 @@ func (p *PDUStreamProvider) IncrementalSync(
 			}
 			stateDeltas = filteredDeltas
 			syncJoinedRooms = filteredJoinedRooms
+		}
+	}
+
+	// A room that the eager sync left out while it had partial state comes
+	// down as newly joined, with its full state, once the resync is done, as
+	// in Synapse (MSC3902).
+	if !stateFilter.LazyLoadMembers && !req.IncludePartialState && !r.Backwards {
+		if err = p.addUnPartialStatedRooms(ctx, snapshot, req, r, &stateFilter, stateDeltas); err != nil {
+			if req.Context.Err() != nil || abandonsSync(err) {
+				return from
+			}
+			req.Log.WithError(err).Warn("Failed to add the rooms whose partial state was resynced")
 		}
 	}
 
@@ -1161,6 +1175,7 @@ func (p *PDUStreamProvider) lazyLoadMembers(
 	if err != nil {
 		return stateEvents, err
 	}
+	memberships = append(memberships, p.partialStateMemberships(ctx, roomID, timelineEvents, wantUsers, memberships)...)
 	// cache the membership events
 	for _, membership := range memberships {
 		p.lazyLoadCache.StoreLazyLoadedUser(device, roomID, *membership.StateKey(), caching.LazyLoadedMember{EventID: membership.EventID(), SentAt: int64(sentAt)})
@@ -1232,4 +1247,81 @@ func logAbandoned(req *types.SyncRequest, err error, roomID, kind string) {
 		return
 	}
 	logger.Warnf("Abandoning %s sync, the database is unavailable", kind)
+}
+
+// partialStateMemberships returns, for a room joined with partial state, the
+// memberships of timeline senders that the partial state lacks, taken from
+// the auth events of their events, as Synapse does (MSC3902). Lazy-loading
+// clients then still learn about everyone who speaks in the room.
+func (p *PDUStreamProvider) partialStateMemberships(
+	ctx context.Context, roomID string, timelineEvents []*rstypes.HeaderedEvent,
+	wantUsers []string, found []*rstypes.HeaderedEvent,
+) []*rstypes.HeaderedEvent {
+	missing := make(map[string]bool, len(wantUsers))
+	for _, userID := range wantUsers {
+		missing[userID] = true
+	}
+	for _, ev := range found {
+		delete(missing, *ev.StateKey())
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	partial, err := p.rsAPI.IsRoomIDPartialState(ctx, roomID)
+	if err != nil || !partial {
+		return nil
+	}
+	var authIDs []string
+	for _, ev := range timelineEvents {
+		if missing[string(ev.SenderID())] {
+			authIDs = append(authIDs, ev.AuthEventIDs()...)
+		}
+	}
+	if len(authIDs) == 0 {
+		return nil
+	}
+	var res roomserverAPI.QueryEventsByIDResponse
+	if err = p.rsAPI.QueryEventsByID(ctx, &roomserverAPI.QueryEventsByIDRequest{RoomID: roomID, EventIDs: authIDs}, &res); err != nil {
+		logrus.WithError(err).WithField("room_id", roomID).Warn("Failed to load the auth events of timeline events")
+		return nil
+	}
+	var result []*rstypes.HeaderedEvent
+	for _, ev := range res.Events {
+		if ev.Type() != spec.MRoomMember || ev.StateKey() == nil || !missing[*ev.StateKey()] {
+			continue
+		}
+		delete(missing, *ev.StateKey())
+		result = append(result, ev)
+	}
+	return result
+}
+
+// addUnPartialStatedRooms marks the deltas of the joined rooms whose
+// partial-state resync finished within the range as newly joined, with the
+// room's full state.
+func (p *PDUStreamProvider) addUnPartialStatedRooms(
+	ctx context.Context, snapshot storage.DatabaseTransaction, req *types.SyncRequest,
+	r types.Range, stateFilter *synctypes.StateFilter, stateDeltas []types.StateDelta,
+) error {
+	roomIDs, err := snapshot.UnPartialStatedRoomsInRange(ctx, req.Device.UserID, r)
+	if err != nil || len(roomIDs) == 0 {
+		return err
+	}
+	resynced := make(map[string]bool, len(roomIDs))
+	for _, roomID := range roomIDs {
+		resynced[roomID] = true
+	}
+	for i := range stateDeltas {
+		delta := &stateDeltas[i]
+		if !resynced[delta.RoomID] || delta.Membership != spec.Join || delta.NewlyJoined {
+			continue
+		}
+		state, serr := snapshot.CurrentState(ctx, delta.RoomID, stateFilter, nil)
+		if serr != nil {
+			return serr
+		}
+		delta.StateEvents = state
+		delta.NewlyJoined = true
+	}
+	return nil
 }

@@ -203,6 +203,9 @@ type QueryMembershipAPI interface {
 
 // API functions required by the syncapi.
 type SyncRoomserverAPI interface {
+	// IsRoomIDPartialState reports whether a room joined with partial state
+	// still waits for its full state (MSC3902).
+	IsRoomIDPartialState(ctx context.Context, roomID string) (bool, error)
 	QueryLatestEventsAndStateAPI
 	QueryBulkStateContentAPI
 	QuerySenderIDAPI
@@ -286,6 +289,9 @@ type InviteBlockingAPI interface {
 }
 
 type ClientRoomserverAPI interface {
+	// AwaitFullState waits until a room joined with partial state has full
+	// state (MSC3902), or the context ends.
+	AwaitFullState(ctx context.Context, roomID string) error
 	InviteBlockingAPI
 	InputRoomEventsAPI
 	QueryLatestEventsAndStateAPI
@@ -371,6 +377,9 @@ type ClientRoomserverAPI interface {
 }
 
 type UserRoomserverAPI interface {
+	// QueryUsersInRooms returns which of the given users are in a room this
+	// server knows the membership of, whose device lists it tracks.
+	QueryUsersInRooms(ctx context.Context, userIDs []string) ([]string, error)
 	QueryEventsByID(ctx context.Context, req *QueryEventsByIDRequest, res *QueryEventsByIDResponse) error
 	QuerySenderIDAPI
 	QueryLatestEventsAndStateAPI
@@ -456,17 +465,29 @@ type FederationRoomserverAPI interface {
 	LatestEventIDs(ctx context.Context, roomNID types.RoomNID) ([]string, types.StateSnapshotNID, int64, error)
 	// RoomIDFromNID returns the room ID for a given room NID
 	RoomIDFromNID(ctx context.Context, roomNID types.RoomNID) (string, error)
+	// PartialStateResyncBatch returns up to limit events of a room in partial
+	// state whose state the resync can recalculate now, oldest first (MSC3902).
+	PartialStateResyncBatch(ctx context.Context, roomID string, limit int) ([]string, error)
+	// ResyncPartialStateEvent recalculates the state before a partial-state
+	// event from the full state after its prev events, checks the event again
+	// and removes its partial-state mark. StatesBefore maps prev events this
+	// server has no full state for to the IDs of the state before them on
+	// another server; prev events missing from it are returned in needState.
+	ResyncPartialStateEvent(ctx context.Context, roomID, eventID string, statesBefore map[string][]string) (needState []string, err error)
+	// CompletePartialStateResync calculates the current state of a room whose
+	// events all have full state now and clears its partial-state flag,
+	// reporting false if events with partial state are left.
+	CompletePartialStateResync(ctx context.Context, roomID string) (bool, error)
 	// NotifyUnPartialStated notifies observers that a room has completed its partial state resync
 	// This wakes up any callers waiting in AwaitFullState for this room
 	NotifyUnPartialStated(roomID string)
-	// UpdateCurrentStateAfterResync updates the current state and memberships after a partial state resync.
-	// This is called after state events have been stored as outliers via SendStateAsOutliers.
-	// It creates a new state snapshot from the stored events, calculates the state delta,
-	// updates the membership table, and notifies downstream components (syncapi).
-	// stateEventIDs are the event IDs of the state events that were fetched during resync.
-	UpdateCurrentStateAfterResync(ctx context.Context, roomID string, stateEventIDs []string) error
 }
 
 type KeyserverRoomserverAPI interface {
 	QueryLeftUsers(ctx context.Context, req *QueryLeftUsersRequest, res *QueryLeftUsersResponse) error
+	// QueryUsersInRooms returns which of the given users are in a room this
+	// server knows the membership of, whose device lists it tracks.
+	QueryUsersInRooms(ctx context.Context, userIDs []string) ([]string, error)
+	// GetPartialStateRoomIDs returns the rooms in partial state (MSC3902).
+	GetPartialStateRoomIDs(ctx context.Context) ([]string, error)
 }

@@ -7,6 +7,7 @@
 package routing
 
 import (
+	"context"
 	"math"
 	"net/http"
 
@@ -30,7 +31,7 @@ type getMembershipResponse struct {
 //	GET /rooms/{roomId}/members
 func GetMemberships(
 	req *http.Request, device *userapi.Device, roomID string,
-	syncDB storage.Database, rsAPI api.SyncRoomserverAPI,
+	syncDB storage.Database, rsAPI api.SyncRoomserverAPI, fullState fullStateObserver,
 	membership, notMembership *string, at string,
 ) util.JSONResponse {
 	userID, err := spec.NewUserID(device.UserID, true)
@@ -58,6 +59,16 @@ func GetMemberships(
 		return util.JSONResponse{
 			Code: http.StatusForbidden,
 			JSON: spec.Forbidden("You aren't a member of the room and weren't previously a member of the room."),
+		}
+	}
+
+	// The members of a room joined with partial state are only known once
+	// its full state is (MSC3902), so wait for that, as Synapse does.
+	if err = awaitFullState(req.Context(), rsAPI, fullState, roomID); err != nil {
+		util.GetLogger(req.Context()).WithError(err).Warn("Waiting for the full state of the room failed")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
 		}
 	}
 
@@ -111,5 +122,31 @@ func GetMemberships(
 		JSON: getMembershipResponse{synctypes.ToClientEvents(gomatrixserverlib.ToPDUs(result), synctypes.FormatAll, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) { //nolint:contextcheck
 			return rsAPI.QueryUserIDForSender(req.Context(), roomID, senderID)
 		})},
+	}
+}
+
+// fullStateObserver tells when the sync API has stored the full state of a
+// room that was joined with partial state.
+type fullStateObserver interface {
+	ObserveUnPartialStated(roomID string) (<-chan struct{}, func())
+}
+
+// awaitFullState waits until the sync API has the full state of a room that
+// was joined with partial state (MSC3902), or the request ends.
+func awaitFullState(ctx context.Context, rsAPI api.SyncRoomserverAPI, fullState fullStateObserver, roomID string) error {
+	if fullState == nil {
+		return nil
+	}
+	ch, stop := fullState.ObserveUnPartialStated(roomID)
+	defer stop()
+	partial, err := rsAPI.IsRoomIDPartialState(ctx, roomID)
+	if err != nil || !partial {
+		return err
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

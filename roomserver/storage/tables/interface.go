@@ -84,6 +84,8 @@ type Events interface {
 	// SelectRejectedEventNIDs returns the rejected events of a room, in event
 	// NID order.
 	SelectRejectedEventNIDs(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) ([]types.EventNID, error)
+	// UpdateEventRejected marks an accepted event as rejected.
+	UpdateEventRejected(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error
 	// UpdateEventUnrejected marks a rejected event as accepted.
 	UpdateEventUnrejected(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error
 }
@@ -363,6 +365,24 @@ type PartialState interface {
 	SelectPartialStateJoinedVia(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) (string, error)
 	// DeletePartialStateRoom removes a room from partial state tracking and returns the stored device list stream ID
 	DeletePartialStateRoom(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) (int64, error)
+	// UpdatePartialStateJoinEventNID records the join event of a partial state room, unless one is recorded already
+	UpdatePartialStateJoinEventNID(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, joinEventNID types.EventNID) error
+	// SelectPartialStateJoinEventNID returns the join event of a partial state room, or 0
+	SelectPartialStateJoinEventNID(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) (types.EventNID, error)
+}
+
+// PartialStateEvents tracks the events whose state was calculated from
+// partial state after a faster join (MSC3706, MSC3902), until the
+// partial-state resync recalculates it from the full state.
+type PartialStateEvents interface {
+	InsertPartialStateEvent(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, eventNID types.EventNID) error
+	DeletePartialStateEvent(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error
+	DeletePartialStateEventsForRoom(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) error
+	// SelectPartialStateEventsForRoom returns up to limit partial-state events of the room, oldest first.
+	SelectPartialStateEventsForRoom(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, limit int) ([]types.EventNID, error)
+	// SelectPartialStateEvents returns which of the given events have partial state.
+	SelectPartialStateEvents(ctx context.Context, txn *sql.Tx, eventNIDs []types.EventNID) ([]types.EventNID, error)
+	SelectPartialStateEventCount(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) (int64, error)
 }
 
 type UserRoomKeys interface {

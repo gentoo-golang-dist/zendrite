@@ -551,6 +551,18 @@ FindSuccessor:
 			serverSet[sender.Domain()] = true
 		}
 	}
+	// The partial state of a room joined with a faster join has no remote
+	// memberships, so the servers the resident server named at the join
+	// stand in for them, as in Synapse (MSC3902).
+	if partial, perr := b.db.IsRoomPartialState(ctx, info.RoomNID); perr == nil && partial {
+		partialServers, serr := b.db.GetPartialStateServers(ctx, info.RoomNID)
+		if serr != nil {
+			logrus.WithError(serr).WithField("room_id", roomID).Warn("ServersAtEvent: failed to get the servers of a partial state room")
+		}
+		for _, server := range partialServers {
+			serverSet[spec.ServerName(server)] = true
+		}
+	}
 	var servers []spec.ServerName
 	for server := range serverSet {
 		if b.isLocalServerName(server) {

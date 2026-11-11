@@ -115,6 +115,9 @@ const selectContextAfterEventSQL = "" +
 
 const selectSearchSQL = "SELECT id, event_id, headered_event_json FROM syncapi_output_room_events WHERE id > $1 AND type IN ($2)"
 
+const deleteEventSQL = "" +
+	"DELETE FROM syncapi_output_room_events WHERE event_id = $1"
+
 const purgeEventsSQL = "" +
 	"DELETE FROM syncapi_output_room_events WHERE room_id = $1"
 
@@ -144,6 +147,7 @@ type outputRoomEventsStatements struct {
 	selectContextBeforeEventStmt   *sql.Stmt
 	selectContextAfterEventStmt    *sql.Stmt
 	purgeEventsStmt                *sql.Stmt
+	deleteEventStmt                *sql.Stmt
 	// selectSearchStmt             *sql.Stmt - prepared at runtime
 }
 
@@ -185,6 +189,7 @@ func NewSqliteEventsTable(db *sql.DB, streamID *StreamIDStatements) (tables.Even
 		{&s.selectContextBeforeEventStmt, selectContextBeforeEventSQL},
 		{&s.selectContextAfterEventStmt, selectContextAfterEventSQL},
 		{&s.purgeEventsStmt, purgeEventsSQL},
+		{&s.deleteEventStmt, deleteEventSQL},
 		// {&s.selectSearchStmt, selectSearchSQL}, - prepared at runtime
 	}.Prepare(db)
 }
@@ -756,6 +761,12 @@ func unmarshalStateIDs(addIDsJSON, delIDsJSON string) (addIDs []string, delIDs [
 		}
 	}
 	return
+}
+
+// DeleteEvent removes an event, such as one rejected after it was served.
+func (s *outputRoomEventsStatements) DeleteEvent(ctx context.Context, txn *sql.Tx, eventID string) error {
+	_, err := sqlutil.TxStmt(txn, s.deleteEventStmt).ExecContext(ctx, eventID)
+	return err
 }
 
 func (s *outputRoomEventsStatements) PurgeEvents(

@@ -63,6 +63,10 @@ func (w *worker) processInput(msg *nats.Msg, input *api.InputRoomEvent) error {
 	run := func() error {
 		stopProgress := jetstream.KeepAliveDelivery(ctx, owner, []*nats.Msg{msg})
 		defer stopProgress()
+		// A step of the room's partial-state resync must not interleave
+		// with the processing of one of its events (MSC3902).
+		unlock := lockRoomInput(w.roomID)
+		defer unlock()
 		return w.r.processRoomEvent(ctx, virtualHost, input)
 	}
 	if msg.Header.Get("sync") != "" {

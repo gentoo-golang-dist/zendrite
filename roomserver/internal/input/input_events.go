@@ -32,7 +32,9 @@ import (
 	"codefloe.com/pat-s/zendrite/roomserver/acls"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/internal/helpers"
+	"codefloe.com/pat-s/zendrite/roomserver/internal/query"
 	"codefloe.com/pat-s/zendrite/roomserver/state"
+	"codefloe.com/pat-s/zendrite/roomserver/storage/shared"
 	"codefloe.com/pat-s/zendrite/roomserver/storage/tables"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/setup/jetstream"
@@ -334,10 +336,14 @@ func (r *Inputer) processRoomEvent(
 	// as a newer membership, that the state fetched for the gap below
 	// brings in, as Synapse expects. When its auth events cannot be fetched
 	// on their own, they are fetched again once the gap is filled.
-	canFillGap := missingPrev && input.Kind == api.KindNew && !input.SkipMissingEvents && !hasPartialState
+	canFillGap := missingPrev && input.Kind == api.KindNew && !input.SkipMissingEvents
 	deferredAuth := false
-	if hasPartialState && input.Kind == api.KindOutlier {
-		logger.Debugf("Skipping federation auth fetch for outlier %s (partial state active)", event.EventID())
+	if hasPartialState && canFillGap && missingAuth {
+		// In a room with partial state the auth events this server lacks,
+		// such as the membership of a sender it does not know about yet,
+		// usually come with the state fetched for the gap, as Synapse
+		// expects (MSC3902). Only ask for them once the gap is filled.
+		deferredAuth = true
 	} else if err = r.fetchAuthEvents(ctx, logger, roomInfo, virtualHost, headered, authEvents, knownEvents, serverRes.ServerNames); err != nil {
 		if canFillGap && !unavailableHere(ctx, err) {
 			logger.WithError(err).Debugf("Fetching the auth events of %s again after its missing prev events", event.EventID())
@@ -378,16 +384,9 @@ func (r *Inputer) processRoomEvent(
 		if err = gomatrixserverlib.Allowed(event, authEvents, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 			return r.Queryer.QueryUserIDForSender(ctx, roomID, senderID)
 		}); err != nil {
-			// During partial state (MSC3706 faster joins), we may be missing member events
-			// that would authorize this event. In this case, we accept the event provisionally
-			// rather than rejecting it. The full state resync will validate events properly.
-			if hasPartialState {
-				logger.WithError(err).Debugf("Event %s failed auth during partial state, accepting provisionally", event.EventID())
-			} else {
-				isRejected = true
-				rejectionErr = err
-				logger.WithError(rejectionErr).Warnf("Event %s not allowed by auth events", event.EventID())
-			}
+			isRejected = true
+			rejectionErr = err
+			logger.WithError(rejectionErr).Warnf("Event %s not allowed by auth events", event.EventID())
 		}
 	}
 	if !deferredAuth {
@@ -426,17 +425,6 @@ func (r *Inputer) processRoomEvent(
 		// user leave events where we don't want to block on federation).
 
 		stateResolutionRoomID = event.RoomID().String()
-
-		// For rooms in partial state (MSC3706), skip expensive federation state
-		// resolution. The partial state worker is handling full state download
-		// in the background. Attempting state resolution here would likely fail
-		// (we're missing most state) and could trigger cooldowns that block
-		// future events from being processed.
-		if hasPartialState {
-			logger.Debugf("Skipping state resolution for room %s (partial state active, background worker will handle)", stateResolutionRoomID)
-			isRejected = true
-			rejectionErr = fmt.Errorf("room %s is in partial state, awaiting background state sync", stateResolutionRoomID)
-		}
 
 		// Check if state resolution recently failed for this room. If so, skip
 		// the expensive federation lookup. This prevents rooms stuck in a
@@ -1056,96 +1044,39 @@ func (r *Inputer) processStateBefore(
 	return
 }
 
-// resolvePartialStateAuth performs state resolution between local partial state
-// and incoming event's auth events for MSC3706 faster joins.
-//
-// During partial state, we may not have complete room state. When checking auth
-// for incoming events, we state-resolve our local partial state with the event's
-// claimed auth events. This ensures restrictions like bans are enforced even
-// when we don't have the complete state.
+// resolvePartialStateAuth state-resolves the partial state before an event
+// with the event's own auth events, as Synapse does when it checks an event
+// against partial state (MSC3902). The partial state may lack the
+// memberships the event depends on, and the resolution keeps restrictions
+// such as bans and kicks in the partial state applied.
 func (r *Inputer) resolvePartialStateAuth(
 	ctx context.Context,
-	_ *types.RoomInfo, // unused but kept for potential future use
+	roomInfo *types.RoomInfo,
 	localState []gomatrixserverlib.PDU,
 	authEvents []gomatrixserverlib.PDU,
-) ([]gomatrixserverlib.PDU, error) { //nolint:unparam // error kept for interface compatibility
-	// Build a map of state key tuples to events for conflict detection
-	type stateKey struct {
-		eventType string
-		stateKey  string
-	}
-	stateMap := make(map[stateKey]gomatrixserverlib.PDU)
-	var conflicted []gomatrixserverlib.PDU
-	var unconflicted []gomatrixserverlib.PDU
-
-	// First, add all local state events
+) ([]gomatrixserverlib.PDU, error) {
+	ids := make([]string, 0, len(localState)+len(authEvents))
 	for _, ev := range localState {
-		if ev.StateKey() == nil {
-			continue // Skip non-state events
-		}
-		key := stateKey{ev.Type(), *ev.StateKey()}
-		stateMap[key] = ev
-	}
-
-	// Then check auth events for conflicts
-	for _, ev := range authEvents {
-		if ev.StateKey() == nil {
-			continue // Skip non-state events
-		}
-		key := stateKey{ev.Type(), *ev.StateKey()}
-		if existing, ok := stateMap[key]; ok {
-			// Conflict: same (type, state_key) but potentially different event
-			if existing.EventID() != ev.EventID() {
-				conflicted = append(conflicted, existing, ev)
-				delete(stateMap, key) // Remove from map, will be resolved
-			}
-		} else {
-			// No conflict, this is new state from auth events
-			stateMap[key] = ev
-		}
-	}
-
-	// Collect unconflicted events
-	for _, ev := range stateMap {
-		unconflicted = append(unconflicted, ev)
-	}
-
-	// If no conflicts, just return all unique state
-	if len(conflicted) == 0 {
-		return unconflicted, nil
-	}
-
-	// Collect all auth events for resolution (from both local and incoming)
-	allAuthEvents := make([]gomatrixserverlib.PDU, 0, len(localState)+len(authEvents))
-	seen := make(map[string]bool)
-	for _, ev := range localState {
-		if !seen[ev.EventID()] {
-			allAuthEvents = append(allAuthEvents, ev)
-			seen[ev.EventID()] = true
-		}
+		ids = append(ids, ev.EventID())
 	}
 	for _, ev := range authEvents {
-		if !seen[ev.EventID()] {
-			allAuthEvents = append(allAuthEvents, ev)
-			seen[ev.EventID()] = true
-		}
+		ids = append(ids, ev.EventID())
 	}
-
-	// Resolve conflicts using gomatrixserverlib's state resolution
-	resolved := gomatrixserverlib.ResolveStateConflicts(
-		conflicted,
-		allAuthEvents,
+	authChain, err := query.GetAuthChain(ctx, r.DB.EventsFromIDs, roomInfo, ids)
+	if err != nil {
+		return nil, fmt.Errorf("query.GetAuthChain: %w", err)
+	}
+	res, err := gomatrixserverlib.ResolveConflictsNew(
+		roomInfo.RoomVersion, [][]gomatrixserverlib.PDU{localState, authEvents}, authChain,
 		func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 			return r.Queryer.QueryUserIDForSender(ctx, roomID, senderID)
 		},
+		func(eventID string) bool {
+			rejected, rerr := r.DB.IsEventRejected(ctx, roomInfo.RoomNID, eventID)
+			return rerr != nil || rejected
+		},
 	)
-
-	// Combine unconflicted with resolved conflicted events
-	result := make([]gomatrixserverlib.PDU, 0, len(unconflicted)+len(resolved))
-	result = append(result, unconflicted...)
-	result = append(result, resolved...)
-
-	return result, nil
+	return res, err
 }
 
 // fetchAuthEvents will check to see if any of the
@@ -1377,6 +1308,9 @@ func (r *Inputer) calculateAndSetState(
 			return fmt.Errorf("updater.StateEntriesForEventIDs: %w", err)
 		}
 		entries = types.DeduplicateStateEntries(entries)
+		if entries, err = r.partialJoinState(ctx, updater, &roomState, roomInfo, event, entries); err != nil {
+			return err
+		}
 
 		if stateAtEvent.BeforeStateSnapshotNID, err = updater.AddState(ctx, roomInfo.RoomNID, nil, entries); err != nil {
 			return fmt.Errorf("updater.AddState: %w", err)
@@ -1391,6 +1325,20 @@ func (r *Inputer) calculateAndSetState(
 	err = updater.SetState(ctx, stateAtEvent.EventNID, stateAtEvent.BeforeStateSnapshotNID)
 	if err != nil {
 		return fmt.Errorf("r.DB.SetState: %w", err)
+	}
+
+	// While the room is in partial state after a faster join, the state of
+	// every event is calculated from partial state (MSC3902). Record that in
+	// the same transaction, so that the resync recalculates it later.
+	partial, err := updater.IsRoomPartialState(roomInfo.RoomNID)
+	if err != nil {
+		return fmt.Errorf("updater.IsRoomPartialState: %w", err)
+	}
+	if partial {
+		isJoin := input.HasState && r.isLocalJoin(ctx, event)
+		if err = updater.MarkPartialStateEvent(roomInfo.RoomNID, stateAtEvent.EventNID, isJoin); err != nil {
+			return fmt.Errorf("updater.MarkPartialStateEvent: %w", err)
+		}
 	}
 	succeeded = true
 	return nil
@@ -1542,4 +1490,45 @@ func withoutBackingOffServers(
 		}
 	}
 	return filtered
+}
+
+// partialJoinState returns the state before a local join to a room that is
+// in partial state already, as Synapse does (MSC3902). The partial state the
+// resident server returns leaves out the memberships of the room's earlier
+// joins from this server, so the state after the prev events this server has
+// is used instead, resolved with the returned state if prev events are
+// missing.
+func (r *Inputer) partialJoinState(
+	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
+	roomInfo *types.RoomInfo, event gomatrixserverlib.PDU, given []types.StateEntry,
+) ([]types.StateEntry, error) {
+	partial, err := updater.IsRoomPartialState(roomInfo.RoomNID)
+	if err != nil {
+		return nil, fmt.Errorf("updater.IsRoomPartialState: %w", err)
+	}
+	if !partial || !r.isLocalJoin(ctx, event) {
+		return given, nil
+	}
+	var known []types.StateAtEvent
+	missing := false
+	for _, prevID := range event.PrevEventIDs() {
+		prevStates, serr := updater.StateAtEventIDs(ctx, []string{prevID})
+		if serr != nil || len(prevStates) != 1 {
+			missing = true
+			continue
+		}
+		known = append(known, prevStates[0])
+	}
+	if len(known) == 0 {
+		return given, nil
+	}
+	local, err := roomState.LoadCombinedStateAfterEvents(ctx, known)
+	if err != nil {
+		return nil, fmt.Errorf("roomState.LoadCombinedStateAfterEvents: %w", err)
+	}
+	if missing {
+		local = append(local, given...)
+	}
+	local = types.DeduplicateStateEntries(local)
+	return roomState.ResolveDuplicateKeys(ctx, local)
 }

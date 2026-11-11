@@ -23,6 +23,20 @@ import (
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
+// awaitFullState waits until a room joined with partial state has its full
+// state (MSC3902). It returns false, with the response to give, if the wait
+// failed.
+func awaitFullState(ctx context.Context, rsAPI api.ClientRoomserverAPI, roomID string) (util.JSONResponse, bool) {
+	if err := rsAPI.AwaitFullState(ctx, roomID); err != nil {
+		util.GetLogger(ctx).WithError(err).Warn("Waiting for the full state of the room failed")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}, false
+	}
+	return util.JSONResponse{}, true
+}
+
 type stateEventInStateResp struct {
 	synctypes.ClientEvent
 	PrevContent   json.RawMessage `json:"prev_content,omitempty"`
@@ -39,6 +53,12 @@ type stateEventInStateResp struct {
 func OnIncomingStateRequest(ctx context.Context, device *userapi.Device, rsAPI api.ClientRoomserverAPI, roomID string) util.JSONResponse {
 	var worldReadable bool
 	var wantLatestState bool
+
+	// The state of a room joined with partial state is only complete once
+	// the resync is done (MSC3902), so wait for that, as Synapse does.
+	if res, ok := awaitFullState(ctx, rsAPI, roomID); !ok {
+		return res
+	}
 
 	// First of all, get the latest state of the room. We need to do this
 	// so that we can look at the history visibility of the room. If the
@@ -197,6 +217,14 @@ func OnIncomingStateTypeRequest(
 ) util.JSONResponse {
 	var worldReadable bool
 	var wantLatestState bool
+
+	// Only the memberships of remote users are left out of partial state
+	// (MSC3902), so only they wait for the resync, as in Synapse.
+	if target, terr := spec.NewUserID(stateKey, true); evType == spec.MRoomMember && (terr != nil || target.Domain() != device.UserDomain()) {
+		if res, ok := awaitFullState(ctx, rsAPI, roomID); !ok {
+			return res
+		}
+	}
 
 	roomVer, err := rsAPI.QueryRoomVersionForRoom(ctx, roomID)
 	if err != nil {

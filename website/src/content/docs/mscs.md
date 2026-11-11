@@ -476,8 +476,8 @@ Previews are cached in memory per URL for `cache_duration` (default `1h`), concu
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
-| [MSC3706](https://github.com/matrix-org/matrix-spec-proposals/pull/3706) | Partial state in `/send_join` (faster joins) | 1.6 | Implemented: Zendrite joins with `omit_members=true`. Answering `send_join` with partial state, `members_omitted` and `servers_in_room`, including the heroes' memberships of [MSC3943](https://github.com/matrix-org/matrix-spec-proposals/pull/3943), is opt-in (`federation_api.serve_partial_state_joins`); otherwise the state is full, which the spec allows. See [faster joins](#faster-joins) |
-| [MSC3902](https://github.com/matrix-org/matrix-spec-proposals/pull/3902) | Faster remote room joins | N/A | Partial: Zendrite joins with partial state and resyncs the full state in the background, but does not follow the MSC's client behaviour. See [faster joins](#faster-joins) |
+| [MSC3706](https://github.com/matrix-org/matrix-spec-proposals/pull/3706) | Partial state in `/send_join` (faster joins) | 1.6 | Implemented: Zendrite joins with `omit_members=true`, and answers `send_join` with partial state, `members_omitted` and `servers_in_room`, including the heroes' memberships of [MSC3943](https://github.com/matrix-org/matrix-spec-proposals/pull/3943). See [faster joins](#faster-joins) |
+| [MSC3902](https://github.com/matrix-org/matrix-spec-proposals/pull/3902) | Faster remote room joins | N/A | Implemented: Zendrite joins with partial state, tracks which events have partial state, resyncs the full state in the background and checks those events again against it, as Synapse does. See [faster joins](#faster-joins) |
 | [MSC3030](https://github.com/matrix-org/matrix-spec-proposals/pull/3030) | Jump to date API endpoint | 1.6 | Implemented: see [jump to date](#jump-to-date) |
 | [MSC3938](https://github.com/matrix-org/matrix-spec-proposals/pull/3938) | Remove deprecated `keyId` parameters from `/keys` endpoints | 1.6 | Implemented: `GET /_matrix/key/v2/query/{serverName}` returns all keys of the server. The deprecated forms with a key ID are still served |
 | [MSC2444](https://github.com/matrix-org/matrix-spec-proposals/pull/2444) | Peeking over federation | N/A | Opt-in (`msc2444`) |
@@ -525,7 +525,7 @@ Otherwise, or when no server answers, the local result stands.
 
 ### Faster joins
 
-With `federation_api.serve_partial_state_joins: true`, Zendrite answers `PUT /_matrix/federation/v2/send_join/{roomId}/{eventId}` with `omit_members=true` (or the unstable `org.matrix.msc3706.partial_state=true`) as Synapse does:
+Zendrite answers `PUT /_matrix/federation/v2/send_join/{roomId}/{eventId}` with `omit_members=true` (or the unstable `org.matrix.msc3706.partial_state=true`) as Synapse does:
 
 - `state` holds the state before the join without `m.room.member` events, except the joining user's own membership and, when the room has neither an `m.room.name` nor an `m.room.canonical_alias`, the memberships of up to five heroes, so that the joining server's clients can name the room.
   Heroes are joined and invited members other than the joining user, oldest first; when there are none, members who left or were banned.
@@ -533,14 +533,35 @@ With `federation_api.serve_partial_state_joins: true`, Zendrite answers `PUT /_m
 - `auth_chain` holds the auth chain of that state and of the join event, without the events that are already in `state`.
 - `members_omitted` is `true`, and `servers_in_room` lists the servers with a joined member before the join.
 
-Without the parameter, on the v1 endpoint, and while the option is off (the default), the state is full.
-The option is off by default because a Zendrite server that joins through this one then takes its own partial-state join path, described below, and Complement's federation tests between two Zendrite servers fail on it: sync timelines, device list updates, backfill and push rules of upgraded rooms all break until the resync is done.
+Without the parameter, and on the v1 endpoint, the state is full.
 While Zendrite itself only has partial state of a room, it cannot give a full answer, so `make_join`, `send_join`, `make_knock`, `send_knock` and `send_leave` for the room fail with 404 `M_NOT_FOUND`, as if Zendrite were not in the room.
 
-Joining a remote room, Zendrite asks for partial state, stores which rooms have partial state and which servers are in them in the database, and resyncs the full state in the background from `/state_ids` at the room's latest event, fetching missing events from the join server and then the other servers.
-The resync is queued again on startup for every room that still has partial state.
-During the resync, federation `/state`, `/state_ids`, `/backfill`, `/event_auth` and `/get_missing_events` for the room fail with 403 `ORG.MATRIX.MSC3895_UNABLE_DUE_TO_PARTIAL_STATE`.
-This differs from MSC3902 and Synapse, which hold `/members`, `/joined_members` and similar requests until the resync finishes, track the partial state of each event received during the resync, and re-check those events against the full state afterwards; most of Complement's `msc3902/TestPartialStateJoin` subtests fail for these reasons.
+Joining a remote room, Zendrite asks for partial state and follows MSC3902 as Synapse does:
+
+- The partial state becomes the room's current state, and the join and every event that arrives or is sent before the resync is done are marked as having partial state.
+  Such an event is checked against its auth events and the partial state.
+- In the background, Zendrite resyncs the room one event with partial state at a time, oldest first.
+  For the prev events of the event that have no full state, it asks the join server, then the other servers in the room, for `/state_ids`, and fetches the events it lacks.
+  It then calculates the state before the event again and checks the event against it: an event that the full state rejects is rejected and no longer served, and one that the partial state rejected wrongly is accepted into the room's state.
+  Each event is done in a transaction of its own, so a resync that a restart or a failover interrupts goes on with the events that are left, on startup or on the server that takes over.
+- Once no event with partial state is left, Zendrite calculates the room's current state and memberships from the full state and clears the room's partial state in the same transaction.
+
+Until then:
+
+- `GET /rooms/{roomId}/members`, `GET /rooms/{roomId}/joined_members`, `GET /rooms/{roomId}/state` and `GET /rooms/{roomId}/state/m.room.member/{userId}` for a remote user wait for the resync.
+  So does building an event whose authorization needs the membership of a remote user that the partial state lacks, such as an invite, kick or ban of that user; Synapse checks such events against the partial state instead, which lets an invite through a ban it does not know about.
+- An eager `/sync` leaves the room out, and sends it as newly joined, with its full state, once the resync is done; a leave from the room comes down at once.
+  A lazy-loading `/sync` includes it, with the memberships that its events cite as auth events.
+- Federation `/state`, `/state_ids`, `/backfill`, `/event_auth` and `/get_missing_events` for the room fail with 403 `ORG.MATRIX.MSC3895_UNABLE_DUE_TO_PARTIAL_STATE`, as MSC3895 and Synapse have it, so that the other server asks another one.
+- Local events go to the servers known to be in the room and the servers in `servers_in_room`, even when the resync finishes before they are sent, and backfill asks those servers too.
+  Remote events are not passed on to other servers.
+- No device list update is sent for the join.
+  Local device list updates go to the servers known to be in the room and the servers in `servers_in_room`.
+  Zendrite tracks the device lists of the remote users it knows to be in a room.
+  It does not cache those of other users, and keeps the updates they send, to report them once a resync shows that they share the room.
+
+After the resync, the servers that local device list updates may have missed get them, and Zendrite drops the device lists of the remote users the full state shows were not in the room, unless they share another room with it.
+It also drops the device list of a remote user who no longer shares a room with a local user, as their server stops sending updates, and fetches it again when they share one.
 
 ## Application services
 

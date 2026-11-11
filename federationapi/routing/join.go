@@ -206,8 +206,6 @@ func SendJoin(
 	if res := rejectIfPartialStateRoom(httpReq.Context(), rsAPI, roomID.String(), "send_join"); res != nil {
 		return *res
 	}
-	// Answering with full state is always allowed (MSC3706).
-	omitMembers = omitMembers && cfg.ServePartialStateJoins
 
 	roomVersion, err := rsAPI.QueryRoomVersionForRoom(httpReq.Context(), roomID.String())
 	if err != nil {

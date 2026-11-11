@@ -320,10 +320,11 @@ func (a *UserInternalAPI) QueryKeys(ctx context.Context, req *api.QueryKeysReque
 	}
 
 	// attempt to satisfy key queries from the local database first as we should get device updates pushed to us
-	domainToDeviceKeys = a.remoteKeysFromDatabase(ctx, res, &respMu, domainToDeviceKeys)
+	var untracked map[string]bool
+	domainToDeviceKeys, untracked = a.remoteKeysFromDatabase(ctx, res, &respMu, domainToDeviceKeys, domainToCrossSigningKeys)
 	if len(domainToDeviceKeys) > 0 || len(domainToCrossSigningKeys) > 0 {
 		// perform key queries for remote devices
-		a.queryRemoteKeys(ctx, req.Timeout, res, domainToDeviceKeys, domainToCrossSigningKeys)
+		a.queryRemoteKeys(ctx, req.Timeout, res, domainToDeviceKeys, domainToCrossSigningKeys, untracked)
 	}
 
 	// Now that we've done the potentially expensive work of asking the federation,
@@ -403,17 +404,49 @@ func (a *UserInternalAPI) QueryKeys(ctx context.Context, req *api.QueryKeysReque
 	}
 }
 
+// remoteKeysFromDatabase answers what it can of a key query for remote users
+// from the database, and returns what must be asked of their servers, and
+// which of the users this server does not track the device lists of.
+//
+// As in Synapse, this server tracks the device lists of the users who share a
+// room with it. A tracked user's device list is fetched once, then kept up to
+// date by the updates their server sends, so it is answered from the
+// database, with the cross-signing keys that come with it, which are dropped
+// from domainToCrossSigningKeys. An untracked user's keys are always asked
+// for, and never kept: in a room with partial state, the members this server
+// does not know about yet are untracked (MSC3902).
 func (a *UserInternalAPI) remoteKeysFromDatabase(
 	ctx context.Context, res *api.QueryKeysResponse, respMu *sync.Mutex, domainToDeviceKeys map[string]map[string][]string,
-) map[string]map[string][]string {
+	domainToCrossSigningKeys map[string]map[string]struct{},
+) (map[string]map[string][]string, map[string]bool) {
 	fetchRemote := make(map[string]map[string][]string)
+	untracked := a.untrackedUsers(ctx, domainToDeviceKeys)
 	for domain, userToDeviceMap := range domainToDeviceKeys {
 		for userID, deviceIDs := range userToDeviceMap {
+			synced := false
+			if untracked[userID] {
+				// Drop what is kept of it, so that it is fetched again
+				// should the user be tracked again.
+				if err := a.KeyDatabase.ForgetRemoteDeviceList(ctx, userID); err != nil {
+					util.GetLogger(ctx).WithError(err).Warn("Failed to forget the device list of an untracked user")
+				}
+			} else if a.RSAPI != nil {
+				var err error
+				if synced, err = a.KeyDatabase.DeviceListSynced(ctx, userID); err != nil {
+					util.GetLogger(ctx).WithError(err).Warn("Failed to check whether a device list is up to date")
+				}
+			}
 			// we can't safely return keys from the db when all devices are requested as we don't
-			// know if one has just been added.
-			if len(deviceIDs) > 0 {
+			// know if one has just been added, unless the device list is tracked and up to date.
+			if !untracked[userID] && (len(deviceIDs) > 0 || synced) {
 				err := a.populateResponseWithDeviceKeysFromDatabase(ctx, res, respMu, userID, deviceIDs)
 				if err == nil {
+					if synced {
+						delete(domainToCrossSigningKeys[domain], userID)
+						if len(domainToCrossSigningKeys[domain]) == 0 {
+							delete(domainToCrossSigningKeys, domain)
+						}
+					}
 					continue
 				}
 				util.GetLogger(ctx).WithError(err).Error("populateResponseWithDeviceKeysFromDatabase")
@@ -425,12 +458,47 @@ func (a *UserInternalAPI) remoteKeysFromDatabase(
 			fetchRemote[domain][userID] = append(fetchRemote[domain][userID], deviceIDs...)
 		}
 	}
-	return fetchRemote
+	return fetchRemote, untracked
+}
+
+// untrackedUsers returns the remote users of the query whose device lists
+// this server does not track, as they share no room with it.
+func (a *UserInternalAPI) untrackedUsers(ctx context.Context, domainToDeviceKeys map[string]map[string][]string) map[string]bool {
+	untracked := map[string]bool{}
+	if a.RSAPI == nil {
+		return untracked
+	}
+	var userIDs []string
+	for _, userToDeviceMap := range domainToDeviceKeys {
+		for userID := range userToDeviceMap {
+			userIDs = append(userIDs, userID)
+		}
+	}
+	if len(userIDs) == 0 {
+		return untracked
+	}
+	inRooms, err := a.RSAPI.QueryUsersInRooms(ctx, userIDs)
+	if err != nil {
+		// Without knowing, keep to what was done before: track them.
+		util.GetLogger(ctx).WithError(err).Warn("Failed to check which users share a room")
+		return untracked
+	}
+	tracked := make(map[string]bool, len(inRooms))
+	for _, userID := range inRooms {
+		tracked[userID] = true
+	}
+	for _, userID := range userIDs {
+		if !tracked[userID] {
+			untracked[userID] = true
+		}
+	}
+	return untracked
 }
 
 func (a *UserInternalAPI) queryRemoteKeys(
 	ctx context.Context, timeout time.Duration, res *api.QueryKeysResponse,
 	domainToDeviceKeys map[string]map[string][]string, domainToCrossSigningKeys map[string]map[string]struct{},
+	untracked map[string]bool,
 ) {
 	resultCh := make(chan *fclient.RespQueryKeys, len(domainToDeviceKeys))
 	// allows us to wait until all federation servers have been poked
@@ -457,7 +525,7 @@ func (a *UserInternalAPI) queryRemoteKeys(
 	for domain := range domains {
 		go a.queryRemoteKeysOnServer(
 			ctx, domain, domainToDeviceKeys[domain], domainToCrossSigningKeys[domain],
-			&wg, &respMu, timeout, resultCh, res,
+			&wg, &respMu, timeout, resultCh, res, untracked,
 		)
 	}
 
@@ -501,7 +569,7 @@ func (a *UserInternalAPI) queryRemoteKeys(
 func (a *UserInternalAPI) queryRemoteKeysOnServer(
 	ctx context.Context, serverName string, devKeys map[string][]string, crossSigningKeys map[string]struct{},
 	wg *sync.WaitGroup, respMu *sync.Mutex, timeout time.Duration, resultCh chan<- *fclient.RespQueryKeys,
-	res *api.QueryKeysResponse,
+	res *api.QueryKeysResponse, untracked map[string]bool,
 ) {
 	defer wg.Done()
 	fedCtx := ctx
@@ -530,6 +598,12 @@ func (a *UserInternalAPI) queryRemoteKeysOnServer(
 		}
 	}
 	for userID := range userIDsForAllDevices {
+		if untracked[userID] {
+			// The device lists of untracked users are not kept, so ask for
+			// their keys only.
+			devKeys[userID] = []string{}
+			continue
+		}
 		err := a.Updater.ManualUpdate(context.Background(), spec.ServerName(serverName), userID) //nolint:contextcheck
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -560,6 +634,9 @@ func (a *UserInternalAPI) queryRemoteKeysOnServer(
 			devKeys[userID] = []string{}
 			continue
 		}
+		// The device list, and the cross-signing keys that come with it, are
+		// up to date now, so /keys/query has nothing to add.
+		delete(devKeys, userID)
 	}
 	if len(devKeys) == 0 {
 		return

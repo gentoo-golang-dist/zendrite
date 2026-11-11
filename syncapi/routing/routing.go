@@ -252,7 +252,7 @@ func Setup(
 			}
 
 			at := req.URL.Query().Get("at")
-			return GetMemberships(req, device, vars["roomID"], syncDB, rsAPI, membership, notMembership, at)
+			return GetMemberships(req, device, vars["roomID"], syncDB, rsAPI, srp.Notifier, membership, notMembership, at)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodGet, http.MethodOptions)
 }

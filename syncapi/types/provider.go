@@ -24,6 +24,10 @@ type SyncRequest struct {
 	// timeline, StateAfterKey or UnstableStateAfterKey, when the client opted
 	// in to MSC4222. It is empty for the state at the start of the timeline.
 	StateAfter string
+	// IncludePartialState makes an eager sync include the rooms that still
+	// have partial state (MSC3902), as a lazy-loading sync does. /keys/changes
+	// uses it, since device list changes in those rooms count.
+	IncludePartialState bool
 
 	// Updated by the PDU stream.
 	Rooms map[string]string

@@ -39,6 +39,17 @@ func (s *OutputRoomEventConsumer) sendDeviceLists(ore api.OutputNewRoomEvent) {
 	}
 	logger := log.WithField("user_id", userID.String()).WithField("room_id", ore.Event.RoomID().String())
 
+	// A join with partial state does not announce the user's devices, as
+	// Synapse does not: the resident servers learn about them from the
+	// user's next device change (MSC3902).
+	if roomID, rerr := spec.NewRoomID(ore.Event.RoomID().String()); rerr == nil {
+		if roomInfo, ierr := s.rsAPI.QueryRoomInfo(s.ctx, *roomID); ierr == nil && roomInfo != nil {
+			if partial, perr := s.rsAPI.IsRoomPartialState(s.ctx, roomInfo.RoomNID); perr == nil && partial {
+				return
+			}
+		}
+	}
+
 	destinations, err := s.serversNewToUser(ore.Event.RoomID().String(), userID)
 	if err != nil {
 		logger.WithError(err).Warn("Failed to work out which servers to send a device list to")
@@ -47,7 +58,21 @@ func (s *OutputRoomEventConsumer) sendDeviceLists(ore api.OutputNewRoomEvent) {
 	if len(destinations) == 0 {
 		return
 	}
+	s.sendDeviceListsTo(userID, destinations)
+}
 
+// sendDeviceListsTo sends the user's device list to the servers, one update
+// per device.
+func (s *OutputRoomEventConsumer) sendDeviceListsTo(userID spec.UserID, destinations []spec.ServerName) {
+	if s.userAPI == nil {
+		return
+	}
+	users := s.userAPI()
+	if users == nil {
+		return
+	}
+	logger := log.WithField("user_id", userID.String())
+	var err error
 	var devices userapi.QueryDevicesResponse
 	if err = users.QueryDevices(s.ctx, &userapi.QueryDevicesRequest{UserID: userID.String()}, &devices); err != nil {
 		logger.WithError(err).Warn("Failed to query the devices of a user who joined")
@@ -181,4 +206,49 @@ func deviceListUpdates(
 		updates = append(updates, update)
 	}
 	return updates
+}
+
+// onUnPartialStatedRoom brings the servers in a room that got its full state
+// after a partial-state join up to date (MSC3902). The joined hosts become
+// those of the full state, and the servers that the device list updates of
+// local users, sent during the partial state, may have missed are sent the
+// current device lists, as Synapse does.
+func (s *OutputRoomEventConsumer) onUnPartialStatedRoom(msg api.OutputUnPartialStatedRoom) error {
+	var stateRes api.QueryLatestEventsAndStateResponse
+	if err := s.rsAPI.QueryLatestEventsAndState(s.ctx, &api.QueryLatestEventsAndStateRequest{
+		RoomID:       msg.RoomID,
+		StateToFetch: nil,
+	}, &stateRes); err != nil {
+		return fmt.Errorf("s.rsAPI.QueryLatestEventsAndState: %w", err)
+	}
+	if stateRes.RoomExists {
+		members := make([]gomatrixserverlib.PDU, 0, len(stateRes.StateEvents))
+		for _, ev := range stateRes.StateEvents {
+			if ev.Type() == spec.MRoomMember {
+				members = append(members, ev.PDU)
+			}
+		}
+		joinedHosts, err := JoinedHostsFromEvents(s.ctx, members, s.rsAPI)
+		if err != nil {
+			return fmt.Errorf("JoinedHostsFromEvents: %w", err)
+		}
+		if _, err = s.db.UpdateRoom(s.ctx, msg.RoomID, joinedHosts, nil, true); err != nil {
+			return fmt.Errorf("s.db.UpdateRoom: %w", err)
+		}
+	}
+	if len(msg.DeviceListServers) == 0 {
+		return nil
+	}
+	destinations := make([]spec.ServerName, 0, len(msg.DeviceListServers))
+	for _, server := range msg.DeviceListServers {
+		destinations = append(destinations, spec.ServerName(server))
+	}
+	for _, rawUserID := range msg.JoinedUserIDs {
+		userID, err := spec.NewUserID(rawUserID, true)
+		if err != nil || !s.cfg.Matrix.IsLocalServerName(userID.Domain()) {
+			continue
+		}
+		s.sendDeviceListsTo(*userID, destinations)
+	}
+	return nil
 }

@@ -152,10 +152,17 @@ const selectServerInRoomSQL = "" +
 	" JOIN roomserver_event_state_keys ON roomserver_membership.target_nid = roomserver_event_state_keys.event_state_key_nid" +
 	" WHERE membership_nid = $1 AND room_nid = $2 AND event_state_key LIKE '%:' || $3 LIMIT 1"
 
+// selectJoinedUsersSQL selects the users who share a room with a local user:
+// a room that no local user is joined to (3, tables.MembershipStateJoin)
+// gets no more events, so its memberships may be out of date.
 const selectJoinedUsersSQL = `
 SELECT DISTINCT target_nid
 FROM roomserver_membership m
 WHERE membership_nid > $1 AND target_nid = ANY($2)
+AND EXISTS (
+  SELECT 1 FROM roomserver_membership l
+  WHERE l.room_nid = m.room_nid AND l.target_local AND l.membership_nid = 3
+)
 `
 
 const selectAnyLocalMemberNotForgottenSQL = "" +

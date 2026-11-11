@@ -283,6 +283,19 @@ type StaleDeviceLists interface {
 	InsertStaleDeviceList(ctx context.Context, userID string, isStale bool) error
 	SelectUserIDsWithStaleDeviceLists(ctx context.Context, domains []spec.ServerName) ([]string, error)
 	DeleteStaleDeviceLists(ctx context.Context, txn *sql.Tx, userIDs []string) error
+	// SelectDeviceListSynced reports whether the user's device list was
+	// fetched and is not stale.
+	SelectDeviceListSynced(ctx context.Context, userID string) (bool, error)
+}
+
+// PartialStateDeviceLists holds the device list updates of remote users that
+// arrived while rooms were in partial state and that this server did not
+// track (MSC3902).
+type PartialStateDeviceLists interface {
+	InsertPartialStateDeviceList(ctx context.Context, txn *sql.Tx, userID, deviceID string) error
+	SelectPartialStateDeviceLists(ctx context.Context, txn *sql.Tx) (map[string][]string, error)
+	DeletePartialStateDeviceLists(ctx context.Context, txn *sql.Tx, userIDs []string) error
+	DeleteAllPartialStateDeviceLists(ctx context.Context, txn *sql.Tx) error
 }
 
 type CrossSigningKeys interface {
