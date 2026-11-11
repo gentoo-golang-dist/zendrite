@@ -107,9 +107,10 @@ func TestRefusedMessageIsRedeliveredAfterADelay(t *testing.T) {
 func TestLostAcknowledgementReplyDoesNotStopTheConsumer(t *testing.T) {
 	s := storageTestServer(t, "standalone", nil)
 	js := storageTestClient(t, s)
-	previous := ackTimeout
-	ackTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { ackTimeout = previous })
+	// Consumer workers can still read the timeout after the test returns, so
+	// it is swapped atomically.
+	previous := ackTimeout.Swap(int64(200 * time.Millisecond))
+	t.Cleanup(func() { ackTimeout.Store(previous) })
 
 	// A subscriber that takes acknowledgement requests and never answers.
 	nc, err := nats.Connect(s.ClientURL())

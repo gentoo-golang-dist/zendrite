@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -90,11 +91,18 @@ const (
 // otherwise block the consumer for good, and every message queued behind it.
 // An acknowledgement that times out costs at most a redelivery after the
 // consumer's ack wait, which consumers already handle.
-var ackTimeout = 10 * time.Second
+// It is atomic so that tests can shorten it while consumer workers run.
+const defaultAckTimeout = 10 * time.Second
+
+var ackTimeout = func() *atomic.Int64 {
+	var d atomic.Int64
+	d.Store(int64(defaultAckTimeout))
+	return &d
+}()
 
 // ackWithin sends one acknowledgement request, giving up after ackTimeout.
 func ackWithin(ctx context.Context, ack func(opts ...nats.AckOpt) error) error {
-	ctx, cancel := context.WithTimeout(ctx, ackTimeout)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(ackTimeout.Load()))
 	defer cancel()
 	return ack(nats.Context(ctx))
 }
