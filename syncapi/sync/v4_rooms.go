@@ -35,7 +35,9 @@ type RoomWithBumpStamp struct {
 func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membership string) ([]RoomWithBumpStamp, error) {
 	snapshot, err := rp.db.NewDatabaseSnapshot(ctx)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to acquire database snapshot")
+		if ctx.Err() == nil {
+			logrus.WithError(err).Error("Failed to acquire database snapshot")
+		}
 		return nil, err
 	}
 	var succeeded bool
@@ -63,7 +65,9 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 			filter = rp.loadInviteFilter(ctx, snapshot, userID)
 		}
 		if maxIDErr != nil {
-			logrus.WithError(maxIDErr).Warn("Failed to get max invite ID")
+			if ctx.Err() == nil {
+				logrus.WithError(maxIDErr).Warn("Failed to get max invite ID")
+			}
 		} else if maxID > 0 && !filter.config.BlocksAll() {
 			// Get all invite events for this user
 			inviteRange := types.Range{
@@ -73,7 +77,9 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 			}
 			invites, retired, _, inviteErr := snapshot.InviteEventsInRange(ctx, userID, inviteRange)
 			if inviteErr != nil {
-				logrus.WithError(err).Warn("Failed to query invite events")
+				if ctx.Err() == nil {
+					logrus.WithError(inviteErr).Warn("Failed to query invite events")
+				}
 			} else {
 				// Extract room IDs from active invites (not retired)
 				for roomID, event := range invites {
@@ -104,7 +110,9 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 	// Query the maximum stream position (latest event) for each room
 	bumpStamps, err := snapshot.MaxStreamPositionsForRooms(ctx, roomIDs)
 	if err != nil {
-		logrus.WithError(err).Warn("[V4_SYNC] Failed to get bump stamps for rooms")
+		if ctx.Err() == nil {
+			logrus.WithError(err).Warn("[V4_SYNC] Failed to get bump stamps for rooms")
+		}
 		// Continue with zero bump stamps as fallback
 		bumpStamps = make(map[string]types.StreamPosition)
 	}
@@ -123,6 +131,11 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 		"room_count": len(rooms),
 	}).Debug("[V4_SYNC] GetRoomsForUser completed")
 
+	// A request that ended mid-way got failures, not answers, from the
+	// rolled-back snapshot; don't pass a partial room list off as complete.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	succeeded = true
 	return rooms, nil
 }
@@ -132,7 +145,9 @@ func (rp *RequestPool) GetRoomsForUser(ctx context.Context, userID string, membe
 func (rp *RequestPool) GetKickedRooms(ctx context.Context, userID string) ([]RoomWithBumpStamp, error) {
 	snapshot, err := rp.db.NewDatabaseSnapshot(ctx)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to acquire database snapshot")
+		if ctx.Err() == nil {
+			logrus.WithError(err).Error("Failed to acquire database snapshot")
+		}
 		return nil, err
 	}
 	var succeeded bool
@@ -151,7 +166,9 @@ func (rp *RequestPool) GetKickedRooms(ctx context.Context, userID string) ([]Roo
 	// Query the maximum stream position (latest event) for each room
 	bumpStamps, err := snapshot.MaxStreamPositionsForRooms(ctx, roomIDs)
 	if err != nil {
-		logrus.WithError(err).Warn("[V4_SYNC] Failed to get bump stamps for kicked rooms")
+		if ctx.Err() == nil {
+			logrus.WithError(err).Warn("[V4_SYNC] Failed to get bump stamps for kicked rooms")
+		}
 		bumpStamps = make(map[string]types.StreamPosition)
 	}
 
@@ -169,6 +186,9 @@ func (rp *RequestPool) GetKickedRooms(ctx context.Context, userID string) ([]Roo
 		"room_count": len(rooms),
 	}).Debug("[V4_SYNC] GetKickedRooms completed")
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	succeeded = true
 	return rooms, nil
 }

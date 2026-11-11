@@ -191,10 +191,12 @@ func determineRoomStreamState(
 		ctx, roomID, userID, math.MaxInt64,
 	)
 	if err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
-			"room_id": roomID,
-			"user_id": userID,
-		}).Warn("[V4_STATE_DEBUG] Failed to query current membership, treating as incremental")
+		if ctx.Err() == nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"room_id": roomID,
+				"user_id": userID,
+			}).Warn("[V4_STATE_DEBUG] Failed to query current membership, treating as incremental")
+		}
 		// On error, fall through to normal LIVE/PREVIOUSLY logic
 	} else if currentMembership == spec.Join {
 		// User is currently joined - check if this is a transition from non-join
@@ -205,11 +207,13 @@ func determineRoomStreamState(
 			ctx, roomID, userID, int64(lastToken.PDUPosition),
 		)
 		if err != nil {
-			logrus.WithError(err).WithFields(logrus.Fields{
-				"room_id":  roomID,
-				"user_id":  userID,
-				"position": lastToken.PDUPosition,
-			}).Warn("[V4_STATE_DEBUG] Failed to query previous membership, treating as incremental")
+			if ctx.Err() == nil {
+				logrus.WithError(err).WithFields(logrus.Fields{
+					"room_id":  roomID,
+					"user_id":  userID,
+					"position": lastToken.PDUPosition,
+				}).Warn("[V4_STATE_DEBUG] Failed to query previous membership, treating as incremental")
+			}
 			// On error, fall through to normal LIVE/PREVIOUSLY logic
 		} else if prevMembership != spec.Join {
 			// Membership transition detected: non-join → join
@@ -399,6 +403,14 @@ func (rp *RequestPool) positionSuperseded(ctx context.Context, connState *V4Conn
 // failure is genuine and the caller logs it.
 func (rp *RequestPool) stopAfterWriteError(ctx context.Context, connState *V4ConnectionState) bool {
 	return ctx.Err() != nil || rp.positionSuperseded(ctx, connState)
+}
+
+// requestEnded reports whether err comes from the request having ended. Once
+// the request's context is done, database/sql rolls back every snapshot opened
+// on it, and queries on those snapshots fail with sql.ErrTxDone rather than an
+// error wrapping context.Canceled, so ctx is checked as well as err.
+func requestEnded(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // abandonV4Sync answers a sliding sync request whose context ended while its
@@ -601,7 +613,9 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 		// This is critical: we want the state AS IT WAS at that position, not "latest across all positions"
 		previousStreamStates, err = rp.db.GetConnectionStreamsByPosition(req.Context(), since.ConnectionPosition) //nolint:contextcheck
 		if err != nil {
-			logrus.WithError(err).Error("Failed to load connection stream states")
+			if req.Context().Err() == nil {
+				logrus.WithError(err).Error("Failed to load connection stream states")
+			}
 			return util.JSONResponse{
 				Code: http.StatusInternalServerError,
 				JSON: spec.InternalServerError{},
@@ -627,7 +641,9 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 		// Also load room configs for timeline expansion tracking
 		previousRoomConfigs, err = rp.db.GetRoomConfigsByPosition(req.Context(), since.ConnectionPosition) //nolint:contextcheck
 		if err != nil {
-			logrus.WithError(err).Error("Failed to load connection room configs")
+			if req.Context().Err() == nil {
+				logrus.WithError(err).Error("Failed to load connection room configs")
+			}
 			// Non-fatal - continue with empty configs (will trigger timeline expansion)
 			previousRoomConfigs = make(map[string]*types.SlidingSyncRoomConfig)
 		} else {
@@ -1004,6 +1020,9 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			// Query database for rooms that have PDU events since the last sync position
 			roomsWithPDUChanges, pduChangesErr := filterSnapshot.RoomsWithEventsSince(ctx, candidateRoomIDs, since.StreamToken.PDUPosition) //nolint:contextcheck
 			if pduChangesErr != nil {
+				if ctx.Err() != nil {
+					return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
+				}
 				logrus.WithError(pduChangesErr).Error("[V4_SYNC] Failed to filter PDU changed rooms")
 				// Continue without filtering on error - return all rooms
 			} else {
@@ -1011,6 +1030,9 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 				// Invites are tracked separately in InvitePosition stream
 				roomsWithInviteChanges, inviteChangesErr := filterSnapshot.RoomsWithInvitesSince(ctx, device.UserID, candidateRoomIDs, since.StreamToken.InvitePosition) //nolint:contextcheck
 				if inviteChangesErr != nil {
+					if ctx.Err() != nil {
+						return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
+					}
 					logrus.WithError(inviteChangesErr).Error("[V4_SYNC] Failed to filter invite changed rooms")
 					// Continue with just PDU filtering
 					roomsWithInviteChanges = nil
@@ -1065,6 +1087,9 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 					// an empty timeline rather than a wrong response.
 					laggingWithEvents, laggingErr := filterSnapshot.RoomsWithEventsSince(ctx, lagging.roomIDs, lagging.oldestToken) //nolint:contextcheck
 					if laggingErr != nil {
+						if ctx.Err() != nil {
+							return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
+						}
 						logrus.WithError(laggingErr).Error("[V4_SYNC] Failed to filter lagging rooms; including all of them")
 						laggingWithEvents = lagging.roomIDs
 					}
@@ -1765,7 +1790,7 @@ func (rp *RequestPool) buildInterruptResponse(
 		}
 		list, listErr := rp.processRoomList(ctx, device.UserID, listName, listConfig, connState, false)
 		if listErr != nil {
-			if errors.Is(listErr, context.Canceled) || errors.Is(listErr, context.DeadlineExceeded) {
+			if requestEnded(ctx, listErr) {
 				return resp
 			}
 			logrus.WithError(listErr).WithFields(logrus.Fields{
@@ -1790,7 +1815,7 @@ func (rp *RequestPool) buildInterruptResponse(
 	if len(roomsInLists) > 0 {
 		snapshot, snapshotErr := rp.db.NewDatabaseSnapshot(ctx)
 		if snapshotErr != nil {
-			if errors.Is(snapshotErr, context.Canceled) || errors.Is(snapshotErr, context.DeadlineExceeded) {
+			if requestEnded(ctx, snapshotErr) {
 				return resp
 			}
 			logrus.WithError(snapshotErr).WithField("response_type", responseType).Error("[V4_SYNC] Failed to create snapshot for room data")
@@ -1837,7 +1862,7 @@ func (rp *RequestPool) buildInterruptResponse(
 
 				roomData, buildErr := rp.BuildRoomData(ctx, snapshot, roomID, device.UserID, config.TimelineLimit, roomState, since.StreamToken, fromPosPtr, requiredStateConfig, false)
 				if buildErr != nil {
-					if errors.Is(buildErr, context.Canceled) || errors.Is(buildErr, context.DeadlineExceeded) {
+					if requestEnded(ctx, buildErr) {
 						return resp
 					}
 					logrus.WithError(buildErr).WithFields(logrus.Fields{
@@ -1860,7 +1885,7 @@ func (rp *RequestPool) buildInterruptResponse(
 	// Process extensions (provides e2ee data like OTK counts)
 	extSnapshot, extSnapshotErr := rp.db.NewDatabaseSnapshot(ctx)
 	if extSnapshotErr != nil {
-		if errors.Is(extSnapshotErr, context.Canceled) || errors.Is(extSnapshotErr, context.DeadlineExceeded) {
+		if requestEnded(ctx, extSnapshotErr) {
 			return resp
 		}
 		logrus.WithError(extSnapshotErr).WithField("response_type", responseType).Error("[V4_SYNC] Failed to create snapshot for extensions")
@@ -1883,7 +1908,7 @@ func (rp *RequestPool) buildInterruptResponse(
 		}
 		extensionResp, _, _, extErr := rp.ProcessExtensions(ctx, extSnapshot, connState, v4Req, device.UserID, device.ID, connectionKey, fromPosPtr, currentPos, resp.Lists, roomSubscriptions, resp.Rooms)
 		if extErr != nil {
-			if errors.Is(extErr, context.Canceled) || errors.Is(extErr, context.DeadlineExceeded) {
+			if requestEnded(ctx, extErr) {
 				return resp
 			}
 			logrus.WithError(extErr).WithField("response_type", responseType).Error("[V4_SYNC] Failed to process extensions")

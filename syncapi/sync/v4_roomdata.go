@@ -42,6 +42,9 @@ func (rp *RequestPool) detectRoomMembership(
 	// First check PDU-based membership (join/leave/ban)
 	pduMembership, _, err := snapshot.SelectMembershipForUser(ctx, roomID, userID, math.MaxInt64)
 	if err != nil {
+		if ctx.Err() != nil {
+			return roomMembershipResult{membership: spec.Leave}
+		}
 		logrus.WithError(err).WithField("room_id", roomID).Warn("Failed to get PDU membership")
 		pduMembership = "leave"
 	}
@@ -53,7 +56,9 @@ func (rp *RequestPool) detectRoomMembership(
 		inviteRange := types.Range{From: 0, To: currentPos.InvitePosition, Backwards: false}
 		invites, retired, _, inviteErr := snapshot.InviteEventsInRange(ctx, userID, inviteRange)
 		if inviteErr != nil {
-			logrus.WithError(inviteErr).WithField("room_id", roomID).Warn("Failed to check for invites")
+			if ctx.Err() == nil {
+				logrus.WithError(inviteErr).WithField("room_id", roomID).Warn("Failed to check for invites")
+			}
 		} else if invite, hasInvite := invites[roomID]; hasInvite {
 			if _, isRetired := retired[roomID]; !isRetired {
 				// The invites table also holds knocks. Invites the user
@@ -106,6 +111,9 @@ func (rp *RequestPool) populateMemberCounts(
 
 	joinedCount, err := snapshot.MembershipCount(ctx, roomID, "join", countPos)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get joined member count")
 	} else {
 		roomData.JoinedCount = joinedCount
@@ -113,6 +121,9 @@ func (rp *RequestPool) populateMemberCounts(
 
 	invitedCount, err := snapshot.MembershipCount(ctx, roomID, "invite", countPos)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		logrus.WithError(err).WithField("room_id", roomID).Error("Failed to get invited member count")
 	} else {
 		roomData.InvitedCount = invitedCount
@@ -137,6 +148,9 @@ func (rp *RequestPool) populatePrevBatch(
 
 	topologyToken, err := snapshot.EventPositionInTopology(ctx, earliestEvent.EventID)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		logrus.WithError(err).WithField("event_id", earliestEvent.EventID).Error("Failed to get topology position for prev_batch")
 		return
 	}
@@ -174,6 +188,13 @@ func (rp *RequestPool) BuildRoomData(
 
 	// Detect membership (PDU + invite check)
 	membershipResult := rp.detectRoomMembership(ctx, snapshot, roomID, userID, currentPos)
+	// Once the request's context ends, database/sql rolls back the snapshot's
+	// transaction, and every later query on it fails, mostly with
+	// sql.ErrTxDone rather than context.Canceled. The client is gone, so stop
+	// here instead of logging each of those failures; the caller checks ctx.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// If user is invited, return stripped state instead of timeline/required_state
 	if membershipResult.membership == spec.Invite {
@@ -195,6 +216,9 @@ func (rp *RequestPool) BuildRoomData(
 		}
 		timeline, limited, numLiveCount, timelineErr := rp.getTimelineEvents(ctx, snapshot, roomID, userID, timelineLimit, roomState, currentPos, timelineFromToken)
 		if timelineErr != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			logrus.WithError(timelineErr).WithField("room_id", roomID).Error("Failed to get timeline events")
 		} else {
 			roomData.Timeline = timeline
@@ -238,6 +262,10 @@ func (rp *RequestPool) BuildRoomData(
 	roomData.NotificationCount = 0
 	roomData.HighlightCount = 0
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Member counts
 	rp.populateMemberCounts(ctx, snapshot, roomID, roomData, currentPos)
 
@@ -253,6 +281,9 @@ func (rp *RequestPool) BuildRoomData(
 	roomData.BumpStamp = rp.calculateBumpStamp(ctx, snapshot, roomID, roomData.Timeline)
 	roomData.Heroes = rp.getHeroes(ctx, snapshot, roomID, userID)
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return roomData, nil
 }
 
@@ -1058,7 +1089,9 @@ func (rp *RequestPool) calculateBumpStamp(
 	// Use the efficient MaxStreamPositionsForRooms query which filters by bump event types
 	bumpStamps, err := snapshot.MaxStreamPositionsForRooms(ctx, []string{roomID})
 	if err != nil {
-		logrus.WithError(err).WithField("room_id", roomID).Warn("Failed to get bump_stamp from database")
+		if ctx.Err() == nil {
+			logrus.WithError(err).WithField("room_id", roomID).Warn("Failed to get bump_stamp from database")
+		}
 		return 0
 	}
 
@@ -1229,7 +1262,9 @@ func (rp *RequestPool) getHeroes(
 	// Get room summary which includes hero user IDs
 	summary, err := snapshot.GetRoomSummary(ctx, roomID, userID)
 	if err != nil {
-		logrus.WithError(err).WithField("room_id", roomID).Warn("[V4_SYNC] Failed to get room summary for heroes")
+		if ctx.Err() == nil {
+			logrus.WithError(err).WithField("room_id", roomID).Warn("[V4_SYNC] Failed to get room summary for heroes")
+		}
 		return nil
 	}
 
