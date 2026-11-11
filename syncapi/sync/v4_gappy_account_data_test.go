@@ -101,3 +101,33 @@ func TestProcessAccountDataExtension_RoomReenteringAfterGap_StillDeliversAccount
 	assert.True(t, connState.AccountDataWritten[roomGappy],
 		"a freshly written room must not then be copied forward at its stale position")
 }
+
+// TestProcessAccountDataExtension_DeletedGlobalAccountData checks that a
+// global type that changed in range but no longer exists (e.g. the MSC3890
+// settings of a deleted device) is sent with empty content on incremental
+// responses and left out of initial ones, as Synapse does.
+func TestProcessAccountDataExtension_DeletedGlobalAccountData(t *testing.T) {
+	t.Parallel()
+	const deleted = "org.matrix.msc3890.local_notification_settings.DEVICE"
+
+	snapshot := newMockSnapshot()
+	snapshot.SetAccountDataChange("", deleted, 95)
+	rp := &RequestPool{db: newMockStreamStateDB(), userAPI: &mockUserAPI{}}
+	toPos := types.StreamingToken{AccountDataPosition: 200}
+
+	resp, _, err := rp.processAccountDataExtension(
+		context.Background(), snapshot, nil, "@alice:localhost",
+		nil, nil, &types.StreamingToken{AccountDataPosition: 90}, toPos, nil, nil,
+	)
+	require.NoError(t, err)
+	require.Len(t, resp.Global, 1)
+	assert.Equal(t, deleted, resp.Global[0].Type)
+	assert.JSONEq(t, `{}`, string(resp.Global[0].Content))
+
+	resp, _, err = rp.processAccountDataExtension(
+		context.Background(), snapshot, nil, "@alice:localhost",
+		nil, nil, nil, toPos, nil, nil,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, resp.Global, "initial responses leave deleted account data out")
+}

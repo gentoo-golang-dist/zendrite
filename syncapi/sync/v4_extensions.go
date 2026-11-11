@@ -835,8 +835,14 @@ func (rp *RequestPool) processAccountDataExtension(
 
 			// Separate global vs per-room account data
 			if roomID == "" {
-				// Global account data
-				if globalData, ok := dataRes.GlobalAccountData[dataType]; ok {
+				// Global account data. An entry that changed in range but no
+				// longer exists was deleted; incremental responses carry it
+				// with empty content, as Synapse does (MSC3391).
+				globalData, ok := dataRes.GlobalAccountData[dataType]
+				if !ok && from > 0 {
+					globalData, ok = []byte("{}"), true
+				}
+				if ok {
 					resp.Global = append(resp.Global, synctypes.ClientEvent{
 						Type:    dataType,
 						Content: spec.RawJSON(globalData),

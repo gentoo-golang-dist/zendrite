@@ -82,6 +82,32 @@ func Test_AccountData(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, contentRoom, roomData[room.ID]["m.fully_read"])
 		assert.Equal(t, contentGlobal, globalData["im.vector.setting.breadcrumbs"])
+
+		// Removing one entry by type leaves the others alone and reports
+		// whether anything was deleted.
+		deleted, err := db.RemoveAccountDataByType(ctx, localpart, domain, "", "im.vector.setting.breadcrumbs")
+		assert.NoError(t, err)
+		assert.True(t, deleted)
+		deleted, err = db.RemoveAccountDataByType(ctx, localpart, domain, "", "im.vector.setting.breadcrumbs")
+		assert.NoError(t, err)
+		assert.False(t, deleted)
+		// The global and room scopes are distinct.
+		deleted, err = db.RemoveAccountDataByType(ctx, localpart, domain, "", "m.fully_read")
+		assert.NoError(t, err)
+		assert.False(t, deleted)
+		accountData, err = db.GetAccountDataByType(ctx, localpart, domain, "", "im.vector.setting.breadcrumbs")
+		assert.NoError(t, err)
+		assert.Nil(t, accountData)
+		globalData, roomData, err = db.GetAccountData(ctx, localpart, domain)
+		assert.NoError(t, err)
+		assert.NotContains(t, globalData, "im.vector.setting.breadcrumbs")
+		assert.Equal(t, contentRoom, roomData[room.ID]["m.fully_read"])
+		deleted, err = db.RemoveAccountDataByType(ctx, localpart, domain, room.ID, "m.fully_read")
+		assert.NoError(t, err)
+		assert.True(t, deleted)
+		accountData, err = db.GetAccountDataByType(ctx, localpart, domain, room.ID, "m.fully_read")
+		assert.NoError(t, err)
+		assert.Nil(t, accountData)
 	})
 }
 

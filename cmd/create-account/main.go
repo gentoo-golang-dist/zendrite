@@ -95,7 +95,7 @@ func main() {
 		logrus.Fatalln(err)
 	}
 
-	if err = internal.ValidatePassword(pass); err != nil {
+	if err = internal.ValidatePassword(pass, cfg.ClientAPI.PasswordMinimumLength); err != nil {
 		logrus.WithError(err).Error("Specified password is invalid")
 		os.Exit(1)
 	}

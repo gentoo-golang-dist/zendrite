@@ -80,7 +80,15 @@ func (p *AccountDataStreamProvider) IncrementalSync(
 				continue
 			}
 			if roomID == "" {
-				if globalData, ok := dataRes.GlobalAccountData[dataType]; ok {
+				globalData, ok := dataRes.GlobalAccountData[dataType]
+				if !ok && from > 0 {
+					// The entry changed in this range but no longer exists:
+					// it was deleted (e.g. MSC3890 local notification
+					// settings of a removed device). Like Synapse, tell
+					// incremental syncs with empty content (MSC3391).
+					globalData, ok = []byte("{}"), true
+				}
+				if ok {
 					req.Response.AccountData.Events = append(
 						req.Response.AccountData.Events,
 						synctypes.ClientEvent{

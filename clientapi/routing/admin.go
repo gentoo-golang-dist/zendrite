@@ -371,7 +371,7 @@ func AdminResetPassword(req *http.Request, cfg *config.ClientAPI, device *userap
 		}
 	}
 
-	if err = internal.ValidatePassword(request.Password); err != nil {
+	if err = internal.ValidatePassword(request.Password, cfg.PasswordMinimumLength); err != nil {
 		return *internal.PasswordResponse(err)
 	}
 

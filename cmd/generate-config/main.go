@@ -106,6 +106,9 @@ func main() {
 			cfg.ClientAPI.RegistrationDisabled = false
 			cfg.ClientAPI.OpenRegistrationWithoutVerificationEnabled = true
 			cfg.ClientAPI.RegistrationSharedSecret = "complement"
+			// Complement registers users with short passwords such as
+			// "hunter2", which Synapse accepts by default.
+			cfg.ClientAPI.PasswordMinimumLength = 0
 			cfg.Global.Presence = config.PresenceOptions{
 				EnableInbound:  true,
 				EnableOutbound: true,

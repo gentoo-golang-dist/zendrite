@@ -92,6 +92,9 @@ type AccountData interface {
 	// RemoveAllAccountData deletes all global and room account data of a
 	// user, such as when the user is erased (MSC4025).
 	RemoveAllAccountData(ctx context.Context, localpart string, serverName spec.ServerName) error
+	// RemoveAccountDataByType deletes one global (roomID == "") or room
+	// account data entry of a user. It reports whether an entry existed.
+	RemoveAccountDataByType(ctx context.Context, localpart string, serverName spec.ServerName, roomID, dataType string) (deleted bool, err error)
 	QueryPushRules(ctx context.Context, localpart string, serverName spec.ServerName) (*pushrules.AccountRuleSets, error)
 	// UpdatePushRules applies update to the push rules of a user, and stores
 	// them if update reports a change. Concurrent updates for the same user

@@ -911,3 +911,51 @@ func TestRegisterWithRegistrationToken(t *testing.T) {
 		})
 	})
 }
+
+func TestRegisterPasswordMinimumLength(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, close := testrig.CreateConfig(t, dbType)
+		defer close()
+		cfg.Global.ServerName = "server"
+		cfg.ClientAPI.RegistrationDisabled = false
+		cfg.ClientAPI.OpenRegistrationWithoutVerificationEnabled = true
+
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		natsInstance := jetstream.NATSInstance{}
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, &natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+
+		register := func(username, password string) util.JSONResponse {
+			body := &bytes.Buffer{}
+			assert.NoError(t, json.NewEncoder(body).Encode(registerRequest{Username: username, Password: password}))
+			return Register(httptest.NewRequest(http.MethodPost, "/", body), userAPI, &cfg.ClientAPI)
+		}
+
+		// The default minimum of 8 refuses Complement's "hunter2".
+		assert.Equal(t, 8, cfg.ClientAPI.PasswordMinimumLength)
+		resp := register("shortdefault", "hunter2")
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+		if mErr, ok := resp.JSON.(spec.MatrixError); assert.True(t, ok, "%T", resp.JSON) {
+			assert.Equal(t, spec.ErrorWeakPassword, mErr.ErrCode)
+			assert.Contains(t, mErr.Err, "min 8 characters")
+		}
+
+		// A custom minimum is applied as configured.
+		cfg.ClientAPI.PasswordMinimumLength = 12
+		resp = register("shortcustom", "hunter2hun")
+		assert.Equal(t, http.StatusBadRequest, resp.Code)
+		if mErr, ok := resp.JSON.(spec.MatrixError); assert.True(t, ok, "%T", resp.JSON) {
+			assert.Contains(t, mErr.Err, "min 12 characters")
+		}
+
+		// With no minimum, the password check passes and registration
+		// continues to user-interactive auth.
+		cfg.ClientAPI.PasswordMinimumLength = 0
+		resp = register("shortnone", "hunter2")
+		assert.Equal(t, http.StatusUnauthorized, resp.Code)
+		_, ok := resp.JSON.(userInteractiveResponse)
+		assert.True(t, ok, "%T", resp.JSON)
+	})
+}

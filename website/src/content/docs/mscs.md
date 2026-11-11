@@ -304,6 +304,7 @@ Differences from Synapse:
 | [MSC3823](https://github.com/matrix-org/matrix-spec-proposals/pull/3823) | Account suspension | 1.13 | Implemented: see [account suspension](#account-suspension) |
 | [MSC4151](https://github.com/matrix-org/matrix-spec-proposals/pull/4151) | Reporting rooms | 1.13 | Implemented: `POST /_matrix/client/v3/rooms/{roomId}/report` stores a report with a `reason`, which may be empty, for rooms this server knows, whether or not the reporter is in them; unknown rooms return 404 `M_NOT_FOUND`. Administrators list reports with `GET /_synapse/admin/v1/room_reports` (see the [admin API](/administration/adminapi/)) |
 | [MSC4260](https://github.com/matrix-org/matrix-spec-proposals/pull/4260) | Reporting users | 1.14 | Implemented: `POST /_matrix/client/v3/users/{userId}/report` stores a report with a `reason`, which may be empty, whether or not the reporter shares a room with the user. Local users without an account return 404 `M_NOT_FOUND`; remote users cannot be checked, so any valid remote user ID is accepted. Administrators list reports with `GET /_synapse/admin/v1/user_reports` (see the [admin API](/administration/adminapi/)) |
+| [MSC3890](https://github.com/matrix-org/matrix-spec-proposals/pull/3890) | Remotely silence local notifications | N/A | Implemented (unstable prefix): see [local notification settings](#local-notification-settings) |
 | [MSC4323](https://github.com/matrix-org/matrix-spec-proposals/pull/4323) | User suspension and locking endpoints | 1.18 | Implemented: `GET` and `PUT /_matrix/client/v1/admin/lock/{userId}` and `/admin/suspend/{userId}`, and `/capabilities` reports `m.account_moderation` to administrators. With [MSC3861](#msc3861-oidc-delegated-authentication), only suspension is available (`lock: false`) |
 
 ### Erasure
@@ -333,6 +334,13 @@ A suspended account can still log in, sync, read history, manage its devices, ke
 It gets 403 `M_USER_SUSPENDED` when it joins, knocks, invites, kicks, bans or unbans, creates or upgrades rooms, sends any event other than a redaction of its own events or its own leave, or changes its profile.
 Administrators cannot suspend themselves or another administrator.
 Suspension also works with [MSC3861](#msc3861-oidc-delegated-authentication), since the authentication service has no equivalent.
+
+### Local notification settings
+
+Clients store MSC3890 per-device notification settings as global account data of type `org.matrix.msc3890.local_notification_settings.<device_id>`; the server only stores them.
+When a device is deleted, with `DELETE /devices/{deviceId}`, `POST /delete_devices`, `POST /logout`, `POST /logout/all`, a password change or reset that logs out devices, MAS device deletion or deactivation, its settings entry is deleted as well, as in Synapse.
+`GET /user/{userId}/account_data/{type}` then returns 404 `M_NOT_FOUND`, and the next incremental `/sync` or sliding sync `account_data` extension response carries the type with empty content (`{}`), as Synapse does with MSC3391; initial syncs leave it out.
+Unlike Synapse, this needs no experimental option.
 
 ## Profiles
 

@@ -73,6 +73,12 @@ type ClientAPI struct {
 	// (default "5m"). Parsed as a time.Duration string.
 	AltchaExpiry string `yaml:"altcha_expiry"`
 
+	// PasswordMinimumLength is the fewest characters a new password may
+	// have, on registration, password changes and resets and the admin
+	// password reset. Zero sets no minimum, as in Synapse by default. The
+	// default is 8; the maximum stays at 512.
+	PasswordMinimumLength int `yaml:"password_minimum_length"`
+
 	// RefreshableAccessTokenLifetime is how long an access token issued with
 	// a refresh token (MSC2918) remains valid. Clients ask for a refresh token
 	// with `refresh_token: true` on /login and /register. The default is five
@@ -111,6 +117,7 @@ func (c *ClientAPI) Defaults(opts DefaultOpts) {
 	c.AltchaMaxNumber = 50000
 	c.AltchaExpiry = "5m"
 	c.RefreshableAccessTokenLifetime = 5 * time.Minute //nolint:mnd
+	c.PasswordMinimumLength = 8
 	c.RegistrationDisabled = true
 	c.OpenRegistrationWithoutVerificationEnabled = false
 	c.RateLimiting.Defaults()
@@ -133,6 +140,9 @@ func (c *ClientAPI) Verify(configErrs *ConfigErrors) {
 		if !trusted {
 			configErrs.Add("client_api.email_validation_server must be listed in global.trusted_third_party_id_servers")
 		}
+	}
+	if c.PasswordMinimumLength < 0 {
+		configErrs.Add("client_api.password_minimum_length must not be negative")
 	}
 	if c.RefreshableAccessTokenLifetime < 0 {
 		configErrs.Add("client_api.refreshable_access_token_lifetime must not be negative")

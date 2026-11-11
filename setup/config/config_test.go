@@ -9,6 +9,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -422,6 +423,45 @@ func TestRefreshableAccessTokenLifetime(t *testing.T) {
 	c.Verify(&errs)
 	if len(errs) == 0 {
 		t.Fatal("negative lifetime was accepted")
+	}
+}
+
+func TestPasswordMinimumLength(t *testing.T) {
+	var c ClientAPI
+	c.Defaults(DefaultOpts{})
+	if c.PasswordMinimumLength != 8 {
+		t.Fatalf("default minimum is %d, want 8", c.PasswordMinimumLength)
+	}
+	for input, want := range map[string]int{
+		"password_minimum_length: 0":  0,
+		"password_minimum_length: 12": 12,
+	} {
+		c.Defaults(DefaultOpts{})
+		if err := yaml.Unmarshal([]byte(input), &c); err != nil {
+			t.Fatal(err)
+		}
+		if c.PasswordMinimumLength != want {
+			t.Fatalf("%q parsed as %d, want %d", input, c.PasswordMinimumLength, want)
+		}
+	}
+	c.Defaults(DefaultOpts{})
+	if err := yaml.Unmarshal([]byte("registration_disabled: true"), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.PasswordMinimumLength != 8 {
+		t.Fatalf("an unset minimum is %d, want the default 8", c.PasswordMinimumLength)
+	}
+	errs := ConfigErrors{}
+	c.PasswordMinimumLength = -1
+	c.Verify(&errs)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "password_minimum_length") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("negative minimum was accepted: %v", errs)
 	}
 }
 

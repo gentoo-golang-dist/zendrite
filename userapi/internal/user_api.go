@@ -285,9 +285,16 @@ func (a *UserInternalAPI) PerformPasswordUpdate(ctx context.Context, req *api.Pe
 		return err
 	}
 	if req.LogoutDevices {
-		if _, err := a.DB.RemoveAllDevices(context.Background(), req.Localpart, req.ServerName, ""); err != nil { //nolint:contextcheck
+		devices, err := a.DB.RemoveAllDevices(context.Background(), req.Localpart, req.ServerName, "") //nolint:contextcheck
+		if err != nil {
 			return err
 		}
+		deviceIDs := make([]string, 0, len(devices))
+		for i := range devices {
+			deviceIDs = append(deviceIDs, devices[i].ID)
+		}
+		userID := fmt.Sprintf("@%s:%s", req.Localpart, req.ServerName)
+		a.removeLocalNotificationSettings(ctx, userID, req.Localpart, req.ServerName, deviceIDs)
 	}
 	res.PasswordUpdated = true
 	return nil
@@ -394,6 +401,7 @@ func (a *UserInternalAPI) PerformDeviceDeletion(ctx context.Context, req *api.Pe
 	if err != nil {
 		return err
 	}
+	a.removeLocalNotificationSettings(ctx, req.UserID, local, domain, deletedDeviceIDs)
 	// Ask the keyserver to delete device keys and signatures for those devices
 	deleteReq := &api.PerformDeleteKeysRequest{
 		UserID: req.UserID,
@@ -410,6 +418,34 @@ func (a *UserInternalAPI) PerformDeviceDeletion(ctx context.Context, req *api.Pe
 	}
 	// create empty device keys and upload them to delete what was once there and trigger device list changes
 	return a.deviceListUpdate(req.UserID, deletedDeviceIDs, false) //nolint:contextcheck
+}
+
+// localNotificationSettingsPrefix is the unstable account data type prefix
+// of MSC3890 per-device local notification settings.
+const localNotificationSettingsPrefix = "org.matrix.msc3890.local_notification_settings."
+
+// removeLocalNotificationSettings deletes the MSC3890 local notification
+// settings account data of deleted devices, as Synapse does on device
+// deletion, and tells the sync API so clients see the removal. Failures are
+// logged rather than returned: the devices are already gone and the caller
+// should not fail because of leftover settings.
+func (a *UserInternalAPI) removeLocalNotificationSettings(
+	ctx context.Context, userID, localpart string, serverName spec.ServerName, deviceIDs []string,
+) {
+	for _, deviceID := range deviceIDs {
+		dataType := localNotificationSettingsPrefix + deviceID
+		deleted, err := a.DB.RemoveAccountDataByType(ctx, localpart, serverName, "", dataType)
+		if err != nil {
+			util.GetLogger(ctx).WithError(err).WithField("device_id", deviceID).Error("failed to remove MSC3890 local notification settings")
+			continue
+		}
+		if !deleted {
+			continue
+		}
+		if err = a.SyncProducer.SendAccountData(userID, eventutil.AccountData{Type: dataType}); err != nil {
+			util.GetLogger(ctx).WithError(err).WithField("device_id", deviceID).Error("failed to notify sync API of removed MSC3890 local notification settings")
+		}
+	}
 }
 
 func (a *UserInternalAPI) deviceListUpdate(userID string, deviceIDs []string, fromRegistration bool) error {

@@ -69,6 +69,17 @@ However, it is **not recommended** to enable open registration, as this leaves y
 It isn't possible to enable open registration in Zendrite in a single step.
 If you try to disable the `registration_disabled` option without any secondary verification methods enabled (such as reCAPTCHA), Zendrite will log an error and fail to start.
 
+## Password length
+
+`client_api.password_minimum_length` sets the fewest characters a new password may have, on registration, shared secret registration, password changes and resets, and the admin password reset API.
+The default is 8. Set it to 0 for no minimum, as in Synapse by default.
+A shorter password is refused with `M_WEAK_PASSWORD`. Passwords may have at most 512 characters, whatever the setting.
+
+```yaml
+client_api:
+  password_minimum_length: 8
+```
+
 ## Terms of service
 
 `client_api.registration_terms` lists policy documents, such as terms of service and a privacy policy, that new users must accept ([MSC1692](https://spec.matrix.org/v1.11/client-server-api/#terms-of-service-at-registration)).

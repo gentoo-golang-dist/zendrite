@@ -16,40 +16,81 @@ import (
 
 func Test_validatePassword(t *testing.T) {
 	t.Parallel()
+	weak8 := spec.WeakPassword("password too weak: min 8 characters")
 	tests := []struct {
 		name      string
 		password  string
+		minLength int
 		wantError error
 		wantJSON  *util.JSONResponse
 	}{
 		{
 			name:      "password too short",
 			password:  "shortpw",
+			minLength: 8,
 			wantError: ErrPasswordWeak,
-			wantJSON:  &util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.WeakPassword(ErrPasswordWeak.Error())},
+			wantJSON:  &util.JSONResponse{Code: http.StatusBadRequest, JSON: weak8},
 		},
 		{
 			name:      "password too long",
+			password:  strings.Repeat("a", maxPasswordLength+1),
+			minLength: 8,
+			wantError: ErrPasswordTooLong,
+			wantJSON:  &util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON(ErrPasswordTooLong.Error())},
+		},
+		{
+			name:      "password too long without a minimum",
 			password:  strings.Repeat("a", maxPasswordLength+1),
 			wantError: ErrPasswordTooLong,
 			wantJSON:  &util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON(ErrPasswordTooLong.Error())},
 		},
 		{
-			name:     "password OK",
-			password: util.RandomString(10),
+			name:      "password OK",
+			password:  util.RandomString(10),
+			minLength: 8,
+		},
+		{
+			name:      "password of exactly the minimum length",
+			password:  "12345678",
+			minLength: 8,
+		},
+		{
+			name:     "no minimum accepts a short password",
+			password: "hunter2",
+		},
+		{
+			name:     "no minimum accepts a one character password",
+			password: "x",
+		},
+		{
+			name:      "empty password is left to the caller",
+			password:  "",
+			minLength: 8,
+		},
+		{
+			name:      "custom minimum rejects shorter passwords",
+			password:  "hunter2",
+			minLength: 12,
+			wantError: ErrPasswordWeak,
+			wantJSON:  &util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.WeakPassword("password too weak: min 12 characters")},
+		},
+		{
+			name:      "custom minimum accepts long enough passwords",
+			password:  "hunter2hunter",
+			minLength: 12,
 		},
 	}
 	for _, tt := range tests {
 		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			gotErr := ValidatePassword(tt.password)
-			if !reflect.DeepEqual(gotErr, tt.wantError) {
-				t.Errorf("validatePassword() = %v, wantError %v", gotErr, tt.wantError)
+			gotErr := ValidatePassword(tt.password, tt.minLength)
+			if !errors.Is(gotErr, tt.wantError) {
+				t.Errorf("ValidatePassword() = %v, wantError %v", gotErr, tt.wantError)
 			}
 
 			if got := PasswordResponse(gotErr); !reflect.DeepEqual(got, tt.wantJSON) {
-				t.Errorf("validatePassword() = %v, wantJSON %v", got, tt.wantJSON)
+				t.Errorf("PasswordResponse() = %v, wantJSON %v", got, tt.wantJSON)
 			}
 		})
 	}

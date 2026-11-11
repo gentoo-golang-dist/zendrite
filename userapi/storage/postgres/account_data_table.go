@@ -49,11 +49,15 @@ const selectAccountDataByTypeSQL = "" +
 const deleteAccountDataSQL = "" +
 	"DELETE FROM userapi_account_datas WHERE localpart = $1 AND server_name = $2"
 
+const deleteAccountDataByTypeSQL = "" +
+	"DELETE FROM userapi_account_datas WHERE localpart = $1 AND server_name = $2 AND room_id = $3 AND type = $4"
+
 type accountDataStatements struct {
 	insertAccountDataStmt       *sql.Stmt
 	selectAccountDataStmt       *sql.Stmt
 	selectAccountDataByTypeStmt *sql.Stmt
 	deleteAccountDataStmt       *sql.Stmt
+	deleteAccountDataByTypeStmt *sql.Stmt
 }
 
 func NewPostgresAccountDataTable(db *sql.DB) (tables.AccountDataTable, error) {
@@ -67,6 +71,7 @@ func NewPostgresAccountDataTable(db *sql.DB) (tables.AccountDataTable, error) {
 		{&s.selectAccountDataStmt, selectAccountDataSQL},
 		{&s.selectAccountDataByTypeStmt, selectAccountDataByTypeSQL},
 		{&s.deleteAccountDataStmt, deleteAccountDataSQL},
+		{&s.deleteAccountDataByTypeStmt, deleteAccountDataByTypeSQL},
 	}.Prepare(db)
 }
 
@@ -147,4 +152,19 @@ func (s *accountDataStatements) DeleteAccountData(
 ) error {
 	_, err := sqlutil.TxStmt(txn, s.deleteAccountDataStmt).ExecContext(ctx, localpart, serverName)
 	return err
+}
+
+func (s *accountDataStatements) DeleteAccountDataByType(
+	ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName,
+	roomID, dataType string,
+) (bool, error) {
+	res, err := sqlutil.TxStmt(txn, s.deleteAccountDataByTypeStmt).ExecContext(ctx, localpart, serverName, roomID, dataType)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }

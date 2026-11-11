@@ -590,7 +590,7 @@ func Register(
 			}
 		}
 	}
-	if err = internal.ValidatePassword(r.Password); err != nil {
+	if err = internal.ValidatePassword(r.Password, cfg.PasswordMinimumLength); err != nil {
 		return *internal.PasswordResponse(err)
 	}
 
@@ -1409,7 +1409,7 @@ func handleSharedSecretRegistration(cfg *config.ClientAPI, userAPI userapi.Clien
 	if resErr := validateUserLocalpart(ssrr.User, cfg.Matrix.ServerName); resErr != nil {
 		return *resErr
 	}
-	if err = internal.ValidatePassword(ssrr.Password); err != nil {
+	if err = internal.ValidatePassword(ssrr.Password, cfg.PasswordMinimumLength); err != nil {
 		return *internal.PasswordResponse(err)
 	}
 	deviceID := "shared_secret_registration"

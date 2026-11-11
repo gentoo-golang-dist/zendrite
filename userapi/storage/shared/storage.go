@@ -482,6 +482,17 @@ func (d *Database) RemoveAllAccountData(ctx context.Context, localpart string, s
 	})
 }
 
+// RemoveAccountDataByType implements storage.AccountData.
+func (d *Database) RemoveAccountDataByType(
+	ctx context.Context, localpart string, serverName spec.ServerName, roomID, dataType string,
+) (deleted bool, err error) {
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		deleted, err = d.AccountDatas.DeleteAccountDataByType(ctx, txn, localpart, serverName, roomID, dataType)
+		return err
+	})
+	return deleted, err
+}
+
 // GetAccountData returns account data related to a given localpart
 // If no account data could be found, returns an empty arrays
 // Returns an error if there was an issue with the retrieval.
