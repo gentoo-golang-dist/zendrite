@@ -199,6 +199,8 @@ tests/csapi/TestUrlPreview
 tests/csapi/TestVersionStructure
 tests/msc2836/TestEventRelationships
 tests/msc2836/TestFederatedEventRelationships
+tests/msc3389/TestMSC3389RedactionPreservesPlainRelation
+tests/msc3389/TestMSC3389RedactionPreservesRelation
 tests/msc3389/TestMSC3389RedactionStripsRelationInOlderVersions
 tests/msc3757/TestWithoutOwnedState
 tests/msc3890/TestDeletingDeviceRemovesDeviceLocalNotificationSettings

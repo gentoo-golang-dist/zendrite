@@ -139,6 +139,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC2285](https://github.com/matrix-org/matrix-spec-proposals/pull/2285) | Private read receipts | 1.4 | Implemented |
 | [MSC2174](https://github.com/matrix-org/matrix-spec-proposals/pull/2174) | Move the `redacts` property to `content` | 1.8 | Implemented: from room version 11, redactions are applied from `content.redacts` and the top-level key is ignored. Clients receive `redacts` both at the top level and in `content` in every room version |
 | [MSC2815](https://github.com/matrix-org/matrix-spec-proposals/pull/2815) | Allow room moderators to view redacted event content | N/A | Implemented (unstable prefix): see [redacted event content for moderators](#redacted-event-content-for-moderators) |
+| [MSC3389](https://github.com/matrix-org/matrix-spec-proposals/pull/3389) | Redaction changes for events with a relation | N/A | Implemented (unstable room version): see [relation redactions](#relation-redactions) |
 | [MSC4169](https://github.com/matrix-org/matrix-spec-proposals/pull/4169) | Backwards-compatible redaction sending using `/send` | 1.18 | Implemented: `PUT /send/m.room.redaction` copies `content.redacts` to the top level, so it redacts in every room version. Advertised as `com.beeper.msc4169` in `/versions` |
 
 ### Bundled aggregations
@@ -168,6 +169,16 @@ Everything else, including `/sync`, sliding sync, `/messages`, `/context`, searc
 Content redacted longer ago than the retention period is no longer served, and a job on each roomserver deletes it every five minutes.
 `0s` keeps no content, and a negative period keeps it until the room is purged; purging a room deletes its content.
 The MSC's `M_UNREDACTED_CONTENT_NOT_RECEIVED` code is not used, as in Synapse: an event that arrived already redacted is returned redacted.
+
+### Relation redactions
+
+Zendrite offers the unstable room version `org.matrix.msc3389.10`, which is room version 10 except that redaction keeps `rel_type` and `event_id` in `content.m.relates_to`, so clients can tell a redacted edit, reaction or thread reply from other redacted events.
+`m.relates_to` is dropped when it is not an object or has neither key, and the values are kept whatever their JSON type, as in Synapse.
+The rule applies wherever events are redacted: local redactions, events that arrive after their redaction, and events received over federation whose content hash does not match.
+Redacted relations are still left out of `/relations`, bundled aggregations and the reaction duplicate check, and [moderators](#redacted-event-content-for-moderators) still get the whole original content.
+As in Synapse, it also has strict byte limits: an event whose type, state key, sender or room ID is over 255 bytes is never stored, while room version 10 still stores such events fetched over federation when they are within 255 codepoints.
+`/capabilities` lists the room version as `unstable`, and `createRoom` accepts it; it is never the default room version.
+Synapse defines the room version but does not offer it, so only Zendrite servers can join such rooms for now.
 
 ### Thread subscriptions
 
