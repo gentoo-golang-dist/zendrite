@@ -19,14 +19,17 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Pulled through the codefloe registry proxy cache. bun comes from npm
+    # rather than oven-sh/setup-bun, which resolves the version through the
+    # unauthenticated GitHub API and hits its per-IP rate limit on shared
+    # runners.
+    container: cr.codefloe.com/docker.io/library/node:24
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install unzip
-        run: apt-get update && apt-get install -y unzip
-
-      - uses: oven-sh/setup-bun@v2
+      - name: Install bun
+        run: npm install -g --no-fund --no-audit bun@latest
 
       - name: Install dependencies
         working-directory: website
