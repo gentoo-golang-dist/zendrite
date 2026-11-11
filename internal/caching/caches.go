@@ -33,6 +33,7 @@ type Caches struct {
 	RoomHierarchyFailures   Cache[string, struct{}]                                // room ID -> failed federation marker
 	LazyLoading             Cache[lazyLoadingCacheKey, LazyLoadedMember]           // composite key -> membership sent
 	RoomSummaries           Cache[string, RoomSummaryResponse]                     // "roomID:auth" -> summary response
+	RemoteProfileFailures   Cache[string, struct{}]                                // server name -> failed profile query marker
 }
 
 // RoomSummaryResponse is cached separately to avoid circular imports with clientapi.

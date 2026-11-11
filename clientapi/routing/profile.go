@@ -25,6 +25,7 @@ import (
 	appserviceAPI "codefloe.com/pat-s/zendrite/appservice/api"
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
+	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
@@ -49,8 +50,9 @@ func GetProfile(
 	userID string,
 	asAPI appserviceAPI.AppServiceInternalAPI,
 	federation fclient.FederationClient,
+	failures caching.RemoteProfileFailureCache,
 ) util.JSONResponse {
-	profile, errRes := lookupProfile(req, profileAPI, cfg, userID, asAPI, federation)
+	profile, errRes := lookupProfile(req, profileAPI, cfg, userID, asAPI, federation, failures)
 	if errRes != nil {
 		return *errRes
 	}
@@ -67,11 +69,12 @@ func GetProfileField(
 	userID, key string,
 	asAPI appserviceAPI.AppServiceInternalAPI,
 	federation fclient.FederationClient,
+	failures caching.RemoteProfileFailureCache,
 ) util.JSONResponse {
 	if len(key) > maxProfileKeyLength {
 		return keyTooLarge()
 	}
-	profile, errRes := lookupProfile(req, profileAPI, cfg, userID, asAPI, federation)
+	profile, errRes := lookupProfile(req, profileAPI, cfg, userID, asAPI, federation, failures)
 	if errRes != nil {
 		return *errRes
 	}
@@ -107,8 +110,9 @@ func lookupProfile(
 	userID string,
 	asAPI appserviceAPI.AppServiceInternalAPI,
 	federation fclient.FederationClient,
+	failures caching.RemoteProfileFailureCache,
 ) (*authtypes.Profile, *util.JSONResponse) {
-	profile, err := getProfile(req.Context(), profileAPI, cfg, userID, asAPI, federation)
+	profile, err := getProfile(req.Context(), profileAPI, cfg, userID, asAPI, federation, failures)
 	if err != nil {
 		if errors.Is(err, appserviceAPI.ErrProfileNotExists) {
 			return nil, &util.JSONResponse{
@@ -120,6 +124,16 @@ func lookupProfile(
 		var remoteErr spec.HTTPError
 		if errors.As(err, &remoteErr) && remoteErr.Code == http.StatusForbidden {
 			return nil, &util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden("Profile lookup is forbidden by the remote server.")}
+		}
+
+		// An unreachable remote is expected on federation, not a server
+		// fault: answer 502 like Synapse does.
+		if errors.Is(err, errRemoteProfileUnavailable) {
+			util.GetLogger(req.Context()).WithError(err).WithField("user_id", userID).Warn("Remote profile lookup failed")
+			return nil, &util.JSONResponse{
+				Code: http.StatusBadGateway,
+				JSON: spec.Unknown("Failed to fetch profile"),
+			}
 		}
 
 		util.GetLogger(req.Context()).WithError(err).Error("getProfile failed")
@@ -436,6 +450,7 @@ func getProfile(
 	userID string,
 	asAPI appserviceAPI.AppServiceInternalAPI,
 	federation fclient.FederationClient,
+	failures caching.RemoteProfileFailureCache,
 ) (*authtypes.Profile, error) {
 	localpart, domain, err := gomatrixserverlib.SplitID('@', userID)
 	if err != nil {
@@ -443,11 +458,18 @@ func getProfile(
 	}
 
 	if !cfg.Matrix.IsLocalServerName(domain) {
+		if failures != nil && failures.RemoteProfileFailed(domain) {
+			return nil, fmt.Errorf("%w: recent query to %s failed", errRemoteProfileUnavailable, domain)
+		}
 		profile, fedErr := remoteProfile(ctx, cfg, federation, domain, userID)
 		if fedErr != nil {
 			var x spec.HTTPError
 			if errors.As(fedErr, &x) && x.Code == http.StatusNotFound {
 				return nil, appserviceAPI.ErrProfileNotExists
+			}
+			// A canceled client request says nothing about the remote.
+			if failures != nil && errors.Is(fedErr, errRemoteProfileUnavailable) && ctx.Err() == nil {
+				failures.StoreRemoteProfileFailure(domain)
 			}
 			return nil, fedErr
 		}
@@ -462,6 +484,10 @@ func getProfile(
 
 	return profile, nil
 }
+
+// errRemoteProfileUnavailable marks a remote profile query that got no usable
+// HTTP response from the remote server.
+var errRemoteProfileUnavailable = errors.New("remote profile query failed")
 
 // remoteProfile fetches a remote user's whole profile over federation. It
 // uses the signed transport because LookupProfile only decodes the display
@@ -483,6 +509,11 @@ func remoteProfile(
 	}
 	var fields map[string]json.RawMessage
 	if err = federation.DoRequestAndParseResponse(ctx, httpReq, &fields); err != nil {
+		var httpErr spec.HTTPError
+		if !errors.As(err, &httpErr) {
+			// No usable response: unreachable, timed out or garbled.
+			return nil, fmt.Errorf("%w: %w", errRemoteProfileUnavailable, err)
+		}
 		return nil, err
 	}
 

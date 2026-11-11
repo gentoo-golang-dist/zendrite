@@ -38,6 +38,7 @@ const (
 	eventTypeNIDCache
 	eventStateKeyNIDCache
 	roomSummaryCache
+	remoteProfileFailuresCache
 )
 
 const (
@@ -162,6 +163,12 @@ func NewRistrettoCache(maxCost config.DataUnit, maxAge time.Duration, enableProm
 			Prefix:  roomSummaryCache,
 			Mutable: true,
 			MaxAge:  lesserOf(5*time.Minute, maxAge), //nolint:mnd // 5 minute TTL for room summaries
+		},
+		RemoteProfileFailures: &RistrettoCachePartition[string, struct{}]{ // server name -> failed profile query marker
+			cache:   cache,
+			Prefix:  remoteProfileFailuresCache,
+			Mutable: true,
+			MaxAge:  lesserOf(5*time.Minute, maxAge), //nolint:mnd // 5 minute TTL for negative cache
 		},
 	}
 }

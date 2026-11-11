@@ -171,7 +171,7 @@ func TestRemoteProfileForbidden(t *testing.T) {
 	cfg.Defaults(config.DefaultOpts{Generate: true, SingleDatabase: true})
 	fed := &profileFederation{t: t, err: spec.HTTPError{Code: http.StatusForbidden}}
 	req := httptest.NewRequest(http.MethodGet, "/profile/@bob:remote.test", nil)
-	responses := []int{GetProfile(req, nil, &cfg.ClientAPI, "@bob:remote.test", nil, fed).Code, GetProfileField(req, nil, &cfg.ClientAPI, "@bob:remote.test", "displayname", nil, fed).Code, GetProfileField(req, nil, &cfg.ClientAPI, "@bob:remote.test", "avatar_url", nil, fed).Code}
+	responses := []int{GetProfile(req, nil, &cfg.ClientAPI, "@bob:remote.test", nil, fed, nil).Code, GetProfileField(req, nil, &cfg.ClientAPI, "@bob:remote.test", "displayname", nil, fed, nil).Code, GetProfileField(req, nil, &cfg.ClientAPI, "@bob:remote.test", "avatar_url", nil, fed, nil).Code}
 	for _, code := range responses {
 		require.Equal(t, http.StatusForbidden, code)
 	}

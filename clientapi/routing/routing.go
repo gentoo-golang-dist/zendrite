@@ -1355,13 +1355,18 @@ func Setup(
 
 	// Element user settings
 
+	// A nil *Caches must not be wrapped in the interface, or the handler would panic on use.
+	var profileFailureCache caching.RemoteProfileFailureCache
+	if caches != nil {
+		profileFailureCache = caches
+	}
 	v3mux.Handle("/profile/{userID}",
 		httputil.MakeExternalAPI("profile", func(req *http.Request) util.JSONResponse {
 			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return GetProfile(req, userAPI, cfg, vars["userID"], asAPI, federation)
+			return GetProfile(req, userAPI, cfg, vars["userID"], asAPI, federation, profileFailureCache)
 		}),
 	).Methods(http.MethodGet, http.MethodOptions)
 
@@ -1371,7 +1376,7 @@ func Setup(
 		if err != nil {
 			return util.ErrorResponse(err)
 		}
-		return GetProfileField(req, userAPI, cfg, vars["userID"], vars["keyName"], asAPI, federation)
+		return GetProfileField(req, userAPI, cfg, vars["userID"], vars["keyName"], asAPI, federation, profileFailureCache)
 	})
 	// Guests may set their display name, which SetProfileField and
 	// DeleteProfileField check.
