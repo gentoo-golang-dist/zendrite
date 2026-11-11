@@ -212,6 +212,7 @@ A change wakes the user's waiting sliding sync requests, and the `/sync` token c
 | [MSC4267](https://github.com/matrix-org/matrix-spec-proposals/pull/4267) | Forget room on leave ([`m.forget_forced_upon_leave` capability](https://spec.matrix.org/v1.18/client-server-api/#mforget_forced_upon_leave-capability)) | 1.18 | Implemented (opt-in via [`auto_forget_on_leave`](/administration/auto-forget-on-leave/)) |
 | [MSC4380](https://github.com/matrix-org/matrix-spec-proposals/pull/4380) | Invite blocking | 1.18 | Implemented: see [invite blocking](#invite-blocking) |
 | [MSC4155](https://github.com/matrix-org/matrix-spec-proposals/pull/4155) | Invite filtering | N/A | Implemented (unstable prefix): see [invite filtering](#invite-filtering) |
+| [MSC4491](https://github.com/matrix-org/matrix-spec-proposals/pull/4491) | Invite reasons in room creation | N/A | Implemented (unstable prefix): see [invite reasons in room creation](#invite-reasons-in-room-creation) |
 | [MSC2666](https://github.com/matrix-org/matrix-spec-proposals/pull/2666) | Mutual rooms | 1.19 | Implemented: `GET /_matrix/client/v1/mutual_rooms` lists the rooms the caller shares with a user, with signed pagination tokens. Also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable` |
 | [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
 | [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
@@ -225,6 +226,25 @@ Inviting them through `POST /rooms/{roomId}/invite`, the `invite` list of `POST 
 Any other `default_action`, or no account data, allows invites.
 The unstable `org.matrix.msc4380.invite_permission_config` type is read when the stable type is not set, and `/versions` advertises `org.matrix.msc4380` and `org.matrix.msc4380.stable`.
 An empty `m.invite_permission_config` (`{}`) states no preference, so [invite filtering](#invite-filtering) applies.
+
+### Invite reasons in room creation
+
+`POST /createRoom` accepts `uk.timedout.msc4491.invite_reason`, a string that becomes the `reason` of every invite the `invite` list sends, to local and to remote users alike, next to `is_direct`.
+
+```json
+{
+  "invite": ["@bob:example.org"],
+  "is_direct": true,
+  "uk.timedout.msc4491.invite_reason": "About Friday's release"
+}
+```
+
+- As in Synapse, an empty reason, or one that is not a string, is ignored: the invites go out without a reason.
+- Only the unstable name is read while the MSC is open; the stable `invite_reason` is ignored, as in Synapse.
+- A reason longer than 65536 bytes could never fit in an event, so it is refused with 413 `M_TOO_LARGE` before the room is created.
+  Synapse creates the room and then fails on the oversized invite.
+- `/versions` always advertises `uk.timedout.msc4491.create_room_invite_reasons`.
+  Synapse advertises it, and reads the field, only with `experimental_features.msc4491_enabled`.
 
 ### Invite filtering
 

@@ -24,6 +24,8 @@ type PerformCreateRoomRequest struct {
 	RoomVersion               gomatrixserverlib.RoomVersion
 	PowerLevelContentOverride json.RawMessage
 	IsDirect                  bool
+	// InviteReason is the reason put on each invite to InvitedUsers (MSC4491).
+	InviteReason string
 
 	UserDisplayName string
 	UserAvatarURL   string

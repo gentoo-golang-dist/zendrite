@@ -43,6 +43,26 @@ type createRoomRequest struct {
 	RoomVersion               gomatrixserverlib.RoomVersion      `json:"room_version"`
 	PowerLevelContentOverride json.RawMessage                    `json:"power_level_content_override"`
 	IsDirect                  bool                               `json:"is_direct"`
+	// InviteReason is MSC4491's reason for the invites in Invite. It is raw
+	// JSON because, like Synapse, a value that is not a string is ignored
+	// rather than refused.
+	InviteReason json.RawMessage `json:"uk.timedout.msc4491.invite_reason"`
+}
+
+// maxInviteReasonBytes bounds an MSC4491 invite reason. An event can be no
+// larger than 65536 bytes, so a longer reason could never be sent; refusing
+// it up front keeps the room from being created without its invites.
+const maxInviteReasonBytes = 65536
+
+// inviteReason returns the MSC4491 reason to put on the invites createRoom
+// sends, or "" when the request has none. As in Synapse, a reason that is
+// not a JSON string is ignored.
+func (r createRoomRequest) inviteReason() string {
+	var reason string
+	if len(r.InviteReason) == 0 || json.Unmarshal(r.InviteReason, &reason) != nil {
+		return ""
+	}
+	return reason
 }
 
 func (r createRoomRequest) Validate() *util.JSONResponse {
@@ -61,6 +81,12 @@ func (r createRoomRequest) Validate() *util.JSONResponse {
 				Code: http.StatusBadRequest,
 				JSON: spec.BadJSON("user id must be in the form @localpart:domain"),
 			}
+		}
+	}
+	if len(r.inviteReason()) > maxInviteReasonBytes {
+		return &util.JSONResponse{
+			Code: http.StatusRequestEntityTooLarge,
+			JSON: spec.TooLarge("uk.timedout.msc4491.invite_reason is too long"),
 		}
 	}
 	switch r.Preset {
@@ -322,6 +348,7 @@ func createRoom(
 		RoomVersion:               roomVersion,
 		PowerLevelContentOverride: createRequest.PowerLevelContentOverride,
 		IsDirect:                  createRequest.IsDirect,
+		InviteReason:              createRequest.inviteReason(),
 
 		UserDisplayName: userDisplayName,
 		UserAvatarURL:   userAvatarURL,

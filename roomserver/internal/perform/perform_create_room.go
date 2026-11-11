@@ -517,7 +517,7 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 					RoomID:     roomID,
 					Inviter:    userID,
 					Invitee:    *inviteeUserID,
-					Reason:     "",
+					Reason:     createRequest.InviteReason,
 					IsDirect:   createRequest.IsDirect,
 					KeyID:      createRequest.KeyID,
 					PrivateKey: createRequest.PrivateKey,
