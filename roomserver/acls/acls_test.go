@@ -157,6 +157,51 @@ func TestACLGlobsMatchWholeServerName(t *testing.T) {
 	}
 }
 
+// With allow_ip_literals false, every form of IP literal is banned even when
+// the allow list would otherwise match it, including a bracketed IPv6 literal
+// with no port, which net.SplitHostPort leaves bracketed.
+func TestIPLiteralsBannedWhenDisallowed(t *testing.T) {
+	roomID := "!test:test.com"
+	allowAll, err := compileACLRegex("*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newACLs := func(allowIPLiterals bool) ServerACLs {
+		return ServerACLs{acls: map[string]*serverACL{
+			roomID: {
+				ServerACL:      ServerACL{AllowIPLiterals: allowIPLiterals},
+				allowedRegexes: []**regexp.Regexp{&allowAll},
+			},
+		}}
+	}
+
+	disallowed := newACLs(false)
+	for _, serverName := range []spec.ServerName{
+		"1.2.3.4",
+		"1.2.3.4:8448",
+		"[2001:db8::1]",
+		"[2001:db8::1]:8448",
+		"[::1]",
+		"[::ffff:10.0.0.5]",
+	} {
+		if !disallowed.IsServerBannedFromRoom(serverName, roomID) {
+			t.Errorf("expected IP literal %q to be banned", serverName)
+		}
+	}
+	for _, serverName := range []spec.ServerName{"example.com", "example.com:8448", "[not-an-ip]"} {
+		if disallowed.IsServerBannedFromRoom(serverName, roomID) {
+			t.Errorf("expected non-IP %q to be allowed", serverName)
+		}
+	}
+
+	allowed := newACLs(true)
+	for _, serverName := range []spec.ServerName{"1.2.3.4", "[2001:db8::1]", "[2001:db8::1]:8448"} {
+		if allowed.IsServerBannedFromRoom(serverName, roomID) {
+			t.Errorf("expected IP literal %q to be allowed when allow_ip_literals is true", serverName)
+		}
+	}
+}
+
 var content1 = `{"allow":["*"],"allow_ip_literals":false,"deny":["hello.world", "*.hello.world"]}`
 
 type dummyACLDB struct{}

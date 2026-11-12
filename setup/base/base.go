@@ -47,18 +47,23 @@ const HTTPServerTimeout = time.Minute * 5
 
 const httpShutdownTimeout = 5 * time.Second
 
-// CreateClient creates a new client (normally used for media fetch requests).
+// CreateClient creates a new client for unauthenticated requests to remote
+// homeservers, such as the legacy media download fallback. Any user can make
+// it contact an arbitrary server name, so it obeys the federation
+// allow/deny network lists just like the federation client.
 // Should only be called once per component.
 func CreateClient(cfg *config.Zendrite, dnsCache *fclient.DNSCache) *fclient.Client {
-	return createClient(cfg, dnsCache, true)
+	return createClient(cfg, dnsCache, true, true)
 }
 
 // CreateIdentityClient connects directly to identity servers without federation discovery.
+// Identity servers are operator-trusted and may live on private networks, so
+// the federation network lists do not apply.
 func CreateIdentityClient(cfg *config.Zendrite) *fclient.Client {
-	return createClient(cfg, nil, false)
+	return createClient(cfg, nil, false, false)
 }
 
-func createClient(cfg *config.Zendrite, dnsCache *fclient.DNSCache, federationDiscovery bool) *fclient.Client {
+func createClient(cfg *config.Zendrite, dnsCache *fclient.DNSCache, federationDiscovery, restrictNetworks bool) *fclient.Client {
 	if cfg.Global.DisableFederation {
 		return fclient.NewClient(
 			fclient.WithTransport(noOpHTTPTransport),
@@ -67,6 +72,9 @@ func createClient(cfg *config.Zendrite, dnsCache *fclient.DNSCache, federationDi
 	opts := []fclient.ClientOption{
 		fclient.WithSkipVerify(cfg.FederationAPI.DisableTLSValidation),
 		fclient.WithWellKnownSRVLookups(federationDiscovery),
+	}
+	if restrictNetworks {
+		opts = append(opts, fclient.WithAllowDenyNetworks(cfg.FederationAPI.AllowNetworkCIDRs, cfg.FederationAPI.DenyNetworkCIDRs))
 	}
 	if cfg.Global.DNSCache.Enabled && dnsCache != nil {
 		opts = append(opts, fclient.WithDNSCache(dnsCache))

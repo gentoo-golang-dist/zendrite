@@ -9,7 +9,6 @@ package acls
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"regexp"
 	"strings"
@@ -179,14 +178,12 @@ func (s *ServerACLs) IsServerBannedFromRoom(serverName spec.ServerName, roomID s
 	if serverNameOnly, _, err := net.SplitHostPort(string(serverName)); err == nil {
 		serverName = spec.ServerName(serverNameOnly)
 	}
-	// Check if the hostname is an IPv4 or IPv6 literal. We cheat here by adding
-	// a /0 prefix length just to trick ParseCIDR into working. If we find that
-	// the server is an IP literal and we don't allow those then stop straight
-	// away.
-	if _, _, err := net.ParseCIDR(fmt.Sprintf("%s/0", serverName)); err == nil {
-		if !acls.AllowIPLiterals {
-			return true
-		}
+	// Check if the hostname is an IPv4 or IPv6 literal. If we find that the
+	// server is an IP literal and we don't allow those then stop straight away.
+	// SplitHostPort only removes the brackets around an IPv6 literal when a
+	// port is present, so "[2001:db8::1]" still has them here.
+	if !acls.AllowIPLiterals && isIPLiteral(string(serverName)) {
+		return true
 	}
 	// Check if the hostname matches one of the denied regexes. If it does then
 	// the server is banned from the room.
@@ -205,4 +202,13 @@ func (s *ServerACLs) IsServerBannedFromRoom(serverName spec.ServerName, roomID s
 	// If we've got to this point then we haven't matched any regexes or an IP
 	// hostname if disallowed. The spec calls for default-deny here.
 	return true
+}
+
+// isIPLiteral reports whether host is an IPv4 or IPv6 literal, with or
+// without the square brackets that IPv6 literals carry in server names.
+func isIPLiteral(host string) bool {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	return net.ParseIP(host) != nil
 }

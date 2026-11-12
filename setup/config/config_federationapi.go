@@ -59,16 +59,25 @@ func (c *FederationAPI) Defaults(opts DefaultOpts) {
 	c.P2PFederationRetriesUntilAssumedOffline = 1
 	c.DisableTLSValidation = false
 	c.DisableHTTPKeepalives = false
+	// 64:ff9b::/96 (NAT64) is deliberately absent: on IPv6-only hosts behind
+	// NAT64/DNS64 every IPv4-only remote server resolves into that prefix, so
+	// denying it would break federation with them.
 	c.DenyNetworkCIDRs = []string{
+		"0.0.0.0/8",
 		"127.0.0.1/8",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"100.64.0.0/10",
 		"169.254.0.0/16",
+		"224.0.0.0/4",
+		"::/128",
 		"::1/128",
-		"fe80::/64",
+		"fe80::/10",
+		"fec0::/10",
 		"fc00::/7",
+		"2002::/16",
+		"ff00::/8",
 	}
 	c.AllowNetworkCIDRs = []string{
 		"0.0.0.0/0",
