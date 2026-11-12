@@ -18,6 +18,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
+	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 )
 
@@ -319,7 +320,7 @@ func AuthFallback(
 			response := req.Form.Get("altcha")
 			captchaErr = validateAltcha(cfg, response)
 		} else {
-			clientIP := req.RemoteAddr
+			clientIP := httputil.ClientIP(req)
 			response := req.Form.Get(cfg.RecaptchaFormField)
 			captchaErr = validateRecaptcha(cfg, response, clientIP)
 		}

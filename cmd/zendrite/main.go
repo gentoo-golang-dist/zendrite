@@ -20,6 +20,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/internal"
+	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup"
 	basepkg "codefloe.com/pat-s/zendrite/setup/base"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -75,6 +76,8 @@ func main() {
 		}
 		logrus.Fatalf("Failed to start due to configuration errors")
 	}
+
+	httputil.SetTrustedProxies(cfg.Global.TrustedProxyPrefixes())
 
 	internal.SetupStdLogging()
 	internal.SetupHookLogging(cfg.Logging)

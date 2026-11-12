@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +80,12 @@ type Global struct {
 	// Defaults to an empty array.
 	TrustedIDServers []string `yaml:"trusted_third_party_id_servers"`
 
+	// TrustedProxies lists the CIDRs (or single addresses) of reverse proxies
+	// whose X-Forwarded-For and X-Real-IP headers are believed when working
+	// out a client's IP address. Requests from any other peer are attributed
+	// to the peer's own address. Defaults to loopback and private ranges.
+	TrustedProxies []string `yaml:"trusted_proxies"`
+
 	// JetStream configuration
 	JetStream JetStream `yaml:"jetstream"`
 
@@ -116,6 +123,7 @@ func (c *Global) Defaults(opts DefaultOpts) {
 		}
 	}
 	c.KeyValidityPeriod = time.Hour * 24 * 7 //nolint:mnd
+	c.TrustedProxies = append([]string(nil), DefaultTrustedProxies...)
 	if opts.SingleDatabase {
 		c.DatabaseOptions.Defaults(90) //nolint:mnd
 	}
@@ -155,6 +163,12 @@ func (c *Global) Verify(configErrs *ConfigErrors) {
 		}
 	}
 
+	for i, p := range c.TrustedProxies {
+		if _, err := ParseTrustedProxy(p); err != nil {
+			configErrs.Add(fmt.Sprintf("global.trusted_proxies[%d]: %s", i, err))
+		}
+	}
+
 	c.Support.Verify(configErrs)
 	c.HA.Verify(configErrs)
 	c.JetStream.Verify(configErrs)
@@ -165,6 +179,52 @@ func (c *Global) Verify(configErrs *ConfigErrors) {
 	c.ServerNotices.Verify(configErrs)
 	c.ReportStats.Verify(configErrs)
 	c.Cache.Verify(configErrs)
+}
+
+// DefaultTrustedProxies are the loopback and private ranges that reverse
+// proxies in typical deployments (nginx on the same host, Docker, Kubernetes)
+// connect from. Public peers are never trusted by default.
+var DefaultTrustedProxies = []string{
+	"127.0.0.0/8",
+	"::1/128",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"fc00::/7",
+}
+
+// ParseTrustedProxy parses a trusted proxy entry, which is either a CIDR or
+// a single IP address (treated as a /32 or /128).
+func ParseTrustedProxy(s string) (netip.Prefix, error) {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "/") {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return netip.Prefix{}, fmt.Errorf("invalid CIDR %q: %w", s, err)
+		}
+		if p.Addr().Is4In6() {
+			p = netip.PrefixFrom(p.Addr().Unmap(), max(p.Bits()-96, 0)) //nolint:mnd // IPv4-mapped prefix length.
+		}
+		return p.Masked(), nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("invalid CIDR or IP address %q: %w", s, err)
+	}
+	a = a.Unmap().WithZone("")
+	return netip.PrefixFrom(a, a.BitLen()), nil
+}
+
+// TrustedProxyPrefixes returns the parsed trusted proxy list, skipping any
+// entries that fail to parse (Verify reports those as config errors).
+func (c *Global) TrustedProxyPrefixes() []netip.Prefix {
+	prefixes := make([]netip.Prefix, 0, len(c.TrustedProxies))
+	for _, s := range c.TrustedProxies {
+		if p, err := ParseTrustedProxy(s); err == nil {
+			prefixes = append(prefixes, p)
+		}
+	}
+	return prefixes
 }
 
 func (c *Global) IsLocalServerName(serverName spec.ServerName) bool {

@@ -19,6 +19,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
+	internalhttputil "codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
 
@@ -190,7 +191,7 @@ func createAppServiceDevice(
 		AccessToken:       accessToken,
 		DeviceID:          &deviceID,
 		DeviceDisplayName: displayName,
-		IPAddr:            req.RemoteAddr,
+		IPAddr:            internalhttputil.ClientIP(req),
 		UserAgent:         req.UserAgent(),
 	}, &res); err != nil {
 		util.GetLogger(ctx).WithError(err).Error("userAPI.PerformDeviceCreation failed")

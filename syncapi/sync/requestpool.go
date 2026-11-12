@@ -12,9 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
+	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -259,23 +258,10 @@ func (rp *RequestPool) updateLastSeen(req *http.Request, device *userapi.Device)
 		return
 	}
 
-	remoteAddr := req.RemoteAddr
-	if rp.cfg.RealIPHeader != "" {
-		if header := req.Header.Get(rp.cfg.RealIPHeader); header != "" {
-			// TODO: Maybe this isn't great but it will satisfy both X-Real-IP
-			// and X-Forwarded-For (which can be a list where the real client
-			// address is the first listed address). Make more intelligent?
-			addresses := strings.Split(header, ",")
-			if ip := net.ParseIP(addresses[0]); ip != nil {
-				remoteAddr = addresses[0]
-			}
-		}
-	}
-
 	lsreq := &userapi.PerformLastSeenUpdateRequest{
 		UserID:     device.UserID,
 		DeviceID:   device.ID,
-		RemoteAddr: remoteAddr,
+		RemoteAddr: httputil.ClientIP(req),
 		UserAgent:  req.UserAgent(),
 	}
 	lsres := &userapi.PerformLastSeenUpdateResponse{}

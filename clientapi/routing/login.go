@@ -16,6 +16,7 @@ import (
 	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/clientapi/userutil"
+	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
@@ -69,7 +70,7 @@ func Login(
 			return *authErr
 		}
 		// make a device/access token
-		authErr2 := completeAuth(req.Context(), cfg, userAPI, login, req.RemoteAddr, req.UserAgent())
+		authErr2 := completeAuth(req.Context(), cfg, userAPI, login, httputil.ClientIP(req), req.UserAgent())
 		cleanup(req.Context(), &authErr2)
 		return authErr2
 	}

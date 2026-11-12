@@ -2,7 +2,6 @@ package httputil
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -84,8 +83,8 @@ func (l *RateLimits) Limit(req *http.Request, device *userapi.Device) *util.JSON
 	l.cleanMutex.RLock()
 	defer l.cleanMutex.RUnlock()
 
-	// First of all, work out if X-Forwarded-For was sent to us. If not
-	// then we'll just use the IP address of the caller.
+	// Work out who the caller is: the device for authenticated requests,
+	// otherwise the client's IP address.
 	var caller string
 	if device != nil {
 		switch device.AccountType {
@@ -101,14 +100,9 @@ func (l *RateLimits) Limit(req *http.Request, device *userapi.Device) *util.JSON
 			caller = device.UserID + device.ID
 		}
 	} else {
-		if forwardedFor := req.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-			caller = forwardedFor
-		} else if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
-			// Without the port, so that new connections share a limit.
-			caller = host
-		} else {
-			caller = req.RemoteAddr
-		}
+		// Unauthenticated callers are keyed by IP. Forwarding headers only
+		// count from trusted proxies, and IPv6 callers share their /64.
+		caller = rateLimitKey(ClientIP(req))
 	}
 
 	// Look up the caller's channel, if they have one.

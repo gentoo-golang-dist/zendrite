@@ -37,6 +37,7 @@ import (
 	"codefloe.com/pat-s/zendrite/clientapi/userutil"
 	"codefloe.com/pat-s/zendrite/internal"
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
+	internalhttputil "codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
@@ -324,7 +325,10 @@ func validateRecaptcha(
 	response string,
 	clientip string,
 ) error {
-	ip, _, _ := net.SplitHostPort(clientip)
+	ip := clientip
+	if host, _, err := net.SplitHostPort(clientip); err == nil {
+		ip = host
+	}
 	if !cfg.RecaptchaEnabled {
 		return ErrCaptchaDisabled
 	}
@@ -693,7 +697,7 @@ func handleGuestRegistration(
 		ServerName:        res.Account.ServerName,
 		DeviceDisplayName: r.InitialDisplayName,
 		AccessToken:       token,
-		IPAddr:            req.RemoteAddr,
+		IPAddr:            internalhttputil.ClientIP(req),
 		UserAgent:         req.UserAgent(),
 		FromRegistration:  true,
 	}, &devRes)
@@ -794,7 +798,7 @@ func handleRegistrationFlow(
 	switch r.Auth.Type {
 	case authtypes.LoginTypeRecaptcha:
 		// Check given captcha response (reCAPTCHA or hCaptcha).
-		err := validateRecaptcha(cfg, r.Auth.Response, req.RemoteAddr)
+		err := validateRecaptcha(cfg, r.Auth.Response, internalhttputil.ClientIP(req))
 		switch {
 		case errors.Is(err, ErrCaptchaDisabled):
 			return util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Unknown(err.Error())}
@@ -934,7 +938,7 @@ func handleApplicationServiceRegistration(
 	// Don't need to worry about appending to registration stages as
 	// application service registration is entirely separate.
 	return completeRegistration(
-		req.Context(), userAPI, r.Username, r.ServerName, "", "", appserviceID, req.RemoteAddr,
+		req.Context(), userAPI, r.Username, r.ServerName, "", "", appserviceID, internalhttputil.ClientIP(req),
 		req.UserAgent(), r.Auth.Session, r.InhibitLogin, r.InitialDisplayName, r.DeviceID,
 		userapi.AccountTypeAppService, refreshableLifetime(cfg, r.RefreshToken),
 	)
@@ -968,7 +972,7 @@ func checkAndCompleteFlow(
 			fallthrough
 		default:
 			resp = completeRegistration(
-				req.Context(), userAPI, r.Username, r.ServerName, "", r.Password, "", req.RemoteAddr,
+				req.Context(), userAPI, r.Username, r.ServerName, "", r.Password, "", internalhttputil.ClientIP(req),
 				req.UserAgent(), sessionID, r.InhibitLogin, r.InitialDisplayName, r.DeviceID,
 				accountType, refreshableLifetime(cfg, r.RefreshToken),
 			)
@@ -1023,7 +1027,7 @@ func completeCallGuestRegistration(
 			continue
 		}
 		resp = completeRegistration(
-			req.Context(), userAPI, localpart, r.ServerName, "", r.Password, "", req.RemoteAddr,
+			req.Context(), userAPI, localpart, r.ServerName, "", r.Password, "", internalhttputil.ClientIP(req),
 			req.UserAgent(), sessionID, r.InhibitLogin, r.InitialDisplayName, r.DeviceID,
 			userapi.AccountTypeCallGuest, refreshableLifetime(cfg, r.RefreshToken),
 		)
@@ -1418,7 +1422,7 @@ func handleSharedSecretRegistration(cfg *config.ClientAPI, userAPI userapi.Clien
 	if ssrr.Admin {
 		accType = userapi.AccountTypeAdmin
 	}
-	return completeRegistration(req.Context(), userAPI, ssrr.User, cfg.Matrix.ServerName, ssrr.DisplayName, ssrr.Password, "", req.RemoteAddr, req.UserAgent(), "", false, &ssrr.User, &deviceID, accType, 0)
+	return completeRegistration(req.Context(), userAPI, ssrr.User, cfg.Matrix.ServerName, ssrr.DisplayName, ssrr.Password, "", internalhttputil.ClientIP(req), req.UserAgent(), "", false, &ssrr.User, &deviceID, accType, 0)
 }
 
 // RegistrationTokenValidity implements the unauthenticated MSC3231 validity check.

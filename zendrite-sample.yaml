@@ -111,6 +111,22 @@ global:
     - matrix.org
     - vector.im
 
+  # Reverse proxies whose X-Forwarded-For and X-Real-IP headers are trusted when
+  # working out a client's IP address (rate limiting, device last-seen IPs,
+  # reCAPTCHA). Requests from any other address are attributed to that address,
+  # so clients cannot pick their own IP. Entries are CIDRs or single addresses.
+  # The default covers loopback and private ranges, which suits a proxy on the
+  # same host, in Docker or in Kubernetes. If your proxy or load balancer
+  # connects from a public address, list it here. Set to [] to ignore the
+  # headers entirely.
+  # trusted_proxies:
+  #   - 127.0.0.0/8
+  #   - ::1/128
+  #   - 10.0.0.0/8
+  #   - 172.16.0.0/12
+  #   - 192.168.0.0/16
+  #   - fc00::/7
+
   # Disables federation. Zendrite will not be able to communicate with other servers
   # in the Matrix federation and the federation API will not be exposed.
   disable_federation: false
@@ -574,9 +590,8 @@ mscs:
 
 # Configuration for the Sync API.
 sync_api:
-  # This option controls which HTTP header to inspect to find the real remote IP
-  # address of the client. This is likely required if Zendrite is running behind
-  # a reverse proxy server.
+  # Deprecated and ignored: the client IP now comes from X-Forwarded-For or
+  # X-Real-IP sent by a proxy listed in global.trusted_proxies.
   # real_ip_header: X-Real-IP
 
   # Configuration for the full-text search engine.

@@ -1,10 +1,14 @@
 package config
 
+import "github.com/sirupsen/logrus"
+
 type SyncAPI struct {
 	Matrix *Global `yaml:"-"`
 
 	Database DatabaseOptions `yaml:"database,omitempty"`
 
+	// Deprecated: ignored. Client addresses now come from X-Forwarded-For or
+	// X-Real-IP, and only from peers listed in global.trusted_proxies.
 	RealIPHeader string `yaml:"real_ip_header"`
 
 	Fulltext Fulltext `yaml:"search"`
@@ -20,6 +24,9 @@ func (c *SyncAPI) Defaults(opts DefaultOpts) {
 }
 
 func (c *SyncAPI) Verify(configErrs *ConfigErrors) {
+	if c.RealIPHeader != "" {
+		logrus.Warn("sync_api.real_ip_header is deprecated and ignored: X-Forwarded-For and X-Real-IP are honored from the proxies in global.trusted_proxies")
+	}
 	c.Fulltext.Verify(configErrs)
 	if c.Matrix.DatabaseOptions.ConnectionString == "" {
 		checkNotEmpty(configErrs, "sync_api.database", string(c.Database.ConnectionString))
