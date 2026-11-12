@@ -464,6 +464,20 @@ func (u *latestEventsUpdater) latestState() error {
 				if err != nil {
 					return fmt.Errorf("u.applyOwnKeyChange: %w", err)
 				}
+				// The new forward extremities keep the stale state that the
+				// guard just refused. Local events are built against the
+				// current state but checked against the state after their
+				// prev events, the extremities, so a member that only the
+				// current state holds would be rejected as not in the room.
+				// Fill the extremities in from the current state, as the
+				// repair of resynced rooms does.
+				current, lerr := roomState.LoadStateAtSnapshot(ctx, u.newStateNID)
+				if lerr != nil {
+					return fmt.Errorf("roomState.LoadStateAtSnapshot: %w", lerr)
+				}
+				if _, err = repairExtremityState(ctx, u.updater, &roomState, u.roomInfo.RoomNID, u.latest, current); err != nil {
+					return fmt.Errorf("repairExtremityState: %w", err)
+				}
 				u.removed = keepRemoved
 				u.added = keepAdded
 				return nil

@@ -123,6 +123,64 @@ func TestStateEpochGuardKeepsJoinInCurrentState(t *testing.T) {
 	})
 }
 
+// A non-state event whose stale DAG state trips the state-epoch guard must not
+// become a forward extremity whose state lacks the resync-only members. The
+// guard keeps them in the current state, so the events of those members are
+// built against it, and they were then rejected against the state after their
+// prev events with "sender not in room".
+func TestStateEpochGuardRepairsExtremityState(t *testing.T) {
+	alice := test.NewUser(t)
+	bob := test.NewUser(t)
+	charlie := test.NewUser(t)
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeRig := testrig.CreateConfig(t, dbType)
+		defer closeRig()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		db, err := storage.Open(processCtx.Context(), cm, &cfg.RoomServer.Database, caches) //nolint:contextcheck
+		require.NoError(t, err)
+
+		natsInstance := jetstream.NATSInstance{}
+		jsCtx, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
+		defer jetstream.DeleteAllStreams(jsCtx, &cfg.Global.JetStream)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		room := test.NewRoom(t, alice, test.RoomPreset(test.PresetPublicChat))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
+		// The room's last event is a state event, so the state after it
+		// differs from the state before it.
+		last := room.Events()[len(room.Events())-1]
+		require.NotNil(t, last.StateKey())
+
+		bobJoin := room.CreateEvent(t, bob, spec.MRoomMember, map[string]any{"membership": "join"}, test.WithStateKey(bob.ID))
+		charlieJoin := room.CreateEvent(t, charlie, spec.MRoomMember, map[string]any{"membership": "join"}, test.WithStateKey(charlie.ID))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindOutlier, []*types.HeaderedEvent{bobJoin, charlieJoin}, "test", "test", "test", nil, false))
+		simulateLegacyResync(ctx, t, db, room.ID, bobJoin, charlieJoin)
+
+		// A redaction whose state is the DAG state without Bob and Charlie
+		// trips the guard, which keeps them in the current state.
+		redaction := room.CreateAndInsert(t, alice, spec.MRoomRedaction, map[string]any{}, test.WithRedacts(last.EventID()))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{redaction}, "test", "test", "test", nil, false))
+
+		// Bob's reaction, built on the redaction with his join from the
+		// current state as an auth event, is allowed.
+		room.InsertEvent(t, bobJoin)
+		reaction := room.CreateEvent(t, bob, "m.reaction", map[string]any{
+			"m.relates_to": map[string]any{"rel_type": "m.annotation", "event_id": last.EventID(), "key": "+1"},
+		}, test.WithPrevEvents(redaction.EventID()))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{reaction}, "test", "test", "test", nil, false))
+
+		roomInfo, err := db.RoomInfo(ctx, room.ID)
+		require.NoError(t, err)
+		latestIDs, _, _, err := db.LatestEventIDs(ctx, roomInfo.RoomNID)
+		require.NoError(t, err)
+		require.Equal(t, []string{reaction.EventID()}, latestIDs)
+	})
+}
+
 // Rooms resynced before resyncs repaired the forward extremities are flagged
 // by a migration and repaired once at startup. Afterwards a balanced delta
 // (one resync-only member, one join) no longer evicts the member.

@@ -117,13 +117,14 @@ func (r *Inputer) repairResyncedRoom(ctx context.Context, roomNID types.RoomNID)
 // repairExtremityState fills in the state stored before each forward extremity
 // with the resync state entries for keys it lacks, and returns how many
 // extremities it changed. Keys the extremity already has are kept, since they
-// can be newer than the resync state.
+// can be newer than the resync state. The state NIDs in latestEvents are
+// updated to match.
 func repairExtremityState(
 	ctx context.Context, updater *shared.RoomUpdater, roomState *state.StateResolution,
 	roomNID types.RoomNID, latestEvents []types.StateAtEventAndReference, resyncState []types.StateEntry,
 ) (int, error) {
 	repaired := 0
-	for _, latest := range latestEvents {
+	for i, latest := range latestEvents {
 		if latest.BeforeStateSnapshotNID == 0 {
 			continue
 		}
@@ -149,6 +150,7 @@ func repairExtremityState(
 		if err = updater.SetState(ctx, latest.EventNID, stateNID); err != nil {
 			return repaired, fmt.Errorf("updater.SetState: %w", err)
 		}
+		latestEvents[i].BeforeStateSnapshotNID = stateNID
 		repaired++
 	}
 	return repaired, nil
