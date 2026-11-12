@@ -1,4 +1,4 @@
-#syntax=docker/dockerfile:1.28
+#syntax=docker/dockerfile:1.29
 
 # Complement's test suite at a pinned commit, compiled, for
 # build/scripts/complement.sh. The homeservers under test come from
