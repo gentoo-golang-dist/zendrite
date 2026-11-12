@@ -23,7 +23,7 @@ jobs:
     # rather than oven-sh/setup-bun, which resolves the version through the
     # unauthenticated GitHub API and hits its per-IP rate limit on shared
     # runners.
-    container: cr.codefloe.com/docker.io/library/node:24
+    container: cr.codefloe.com/docker.io/library/node:26
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
