@@ -492,8 +492,29 @@ func (protectedJetStream) DeleteStream(string, ...natsclient.JSOpt) error {
 	return fmt.Errorf("HA refuses stream deletion; migrate offline")
 }
 
-func (protectedJetStream) DeleteConsumer(string, string, ...natsclient.JSOpt) error {
-	return fmt.Errorf("HA refuses consumer deletion; migrate offline")
+// ErrDeletionRefused reports that HA refused to delete a consumer that exists.
+// Removing it is an offline migration step.
+var ErrDeletionRefused = errors.New("HA refuses consumer deletion; migrate offline")
+
+// DeleteConsumer refuses to delete a consumer that exists. A consumer that does
+// not exist is reported as nats.ErrConsumerNotFound, as the broker would, so
+// cleanup of durables that were never created works the same with and without
+// HA, and stays harmless once an offline migration removed them. An activation
+// without valid ownership is refused before the broker is asked.
+func (p protectedJetStream) DeleteConsumer(stream, consumer string, opts ...natsclient.JSOpt) error {
+	if p.ownership == nil {
+		return fmt.Errorf("consumer %q on stream %q: %w", consumer, stream, ErrDeletionRefused)
+	}
+	if err := p.ownership.Valid(); err != nil {
+		return fmt.Errorf("consumer %q on stream %q: %w: %w", consumer, stream, ErrDeletionRefused, err)
+	}
+	if _, err := p.ConsumerInfo(stream, consumer, opts...); err != nil {
+		if errors.Is(err, natsclient.ErrConsumerNotFound) || errors.Is(err, natsclient.ErrStreamNotFound) {
+			return natsclient.ErrConsumerNotFound
+		}
+		return fmt.Errorf("inspect consumer %q before deletion: %w", consumer, err)
+	}
+	return fmt.Errorf("consumer %q on stream %q: %w", consumer, stream, ErrDeletionRefused)
 }
 
 // ErrPublicationRefused reports that this activation may not publish right

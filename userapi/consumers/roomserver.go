@@ -112,7 +112,7 @@ func (s *OutputRoomEventConsumer) Start() error {
 	// MaxAge, so an abandoned consumer pins every message on it forever. Both
 	// names are tried because pre-Pull-era deployments have the unsuffixed one.
 	//
-	// HA refuses consumer deletion outright, so there the cleanup is an offline
+	// HA refuses to delete a consumer that exists, so there the cleanup is an offline
 	// migration step. Failing to clean up never aborts startup: the caller
 	// panics on a Start error, and an orphaned consumer is not worth that.
 	if jetstream.OwnershipOf(s.jetstream) == nil {

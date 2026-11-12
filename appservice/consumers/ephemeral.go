@@ -100,7 +100,12 @@ func (s *EphemeralConsumer) Start() error {
 			durable := s.durable(stream, &appsvc)
 			if !appsvc.WantsEphemeral() || appsvc.URL == "" {
 				err := s.jetstream.DeleteConsumer(topic, durable+"Pull")
-				if err != nil && !errors.Is(err, nats.ErrConsumerNotFound) {
+				switch {
+				case err == nil, errors.Is(err, nats.ErrConsumerNotFound):
+				case errors.Is(err, jetstream.ErrDeletionRefused):
+					// HA leaves the durable for an offline migration.
+					log.WithError(err).Warnf("Abandoned appservice consumer %q must be removed offline", durable+"Pull")
+				default:
 					return fmt.Errorf("failed to delete %q consumer: %w", durable, err)
 				}
 				continue

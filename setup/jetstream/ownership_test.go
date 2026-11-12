@@ -176,3 +176,32 @@ func TestHAConnectionKeepsItsReconnectBuffer(t *testing.T) {
 	require.Positive(t, applied.ReconnectBufSize,
 		"disabling the buffer drops output events for already committed writes on every reconnect")
 }
+
+// TestProtectedDeleteConsumerOnlyRefusesExistingConsumers covers issue #658:
+// cleanup of a durable that was never created must see ErrConsumerNotFound
+// under HA, as it would without it, while an existing one is never deleted.
+func TestProtectedDeleteConsumerOnlyRefusesExistingConsumers(t *testing.T) {
+	s := storageTestServer(t, "standalone", nil)
+	js := storageTestClient(t, s)
+	_, err := js.AddStream(&nats.StreamConfig{Name: "owned", Subjects: []string{"owned"}, Storage: nats.MemoryStorage})
+	require.NoError(t, err)
+	_, err = js.AddConsumer("owned", &nats.ConsumerConfig{Durable: "legacy", AckPolicy: nats.AckExplicitPolicy})
+	require.NoError(t, err)
+
+	protected := Protected(js, &testOwnership{generation: 7, identity: "candidate-a"})
+	require.ErrorIs(t, protected.DeleteConsumer("owned", "absent"), nats.ErrConsumerNotFound)
+	require.ErrorIs(t, protected.DeleteConsumer("missing", "absent"), nats.ErrConsumerNotFound)
+	require.ErrorIs(t, protected.DeleteConsumer("owned", "legacy"), ErrDeletionRefused)
+	_, err = js.ConsumerInfo("owned", "legacy")
+	require.NoError(t, err, "HA must never delete a consumer")
+}
+
+// TestProtectedDeleteConsumerRefusesAnInvalidOwnerWithoutTheBroker checks that
+// an activation without valid ownership is refused before any broker request.
+func TestProtectedDeleteConsumerRefusesAnInvalidOwnerWithoutTheBroker(t *testing.T) {
+	retired := errors.New("ownership generation is retired")
+	protected := Protected(nil, &testOwnership{generation: 7, err: retired, retired: true})
+	err := protected.DeleteConsumer("owned", "worker")
+	require.ErrorIs(t, err, ErrDeletionRefused)
+	require.ErrorIs(t, err, retired)
+}

@@ -102,10 +102,16 @@ func (s *OutputRoomEventConsumer) Start() error {
 		durableNames = append(durableNames, s.cfg.Matrix.JetStream.Durable("Appservice_"+token))
 	}
 	// Cleanup any consumers still existing on the OutputRoomEvent stream
-	// to avoid messages not being deleted
+	// to avoid messages not being deleted. HA refuses to delete one that
+	// exists, so there it is left for an offline migration rather than
+	// failing activation over a legacy durable.
 	for _, consumerName := range durableNames {
 		err := s.jetstream.DeleteConsumer(s.cfg.Matrix.JetStream.Prefixed(jetstream.OutputRoomEvent), consumerName+"Pull")
-		if err != nil && !errors.Is(err, nats.ErrConsumerNotFound) {
+		switch {
+		case err == nil, errors.Is(err, nats.ErrConsumerNotFound):
+		case errors.Is(err, jetstream.ErrDeletionRefused):
+			log.WithError(err).Warnf("Legacy appservice consumer %q must be removed offline", consumerName+"Pull")
+		default:
 			return err
 		}
 	}
