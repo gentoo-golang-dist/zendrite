@@ -158,10 +158,13 @@ func testMSC3389RelationRedactions(t *testing.T, dbType test.DBType, roomVersion
 	t.Run("relations", func(t *testing.T) {
 		// Redacted events are no longer listed as relations of the root,
 		// even though they keep their relation.
-		chunk := request(t, "/_matrix/client/v1/rooms/"+room.ID+"/relations/"+root.EventID(), nil).Get("chunk")
-		assert.Empty(t, chunk.Array(), chunk.Raw)
-		root := request(t, roomPath+"/event/"+root.EventID(), nil)
-		assert.False(t, root.Get(`unsigned.m\.relations.m\.thread`).Exists(), root.Raw)
+		// The relation rows are removed asynchronously once the sync API
+		// processes each redaction, so wait for that rather than racing it.
+		require.Eventually(t, func() bool {
+			chunk := request(t, "/_matrix/client/v1/rooms/"+room.ID+"/relations/"+root.EventID(), nil).Get("chunk")
+			rootEvent := request(t, roomPath+"/event/"+root.EventID(), nil)
+			return len(chunk.Array()) == 0 && !rootEvent.Get(`unsigned.m\.relations.m\.thread`).Exists()
+		}, 10*time.Second, 50*time.Millisecond, "redacted events are still listed as relations of the root")
 	})
 	t.Run("annotations", func(t *testing.T) {
 		// The redacted reactions do not count as sent, so they can be sent again.
