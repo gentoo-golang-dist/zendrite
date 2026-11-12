@@ -7,7 +7,10 @@
 package routing
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -25,6 +28,37 @@ import (
 type roomDirectoryResponse struct {
 	RoomID  string   `json:"room_id"`
 	Servers []string `json:"servers"`
+}
+
+// remoteAliasLookupError turns a failed federation alias lookup into a
+// client response. A remote failure is not our server's fault, so it must not
+// be a 500: the remote saying "not found" stays a 404, a timeout is a 504 and
+// anything else (unreachable, refused, bad response) is a 502.
+func remoteAliasLookupError(req *http.Request, roomAlias string, err error) util.JSONResponse {
+	logger := util.GetLogger(req.Context()).WithError(err).WithField("room_alias", roomAlias)
+
+	var httpErr spec.HTTPError
+	if errors.As(err, &httpErr) && httpErr.Code == http.StatusNotFound {
+		return util.JSONResponse{
+			Code: http.StatusNotFound,
+			JSON: spec.NotFound(fmt.Sprintf("Room alias %s not found", roomAlias)),
+		}
+	}
+
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		logger.Warn("Remote room alias lookup timed out")
+		return util.JSONResponse{
+			Code: http.StatusGatewayTimeout,
+			JSON: spec.Unknown("Timed out looking up the room alias on the remote server"),
+		}
+	}
+
+	logger.Warn("Remote room alias lookup failed")
+	return util.JSONResponse{
+		Code: http.StatusBadGateway,
+		JSON: spec.Unknown("Failed to look up the room alias on the remote server"),
+	}
 }
 
 func (r *roomDirectoryResponse) fillServers(servers []spec.ServerName) {
@@ -75,13 +109,7 @@ func DirectoryRoom(
 		if !cfg.Matrix.IsLocalServerName(domain) {
 			fedRes, fedErr := federation.LookupRoomAlias(req.Context(), cfg.Matrix.ServerName, domain, roomAlias)
 			if fedErr != nil {
-				// TODO: Return 502 if the remote server errored.
-				// TODO: Return 504 if the remote server timed out.
-				util.GetLogger(req.Context()).WithError(fedErr).Error("federation.LookupRoomAlias failed")
-				return util.JSONResponse{
-					Code: http.StatusInternalServerError,
-					JSON: spec.InternalServerError{},
-				}
+				return remoteAliasLookupError(req, roomAlias, fedErr)
 			}
 			res.RoomID = fedRes.RoomID
 			res.fillServers(fedRes.Servers)
