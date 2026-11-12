@@ -1,8 +1,13 @@
 package config
 
 import (
+	"fmt"
+	"net"
+	"net/netip"
+
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/sirupsen/logrus"
 )
 
 type FederationAPI struct {
@@ -109,6 +114,38 @@ func (c *FederationAPI) Verify(configErrs *ConfigErrors) {
 	if c.Matrix.DatabaseOptions.ConnectionString == "" {
 		checkNotEmpty(configErrs, "federation_api.database.connection_string", string(c.Database.ConnectionString))
 	}
+	// The federation client skips CIDRs it can't parse, which quietly weakens
+	// the deny list, so refuse to start on one instead.
+	for _, cidr := range c.AllowNetworkCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			configErrs.Add(fmt.Sprintf("federation_api.allow_networks: %q is not a valid CIDR range", cidr))
+		}
+	}
+	for _, cidr := range c.DenyNetworkCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			configErrs.Add(fmt.Sprintf("federation_api.deny_networks: %q is not a valid CIDR range", cidr))
+		}
+	}
+	if allowNetworksBlockIPv6(c.AllowNetworkCIDRs) {
+		logrus.Warn("federation_api.allow_networks only contains IPv4 ranges, so outgoing federation to IPv6 addresses is refused and IPv6-only servers are unreachable. " +
+			"Configs from Dendrite or Zendrite before v3.0.0 often list only 0.0.0.0/0: add '::/0' to allow IPv6")
+	}
+}
+
+// allowNetworksBlockIPv6 reports whether an allow list restricts outgoing
+// federation to IPv4. An empty list allows everything, so it doesn't.
+func allowNetworksBlockIPv6(cidrs []string) bool {
+	if len(cidrs) == 0 {
+		return false
+	}
+	for _, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil || !prefix.Addr().Is4() {
+			// An IPv6 range, or an entry we can't judge: don't warn.
+			return false
+		}
+	}
+	return true
 }
 
 // The config for setting a proxy to use for server->server requests.

@@ -72,3 +72,42 @@ func TestSampleConfigDenyNetworksMatchDefaults(t *testing.T) {
 	require.Equal(t, c.DenyNetworkCIDRs, sample.FederationAPI.DenyNetworks)
 	require.Equal(t, c.AllowNetworkCIDRs, sample.FederationAPI.AllowNetworks)
 }
+
+func TestAllowNetworksBlockIPv6(t *testing.T) {
+	var c FederationAPI
+	c.Defaults(DefaultOpts{})
+	require.False(t, allowNetworksBlockIPv6(c.AllowNetworkCIDRs), "the defaults allow IPv6")
+
+	for _, tc := range []struct {
+		cidrs []string
+		want  bool
+	}{
+		{cidrs: []string{"0.0.0.0/0"}, want: true}, // the old Dendrite sample config
+		{cidrs: []string{"0.0.0.0/0", "203.0.113.0/24"}, want: true},
+		{cidrs: []string{"0.0.0.0/0", "::/0"}, want: false},
+		{cidrs: []string{"2001:db8::/32"}, want: false},
+		{cidrs: nil, want: false}, // empty allows everything
+		{cidrs: []string{"0.0.0.0/0", "not-a-cidr"}, want: false},
+	} {
+		require.Equal(t, tc.want, allowNetworksBlockIPv6(tc.cidrs), tc.cidrs)
+	}
+}
+
+func TestFederationAPIVerifyRejectsBadCIDRs(t *testing.T) {
+	var c FederationAPI
+	c.Defaults(DefaultOpts{Generate: true, SingleDatabase: true})
+	c.Matrix = &Global{}
+	c.Matrix.DatabaseOptions.ConnectionString = "file:test.db"
+
+	var errs ConfigErrors
+	c.Verify(&errs)
+	require.Empty(t, errs, "the defaults are valid")
+
+	c.AllowNetworkCIDRs = []string{"0.0.0.0/0", "::/0", "10.0.0.0/33"}
+	c.DenyNetworkCIDRs = append(c.DenyNetworkCIDRs, "not-a-cidr")
+	errs = nil
+	c.Verify(&errs)
+	require.Len(t, errs, 2)
+	require.Contains(t, errs[0], "federation_api.allow_networks")
+	require.Contains(t, errs[1], "federation_api.deny_networks")
+}
