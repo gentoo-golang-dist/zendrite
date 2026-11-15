@@ -6,6 +6,7 @@
 package routing
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,4 +50,37 @@ func TestUploadKeysRejectsInvalidDeviceKeys(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/keys/upload", strings.NewReader(`{"device_keys":{"user_id":"@alice:local.test","device_id":"DEVICE"}}`))
 	res := UploadKeys(req, nil, &userapi.Device{UserID: "@alice:local.test", ID: "DEVICE"})
 	require.Equal(t, http.StatusBadRequest, res.Code)
+}
+
+func TestUploadKeysRejectsMalformedKeyIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		keyID   string
+		wantErr bool
+	}{
+		{name: "valid", keyID: "signed_curve25519:AAAAHQ"},
+		{name: "colon in key id", keyID: "signed_curve25519:AA:HQ"},
+		{name: "no colon", keyID: "signed_curve25519", wantErr: true},
+		{name: "empty algorithm", keyID: ":AAAAHQ", wantErr: true},
+		{name: "empty key id", keyID: "signed_curve25519:", wantErr: true},
+		{name: "empty", keyID: "", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateKeyIDs(map[string]json.RawMessage{tc.keyID: json.RawMessage(`{}`)})
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+
+	// A malformed upload never reaches the key API, which is nil here.
+	for _, field := range []string{"one_time_keys", "fallback_keys"} {
+		t.Run(field, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/keys/upload", strings.NewReader(`{"`+field+`":{"signed_curve25519":{"key":"k"}}}`))
+			res := UploadKeys(req, nil, &userapi.Device{UserID: "@alice:local.test", ID: "DEVICE"})
+			require.Equal(t, http.StatusBadRequest, res.Code)
+		})
+	}
 }

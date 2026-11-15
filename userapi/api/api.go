@@ -929,8 +929,8 @@ type OneTimeKeys struct {
 
 // Split a key in KeyJSON into algorithm and key ID.
 func (k *OneTimeKeys) Split(keyIDWithAlgo string) (algo string, keyID string) {
-	segments := strings.Split(keyIDWithAlgo, ":")
-	return segments[0], segments[1]
+	algo, keyID, _ = strings.Cut(keyIDWithAlgo, ":")
+	return algo, keyID
 }
 
 // OneTimeKeysCount represents the counts of one-time keys for a single device.
@@ -960,8 +960,8 @@ type FallbackKeys struct {
 
 // Split a key in KeyJSON into algorithm and key ID.
 func (k *FallbackKeys) Split(keyIDWithAlgo string) (algo string, keyID string) {
-	segments := strings.Split(keyIDWithAlgo, ":")
-	return segments[0], segments[1]
+	algo, keyID, _ = strings.Cut(keyIDWithAlgo, ":")
+	return algo, keyID
 }
 
 // PerformUploadKeysRequest is the request to PerformUploadKeys.

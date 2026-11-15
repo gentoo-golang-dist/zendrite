@@ -9,7 +9,9 @@ package routing
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -36,6 +38,18 @@ func UploadKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device) 
 		return util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: spec.BadJSON("Invalid device_keys: " + err.Error()),
+		}
+	}
+	if err := validateKeyIDs(r.OneTimeKeys); err != nil {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("Invalid one_time_keys: " + err.Error()),
+		}
+	}
+	if err := validateKeyIDs(r.FallbackKeys); err != nil {
+		return util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("Invalid fallback_keys: " + err.Error()),
 		}
 	}
 
@@ -123,6 +137,18 @@ func validateDeviceKeys(deviceKeys json.RawMessage) error {
 		return errors.New("missing keys")
 	case keys.Signatures == nil:
 		return errors.New("missing signatures")
+	}
+	return nil
+}
+
+// validateKeyIDs checks that every key in a one_time_keys or fallback_keys
+// map is named <algorithm>:<key_id>, with neither part empty.
+func validateKeyIDs(keys map[string]json.RawMessage) error {
+	for keyIDWithAlgo := range keys {
+		algo, keyID, ok := strings.Cut(keyIDWithAlgo, ":")
+		if !ok || algo == "" || keyID == "" {
+			return fmt.Errorf("key %q is not of the form <algorithm>:<key_id>", keyIDWithAlgo)
+		}
 	}
 	return nil
 }
