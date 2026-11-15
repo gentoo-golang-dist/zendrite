@@ -148,24 +148,22 @@ func OnIncomingMessagesRequest(
 	// to have one of the two accepted values (so dir == "f" <=> !backwardOrdering).
 	backwardOrdering := (dir == "b")
 
-	emptyFromSupplied := fromQuery == ""
-	if emptyFromSupplied {
-		// If "from" isn't provided, it defaults to either the earliest stream
-		// position (if we're going forward) or to the latest one (if we're
-		// going backward).
-
-		var from types.TopologyToken
-		if backwardOrdering {
-			from = types.TopologyToken{Depth: math.MaxInt64, PDUPosition: math.MaxInt64}
-		} else {
-			// go 1 earlier than the first event so we correctly fetch the earliest event
-			// this is because Database.GetEventsInTopologicalRange is exclusive of the lower-bound.
-			from = types.TopologyToken{}
-		}
-		fromQuery = from.String()
+	// If "from" isn't provided, it defaults to either the earliest stream
+	// position (if we're going forward) or to the latest one (if we're
+	// going backward). The default is used as is rather than serialized and
+	// parsed again: the zero token going forward serializes to "", which no
+	// token parser accepts.
+	var from types.TopologyToken
+	switch {
+	case fromQuery == "" && backwardOrdering:
+		from = types.TopologyToken{Depth: math.MaxInt64, PDUPosition: math.MaxInt64}
+	case fromQuery == "":
+		// go 1 earlier than the first event so we correctly fetch the earliest event
+		// this is because Database.GetEventsInTopologicalRange is exclusive of the lower-bound.
+		from = types.TopologyToken{}
+	default:
+		from, err = types.NewTopologyTokenFromString(fromQuery)
 	}
-
-	from, err := types.NewTopologyTokenFromString(fromQuery)
 	if err != nil {
 		var streamToken types.StreamingToken
 		if streamToken, err = types.NewStreamTokenFromString(fromQuery); err != nil {
