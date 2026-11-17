@@ -21,8 +21,9 @@ import (
 // GetCapabilities returns information about the server's supported feature set
 // and other relevant capabilities to an authenticated user. When oidcEnabled is
 // true (MSC3861 delegated authentication), password and 3PID management are
-// delegated to the OIDC provider and reported as unavailable.
-func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, delayedEvents *config.DelayedEvents, device *userapi.Device) util.JSONResponse {
+// delegated to the OIDC provider and reported as unavailable. UrlPreviewEnabled
+// is media_api.url_preview.enabled.
+func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, delayedEvents *config.DelayedEvents, urlPreviewEnabled bool, device *userapi.Device) util.JSONResponse {
 	versionsMap := map[gomatrixserverlib.RoomVersion]string{}
 	for v, desc := range version.SupportedRoomVersions() {
 		if desc.Stable() {
@@ -72,6 +73,18 @@ func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, 
 		"m.delayed_events":                  delayedEventLimits,
 		"org.matrix.msc4140.delayed_events": delayedEventLimits,
 	}
+
+	// MSC4452, under the stable and unstable names: whether this user may call
+	// GET /media/preview_url. Guests and call guests may not, even with URL
+	// previews enabled: keep this in line with the preview_url route's auth
+	// options in mediaapi/routing/routing.go.
+	previewURL := map[string]bool{
+		"enabled": urlPreviewEnabled &&
+			device.AccountType != userapi.AccountTypeGuest &&
+			device.AccountType != userapi.AccountTypeCallGuest,
+	}
+	capabilities["m.preview_url"] = previewURL
+	capabilities["io.element.msc4452.preview_url"] = previewURL
 
 	// Administrators can suspend accounts, and lock them unless the OIDC
 	// provider does (MSC4323). The capability is omitted for everyone else.

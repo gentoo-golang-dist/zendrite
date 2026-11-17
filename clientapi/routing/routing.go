@@ -1867,7 +1867,7 @@ func Setup(
 			if r := rateLimits.Limit(req, device); r != nil {
 				return *r
 			}
-			return GetCapabilities(rsAPI, oidcEnabled, &cfg.DelayedEvents, device)
+			return GetCapabilities(rsAPI, oidcEnabled, &cfg.DelayedEvents, zendriteCfg.MediaAPI.URLPreview.Enabled, device)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodGet, http.MethodOptions)
 

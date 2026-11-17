@@ -145,24 +145,34 @@ func Setup(
 		httputil.MakeHTTPAPI("thumbnail", userAPI, cfg.Global.Metrics.Enabled, makeDownloadAPI("thumbnail_authed_client", &cfg.MediaAPI, rateLimits, db, fileStore, client, federationClient, activeRemoteRequests, activeThumbnailGeneration, pendingUploads, false), httputil.WithAuth(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodGet, http.MethodOptions)
 
-	// URL previews. Disabled, the routes stay unregistered and answer 404
-	// M_UNRECOGNIZED, as in Synapse. Config verification has already
-	// checked the IP ranges.
+	// URL previews. Disabled, the routes answer 403 M_FORBIDDEN, as MSC4452
+	// asks, and the m.preview_url capability says so. Config verification has
+	// already checked the IP ranges. The capability in
+	// clientapi/routing/capabilities.go mirrors the default auth options here,
+	// which refuse guests and call guests.
+	var previewer *URLPreviewer
 	if cfg.MediaAPI.URLPreview.Enabled {
-		previewer, err := NewURLPreviewer(&cfg.MediaAPI, db, fileStore, activeThumbnailGeneration)
+		var err error
+		previewer, err = NewURLPreviewer(&cfg.MediaAPI, db, fileStore, activeThumbnailGeneration)
 		if err != nil {
 			logrus.WithError(err).Fatal("invalid media_api.url_preview configuration")
 		}
-		previewHandler := httputil.MakeAuthAPI("preview_url", userAPI, func(req *http.Request, dev *userapi.Device) util.JSONResponse {
-			if r := rateLimits.Limit(req, dev); r != nil {
-				return *r
-			}
-			return previewer.Preview(req, dev)
-		})
-		v1mux.Handle("/preview_url", previewHandler).Methods(http.MethodGet, http.MethodOptions)
-		// Deprecated by MSC3916, kept for older clients.
-		v3mux.Handle("/preview_url", previewHandler).Methods(http.MethodGet, http.MethodOptions)
 	}
+	previewHandler := httputil.MakeAuthAPI("preview_url", userAPI, func(req *http.Request, dev *userapi.Device) util.JSONResponse {
+		if r := rateLimits.Limit(req, dev); r != nil {
+			return *r
+		}
+		if previewer == nil {
+			return util.JSONResponse{
+				Code: http.StatusForbidden,
+				JSON: spec.Forbidden("URL previews are disabled on this server"),
+			}
+		}
+		return previewer.Preview(req, dev)
+	})
+	v1mux.Handle("/preview_url", previewHandler).Methods(http.MethodGet, http.MethodOptions)
+	// Deprecated by MSC3916, kept for older clients.
+	v3mux.Handle("/preview_url", previewHandler).Methods(http.MethodGet, http.MethodOptions)
 
 	// same, but for federation
 	v1fedMux.Handle("/download/{mediaId}", federationrouting.MakeFedHTTPAPI(

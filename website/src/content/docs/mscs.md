@@ -439,6 +439,7 @@ Deactivating an account removes its custom fields.
 | [MSC2701](https://github.com/matrix-org/matrix-spec-proposals/pull/2701), [MSC2702](https://github.com/matrix-org/matrix-spec-proposals/pull/2702) | `Content-Type` and `Content-Disposition` in the media repo | 1.12 | Implemented: uploads without a `Content-Type` are stored as `application/octet-stream`, which is also served for older media stored without a type. Downloads are `inline` only for the spec's list of safe types and `attachment` otherwise. Thumbnails are served `inline` with a file name such as `thumbnail.jpg`; an original that answers a thumbnail request itself stays an `attachment` unless its type is safe |
 | [MSC2705](https://github.com/matrix-org/matrix-spec-proposals/pull/2705) | Animated thumbnails | 1.11 | Implemented: without `animated=true`, thumbnails are never animated; an animated GIF, APNG or WebP that would answer the request itself is replaced by a still JPEG rendition. With `animated=true`, an animated image no larger than the requested size is served as it is, and larger ones get a still thumbnail, which the spec allows |
 | [MSC3860](https://github.com/matrix-org/matrix-spec-proposals/pull/3860) | Media download redirects | 1.7 | Implemented: `allow_redirect` is accepted, and Zendrite always serves media itself, which the spec allows. When a remote server answers a federation media request with a `Location` instead of the media, Zendrite fetches it from there, following up to five more redirects, and only from public addresses |
+| [MSC4452](https://github.com/matrix-org/matrix-spec-proposals/pull/4452) | Preview URL capabilities API | N/A (accepted) | Implemented: see [URL previews](#url-previews) |
 
 ### Asynchronous uploads
 
@@ -454,7 +455,9 @@ When a remote server answers 504 for its own media, the client gets 504 `M_NOT_Y
 
 ### URL previews
 
-`GET /_matrix/client/v1/media/preview_url` (and the deprecated `/_matrix/media/v3/preview_url`) is opt-in with `media_api.url_preview.enabled`, as in Synapse, since it makes the server fetch URLs for its users; disabled, it answers 404 `M_UNRECOGNIZED`.
+`GET /_matrix/client/v1/media/preview_url` (and the deprecated `/_matrix/media/v3/preview_url`) is opt-in with `media_api.url_preview.enabled`, as in Synapse, since it makes the server fetch URLs for its users; disabled, it answers 403 `M_FORBIDDEN`, as [MSC4452](https://github.com/matrix-org/matrix-spec-proposals/pull/4452) asks.
+`/capabilities` tells clients whether they may request previews with `m.preview_url` and its unstable name `io.element.msc4452.preview_url`, both `{"enabled": ...}`.
+It is `false` while previews are disabled, and always for guests and call guests, whom the endpoint refuses.
 For an HTML page it returns the `og:` properties of the page's head, falling back to `<title>` and the `description` meta tag.
 `og:image` is downloaded and stored as local media, and the preview carries its `mxc://` URI with `matrix:image:size`, `og:image:type`, `og:image:width` and `og:image:height`; a URL that points at an image gets the same fields for the image itself.
 
