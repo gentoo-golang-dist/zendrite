@@ -9,6 +9,7 @@ import (
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
@@ -240,6 +241,74 @@ func TestNewInviteResponse(t *testing.T) {
 		if !reflect.DeepEqual(gotEv, expectedEv) {
 			t.Fatalf("event %d mismatch, \nexpected: %s \ngot: %s", i, string(expectedResp.InviteState.Events[i]), string(gotResp.InviteState.Events[i]))
 		}
+	}
+}
+
+// TestInviteResponseMembershipState checks that an invite carries the invite
+// event in full under state and org.matrix.msc4319.state (MSC4319), with its
+// event ID, time and prev_content but without the stripped state, which
+// invite_state carries already, or the stored age.
+func TestInviteResponseMembershipState(t *testing.T) {
+	t.Parallel()
+	event := `{"auth_events":[],"content":{"membership":"invite"},"depth":9,"hashes":{"sha256":"8p+Ur4f8vLFX6mkIXhxI0kegPG7X3tWy56QmvBkExAg"},"origin":"matrix.org","origin_server_ts":1602087113066,"prev_events":[],"room_id":"!XbeXirGWSPXbEaGokF:matrix.org","sender":"@bob:matrix.org","signatures":{},"state_key":"@alice:zendrite.test","type":"m.room.member","unsigned":{"age":12,"prev_content":{"membership":"knock"},"invite_room_state":[{"content":{"name":"Test room"},"sender":"@bob:matrix.org","state_key":"","type":"m.room.name"}]}}`
+	ev, err := gomatrixserverlib.MustGetRoomVersion(gomatrixserverlib.RoomVersionV5).NewEventFromTrustedJSON([]byte(event), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewInviteResponse(context.Background(), &FakeRoomserverAPI{}, &types.HeaderedEvent{PDU: ev}, synctypes.FormatSync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"state", "org\\.matrix\\.msc4319\\.state"} {
+		events := gjson.GetBytes(j, key+".events")
+		if len(events.Array()) != 1 {
+			t.Fatalf("%s: want the invite event alone, got %s", key, events.Raw)
+		}
+		invite := events.Array()[0]
+		for path, want := range map[string]string{
+			"event_id":                         ev.EventID(),
+			"sender":                           "@bob:matrix.org",
+			"state_key":                        "@alice:zendrite.test",
+			"content.membership":               "invite",
+			"origin_server_ts":                 "1602087113066",
+			"unsigned.prev_content.membership": "knock",
+		} {
+			if got := invite.Get(path).String(); got != want {
+				t.Errorf("%s: %s = %q, want %q", key, path, got, want)
+			}
+		}
+		if invite.Get("unsigned.invite_room_state").Exists() || invite.Get("unsigned.age").Exists() || invite.Get("room_id").Exists() {
+			t.Errorf("%s: the event carries its stripped state, stored age or room ID: %s", key, invite.Raw)
+		}
+	}
+	if len(res.InviteState.Events) != 2 {
+		t.Fatalf("invite_state keeps the stripped invite for older clients, got %d events", len(res.InviteState.Events))
+	}
+}
+
+// An invite whose only unsigned data is its stripped state is sent without
+// unsigned rather than with "unsigned": null.
+func TestInviteResponseMembershipStateWithoutUnsigned(t *testing.T) {
+	t.Parallel()
+	event := `{"auth_events":[],"content":{"membership":"invite"},"depth":9,"hashes":{"sha256":"8p+Ur4f8vLFX6mkIXhxI0kegPG7X3tWy56QmvBkExAg"},"origin":"matrix.org","origin_server_ts":1602087113066,"prev_events":[],"room_id":"!XbeXirGWSPXbEaGokF:matrix.org","sender":"@bob:matrix.org","signatures":{},"state_key":"@alice:zendrite.test","type":"m.room.member","unsigned":{"invite_room_state":[]}}`
+	ev, err := gomatrixserverlib.MustGetRoomVersion(gomatrixserverlib.RoomVersionV5).NewEventFromTrustedJSON([]byte(event), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewInviteResponse(context.Background(), &FakeRoomserverAPI{}, &types.HeaderedEvent{PDU: ev}, synctypes.FormatSync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unsigned := gjson.GetBytes(j, "state.events.0.unsigned"); unsigned.Exists() {
+		t.Fatalf("want no unsigned, got %s", unsigned.Raw)
 	}
 }
 

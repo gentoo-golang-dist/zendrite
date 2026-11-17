@@ -23,6 +23,7 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | [MSC4429](https://github.com/matrix-org/matrix-spec-proposals/pull/4429) | Profile updates for legacy sync | N/A | Implemented (unstable prefix): see [profile updates in `/sync`](#profile-updates-in-sync) |
 | [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) | `state_after` in `/sync` | 1.16 | Implemented: with `use_state_after=true`, joined and left rooms carry `state_after`, the state at the end of the timeline, instead of `state`. The unstable `org.matrix.msc4222.use_state_after` parameter is answered with `org.matrix.msc4222.state_after`. See [state after the timeline](#state-after-the-timeline) |
 | [MSC4445](https://github.com/matrix-org/matrix-spec-proposals/pull/4445) | Clarify `/sync` timeline order | N/A | Implemented (unstable prefix): the timeline of a room a sync sends for the first time is in topological order, an incremental timeline in stream order. See [timeline order](#timeline-order) |
+| [MSC4319](https://github.com/matrix-org/matrix-spec-proposals/pull/4319) | Room member events for invite and knock rooms in `/sync` | N/A (accepted) | Implemented: invited and knocked rooms carry the invite or knock in full under `state` and the unstable `org.matrix.msc4319.state`, and sliding sync sends it as their `required_state`. `invite_state` and `knock_state` keep the stripped event for older clients. The stripped state of invites Zendrite sends holds the inviter's membership and the topic |
 
 ### Sticky events
 

@@ -185,6 +185,16 @@ func (r *Inviter) PerformInvite(
 		}
 	}
 
+	// Without stripped state from the caller, draw it up with the inviter's
+	// membership. Should that fail, gomatrixserverlib draws up its own.
+	strippedState := req.InviteRoomState
+	if len(strippedState) == 0 {
+		if strippedState, err = inviteStrippedState(ctx, &QueryState{r.DB, r.RSAPI}, req.InviteInput.RoomID, *senderID); err != nil {
+			util.GetLogger(ctx).WithError(err).Warn("Failed to draw up the stripped state of an invite")
+			strippedState = nil
+		}
+	}
+
 	input := gomatrixserverlib.PerformInviteInput{
 		RoomID:            req.InviteInput.RoomID,
 		RoomVersion:       info.RoomVersion,
@@ -192,7 +202,7 @@ func (r *Inviter) PerformInvite(
 		Invitee:           req.InviteInput.Invitee,
 		IsTargetLocal:     isTargetLocal,
 		EventTemplate:     proto,
-		StrippedState:     req.InviteRoomState,
+		StrippedState:     strippedState,
 		KeyID:             req.InviteInput.KeyID,
 		SigningKey:        signingKey,
 		EventTime:         req.InviteInput.EventTime,
@@ -273,4 +283,30 @@ func (r *Inviter) PerformInvite(
 	}
 
 	return nil
+}
+
+// inviteStrippedState returns the stripped state sent with an invite: the
+// state gomatrixserverlib.GenerateStrippedState includes, the topic, which
+// the spec recommends too, and the inviter's membership, so that the invitee
+// can show who invited them (MSC4319).
+func inviteStrippedState(ctx context.Context, querier gomatrixserverlib.StateQuerier, roomID spec.RoomID, inviter spec.SenderID) ([]gomatrixserverlib.InviteStrippedState, error) {
+	wanted := []gomatrixserverlib.StateKeyTuple{
+		{EventType: spec.MRoomName},
+		{EventType: spec.MRoomCanonicalAlias},
+		{EventType: spec.MRoomJoinRules},
+		{EventType: spec.MRoomAvatar},
+		{EventType: spec.MRoomEncryption},
+		{EventType: spec.MRoomCreate},
+		{EventType: spec.MRoomTopic},
+		{EventType: spec.MRoomMember, StateKey: string(inviter)},
+	}
+	events, err := querier.GetState(ctx, roomID, wanted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load the invite's stripped state: %w", err)
+	}
+	stripped := make([]gomatrixserverlib.InviteStrippedState, 0, len(events))
+	for _, event := range events {
+		stripped = append(stripped, gomatrixserverlib.NewInviteStrippedState(event))
+	}
+	return stripped, nil
 }

@@ -1208,6 +1208,14 @@ func (rp *RequestPool) buildStrippedRoomData(
 			{"m.room.encryption", ""},
 			{"m.room.member", userID},
 		}
+		// The inviter's membership tells clients who sent the invite
+		// (MSC4319). A knock's sender is the knocking user.
+		if inviteEvent != nil && string(inviteEvent.SenderID()) != userID {
+			strippedStateTypes = append(strippedStateTypes, struct {
+				eventType string
+				stateKey  string
+			}{"m.room.member", string(inviteEvent.SenderID())})
+		}
 
 		for _, stateType := range strippedStateTypes {
 			event, err := snapshot.GetStateEvent(ctx, roomID, stateType.eventType, stateType.stateKey)
@@ -1238,6 +1246,19 @@ func (rp *RequestPool) buildStrippedRoomData(
 	}
 
 	roomData.StrippedState = strippedEvents
+
+	// The invite or knock itself, in full, is the room's required_state
+	// (MSC4319): clients learn its event ID, time and prev_content there.
+	// It is sent with the room's first response; later ones carry it only
+	// when the membership changes, which sends the room afresh.
+	if inviteEvent != nil && isInitial {
+		membership, err := types.MembershipState(ctx, rp.rsAPI, inviteEvent, synctypes.FormatSync)
+		if err != nil {
+			logrus.WithError(err).WithField("room_id", roomID).Warn("[V4_SYNC] Failed to format the membership event of a stripped room")
+		} else {
+			roomData.RequiredState = membership.Events
+		}
+	}
 
 	logrus.WithFields(logrus.Fields{
 		"room_id":          roomID,

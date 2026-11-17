@@ -17,6 +17,7 @@ import (
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/matrix-org/util"
 	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/roomserver/api"
@@ -664,6 +665,10 @@ type InviteResponse struct {
 	InviteState struct {
 		Events []json.RawMessage `json:"events"`
 	} `json:"invite_state"`
+	// State holds the invite in full (MSC4319), under its stable key and
+	// the unstable org.matrix.msc4319.state.
+	State         *ClientEvents `json:"state,omitempty"`
+	UnstableState *ClientEvents `json:"org.matrix.msc4319.state,omitempty"`
 }
 
 // NewInviteResponse creates an empty response with initialized arrays.
@@ -674,6 +679,7 @@ func NewInviteResponse(ctx context.Context, rsAPI api.QuerySenderIDAPI, event *t
 		return nil, err
 	}
 	res.InviteState.Events = events
+	res.State, res.UnstableState = withMembershipState(ctx, rsAPI, event, eventFormat)
 	return &res, nil
 }
 
@@ -682,6 +688,10 @@ type KnockResponse struct {
 	KnockState struct {
 		Events []json.RawMessage `json:"events"`
 	} `json:"knock_state"`
+	// State holds the knock in full (MSC4319), under its stable key and
+	// the unstable org.matrix.msc4319.state.
+	State         *ClientEvents `json:"state,omitempty"`
+	UnstableState *ClientEvents `json:"org.matrix.msc4319.state,omitempty"`
 }
 
 // NewKnockResponse builds the knock_state for a room the user knocked on
@@ -693,7 +703,47 @@ func NewKnockResponse(ctx context.Context, rsAPI api.QuerySenderIDAPI, event *ty
 		return nil, err
 	}
 	res.KnockState.Events = events
+	res.State, res.UnstableState = withMembershipState(ctx, rsAPI, event, eventFormat)
 	return &res, nil
+}
+
+// MembershipState returns the invite or knock event in the full client
+// format, as the state of an invited or knocked room (MSC4319), so that
+// clients learn its event ID and time, and from prev_content whether an
+// invite answered a knock. Of the event's unsigned data, only prev_content
+// is kept: the stripped state is sent as invite_state or knock_state, and
+// the stored age would be stale.
+func MembershipState(ctx context.Context, rsAPI api.QuerySenderIDAPI, event *types.HeaderedEvent, eventFormat synctypes.ClientEventFormat) (*ClientEvents, error) {
+	var unsigned any
+	if prevContent := gjson.GetBytes(event.Unsigned(), "prev_content"); prevContent.IsObject() {
+		unsigned = map[string]json.RawMessage{"prev_content": json.RawMessage(prevContent.Raw)}
+	}
+	pdu, err := event.SetUnsigned(unsigned)
+	if err != nil {
+		return nil, err
+	}
+	clientEvent, err := synctypes.ToClientEvent(pdu, eventFormat, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
+		return rsAPI.QueryUserIDForSender(ctx, roomID, senderID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if unsigned == nil {
+		clientEvent.Unsigned = nil
+	}
+	return &ClientEvents{Events: []synctypes.ClientEvent{*clientEvent}}, nil
+}
+
+// withMembershipState sets the state of an invited or knocked room. It is
+// an addition to invite_state or knock_state, so a failure only leaves it
+// out rather than hiding the room.
+func withMembershipState(ctx context.Context, rsAPI api.QuerySenderIDAPI, event *types.HeaderedEvent, eventFormat synctypes.ClientEventFormat) (stable, unstable *ClientEvents) {
+	state, err := MembershipState(ctx, rsAPI, event, eventFormat)
+	if err != nil {
+		util.GetLogger(ctx).WithError(err).WithField("event_id", event.EventID()).Warn("Failed to format the membership event of an invited or knocked room")
+		return nil, nil
+	}
+	return state, state
 }
 
 // strippedStateWithEvent returns the stripped state stored under the given
