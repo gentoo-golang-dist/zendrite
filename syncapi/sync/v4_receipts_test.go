@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/shared"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/tables"
+	"codefloe.com/pat-s/zendrite/syncapi/streams"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
 )
@@ -18,10 +21,12 @@ import (
 type threadedReceiptDatabase struct {
 	storage.Database
 	snapshot *threadedReceiptSnapshot
+	// joined are the rooms the user is joined to.
+	joined []string
 }
 
 func (d threadedReceiptDatabase) NewDatabaseSnapshot(context.Context) (*shared.DatabaseTransaction, error) {
-	return &shared.DatabaseTransaction{Database: &shared.Database{Receipts: d.snapshot}}, nil
+	return &shared.DatabaseTransaction{Database: &shared.Database{Receipts: d.snapshot, CurrentRoomState: joinedSnapshot{rooms: d.joined}}}, nil
 }
 
 type threadedReceiptSnapshot struct {
@@ -29,8 +34,28 @@ type threadedReceiptSnapshot struct {
 	pending []types.OutputReceiptEvent
 }
 
-func (s *threadedReceiptSnapshot) SelectLatestUserReceiptsForConnection(context.Context, *sql.Tx, int64, []string, string) ([]types.OutputReceiptEvent, error) {
-	return s.pending, nil
+func (s *threadedReceiptSnapshot) SelectLatestUserReceiptsForConnection(_ context.Context, _ *sql.Tx, _ int64, roomIDs []string, _ string) ([]types.OutputReceiptEvent, error) {
+	var receipts []types.OutputReceiptEvent
+	for _, receipt := range s.pending {
+		if slices.Contains(roomIDs, receipt.RoomID) {
+			receipts = append(receipts, receipt)
+		}
+	}
+	return receipts, nil
+}
+
+// joinedSnapshot is a snapshot in which the user is joined to rooms.
+type joinedSnapshot struct {
+	tables.CurrentRoomState
+	rooms []string
+}
+
+func (s joinedSnapshot) SelectRoomIDsWithMembership(context.Context, *sql.Tx, string, string) ([]string, error) {
+	return s.rooms, nil
+}
+
+func joinedTo(rooms ...string) *shared.DatabaseTransaction {
+	return &shared.DatabaseTransaction{Database: &shared.Database{CurrentRoomState: joinedSnapshot{rooms: rooms}}}
 }
 
 func TestSlidingReceiptThreadCollision(t *testing.T) {
@@ -39,7 +64,7 @@ func TestSlidingReceiptThreadCollision(t *testing.T) {
 		{RoomID: "!room:test", EventID: "$same", UserID: "@alice:test", Type: "m.read", ThreadID: "main", Timestamp: 2},
 		{RoomID: "!room:test", EventID: "$reply", UserID: "@bob:test", Type: "m.read.private", ThreadID: "$root", Timestamp: 3},
 	}}
-	pool := RequestPool{db: threadedReceiptDatabase{snapshot: snapshot}}
+	pool := RequestPool{db: threadedReceiptDatabase{snapshot: snapshot, joined: []string{"!room:test"}}}
 	for _, wantThread := range []string{"", "main"} {
 		response, _, delivered, err := pool.processReceiptsExtension(t.Context(), nil, 1, "@alice:test", nil, []string{"!room:test"}, nil, types.StreamingToken{}, nil, map[string]bool{"!room:test": true}, nil)
 		require.NoError(t, err)
@@ -67,8 +92,8 @@ func TestSlidingReceiptsLimitedOnRoomReset(t *testing.T) {
 		{RoomID: "!expanded:test", EventID: "$older", UserID: "@dave:test", Type: "m.read", Timestamp: 5},
 		{RoomID: "!live:test", EventID: "$old", UserID: "@erin:test", Type: "m.read", Timestamp: 6},
 	}}
-	pool := RequestPool{db: threadedReceiptDatabase{snapshot: snapshot}}
 	rooms := []string{"!reset:test", "!expanded:test", "!live:test"}
+	pool := RequestPool{db: threadedReceiptDatabase{snapshot: snapshot, joined: rooms}}
 	subscriptions := map[string]bool{"!reset:test": true, "!expanded:test": true, "!live:test": true}
 	responseRooms := map[string]types.SlidingRoomData{
 		"!reset:test":    {Initial: true, Timeline: []synctypes.ClientEvent{{EventID: "$recent"}}},
@@ -100,4 +125,41 @@ func TestSlidingReceiptsLimitedOnRoomReset(t *testing.T) {
 	// Withheld receipts are recorded as delivered so the next response does not
 	// carry them, which would move the whole payload one request later.
 	require.ElementsMatch(t, snapshot.pending, delivered)
+}
+
+// TestSlidingReceiptsJoinedRoomsOnly checks that rooms in scope the user is
+// not joined to, such as invites and rooms the user was kicked from, which
+// lists keep, get no receipts.
+func TestSlidingReceiptsJoinedRoomsOnly(t *testing.T) {
+	snapshot := &threadedReceiptSnapshot{pending: []types.OutputReceiptEvent{
+		{RoomID: "!joined:test", EventID: "$a", UserID: "@bob:test", Type: "m.read", Timestamp: 1},
+		{RoomID: "!invited:test", EventID: "$b", UserID: "@bob:test", Type: "m.read", Timestamp: 2},
+	}}
+	pool := RequestPool{db: threadedReceiptDatabase{snapshot: snapshot, joined: []string{"!joined:test", "!other:test"}}}
+	subscriptions := map[string]bool{"!joined:test": true, "!invited:test": true}
+
+	response, _, delivered, err := pool.processReceiptsExtension(t.Context(), nil, 1, "@alice:test", nil, nil, nil, types.StreamingToken{}, nil, subscriptions, nil)
+	require.NoError(t, err)
+	require.Contains(t, response.Rooms, "!joined:test")
+	require.NotContains(t, response.Rooms, "!invited:test")
+	// The invited room's receipt is not recorded as delivered either, so it is
+	// sent once the user joins.
+	require.Len(t, delivered, 1)
+	require.Equal(t, "!joined:test", delivered[0].RoomID)
+}
+
+// TestSlidingTypingJoinedRoomsOnly checks that rooms in scope the user is not
+// joined to get no typing notifications.
+func TestSlidingTypingJoinedRoomsOnly(t *testing.T) {
+	cache := caching.NewTypingCache(t.Context())
+	for _, roomID := range []string{"!joined:test", "!invited:test"} {
+		cache.AddTypingUser("@bob:test", roomID, nil)
+	}
+	pool := RequestPool{streams: &streams.Streams{TypingStreamProvider: &streams.TypingStreamProvider{EDUCache: cache}}}
+	subscriptions := map[string]bool{"!joined:test": true, "!invited:test": true}
+
+	response, err := pool.processTypingExtension(t.Context(), joinedTo("!joined:test"), "@alice:test", nil, nil, nil, types.StreamingToken{}, nil, subscriptions)
+	require.NoError(t, err)
+	require.Contains(t, response.Rooms, "!joined:test")
+	require.NotContains(t, response.Rooms, "!invited:test")
 }

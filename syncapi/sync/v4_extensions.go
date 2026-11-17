@@ -935,24 +935,12 @@ func (rp *RequestPool) processReceiptsExtension(
 		actualRoomSubscriptions,
 	)
 
-	// Convert to slice for database query
-	roomsToCheck := make([]string, 0, len(relevantRoomIDs))
-	for roomID := range relevantRoomIDs {
-		roomsToCheck = append(roomsToCheck, roomID)
-	}
-
 	logrus.WithFields(logrus.Fields{
 		"connection_key":  connectionKey,
 		"requested_lists": requestedLists,
 		"requested_rooms": requestedRooms,
-		"relevant_rooms":  len(roomsToCheck),
+		"relevant_rooms":  len(relevantRoomIDs),
 	}).Debug("[RECEIPTS] Filtered rooms for extension")
-
-	logrus.WithFields(logrus.Fields{
-		"user_id":        userID,
-		"connection_key": connectionKey,
-		"num_rooms":      len(roomsToCheck),
-	}).Info("[RECEIPTS] Querying receipts for connection")
 
 	// CRITICAL FIX: Query receipts using a fresh transaction instead of the snapshot
 	// The snapshot uses REPEATABLE READ isolation which may not see recently committed receipts
@@ -963,6 +951,20 @@ func (rp *RequestPool) processReceiptsExtension(
 		return nil, 0, nil, fmt.Errorf("failed to create fresh snapshot for receipts: %w", err)
 	}
 	defer func() { _ = freshSnapshot.Rollback() }()
+
+	// Lists keep invites and rooms the user was kicked from, whose receipts
+	// the user must not see. Memberships come from the same fresh snapshot
+	// as the receipts, so that a kick is not missed by an older snapshot.
+	roomsToCheck, err := joinedRoomsOnly(ctx, freshSnapshot, userID, relevantRoomIDs)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"user_id":        userID,
+		"connection_key": connectionKey,
+		"num_rooms":      len(roomsToCheck),
+	}).Info("[RECEIPTS] Querying receipts for connection")
 
 	// NEW APPROACH: Use per-connection event-ID based tracking instead of position-based
 	// This prevents duplicate receipts across concurrent connections (room-list vs encryption)
@@ -1106,9 +1108,9 @@ type ReceiptTS struct {
 // processTypingExtension handles typing notifications extension
 // IMPORTANT: Response contains a SINGLE event per room, not an array (matrix-js-sdk expects this).
 func (rp *RequestPool) processTypingExtension(
-	_ context.Context, // unused - typing uses EDUCache directly
-	_ storage.DatabaseTransaction, // unused - typing uses EDUCache directly
-	_ string, // unused - typing is room-wide, not user-specific
+	ctx context.Context,
+	snapshot storage.DatabaseTransaction, // for memberships only; typing comes from the EDUCache
+	userID string,
 	requestedLists []string, // Optional list filter from request (MSC3959)
 	requestedRooms []string, // Optional room filter from request (MSC3960)
 	fromPos *types.StreamingToken,
@@ -1124,10 +1126,11 @@ func (rp *RequestPool) processTypingExtension(
 		actualRoomSubscriptions,
 	)
 
-	// Convert to slice for typing stream query
-	roomsToCheck := make([]string, 0, len(relevantRoomIDs))
-	for roomID := range relevantRoomIDs {
-		roomsToCheck = append(roomsToCheck, roomID)
+	// Lists keep invites and rooms the user was kicked from, in which the
+	// user must not see who is typing.
+	roomsToCheck, err := joinedRoomsOnly(ctx, snapshot, userID, relevantRoomIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -1182,4 +1185,25 @@ func (rp *RequestPool) processTypingExtension(
 	// Always return typing extension if requested
 	// Synapse may return empty typing objects
 	return resp, nil
+}
+
+// joinedRoomsOnly returns the rooms of roomIDs the user is joined to. Typing
+// and receipts, like the ephemeral events of /v3/sync, are only for joined
+// rooms, while sliding sync lists also hold invites, knocks and rooms the
+// user was kicked from.
+func joinedRoomsOnly(ctx context.Context, snapshot storage.DatabaseTransaction, userID string, roomIDs map[string]bool) ([]string, error) {
+	if len(roomIDs) == 0 {
+		return nil, nil
+	}
+	joined, err := snapshot.RoomIDsWithMembership(ctx, userID, spec.Join)
+	if err != nil {
+		return nil, fmt.Errorf("RoomIDsWithMembership failed: %w", err)
+	}
+	rooms := make([]string, 0, min(len(joined), len(roomIDs)))
+	for _, roomID := range joined {
+		if roomIDs[roomID] {
+			rooms = append(rooms, roomID)
+		}
+	}
+	return rooms, nil
 }

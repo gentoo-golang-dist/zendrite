@@ -77,15 +77,9 @@ func (rp *RequestPool) processStickyEventsExtension(
 			interested[roomID] = true
 		}
 	}
-	joinedRooms, err := snapshot.RoomIDsWithMembership(ctx, userID, spec.Join)
+	rooms, err := joinedRoomsOnly(ctx, snapshot, userID, interested)
 	if err != nil {
 		return nil, fmt.Errorf("load joined rooms: %w", err)
-	}
-	rooms := make([]string, 0, len(joinedRooms))
-	for _, roomID := range joinedRooms {
-		if interested[roomID] {
-			rooms = append(rooms, roomID)
-		}
 	}
 
 	stickyEvents, err := snapshot.StickyEventsInRooms(ctx, rooms, from, to, spec.AsTimestamp(now), limit)
