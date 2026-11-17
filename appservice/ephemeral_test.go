@@ -33,6 +33,9 @@ import (
 	"codefloe.com/pat-s/zendrite/userapi"
 )
 
+// toDeviceField is the transaction field of to-device events (MSC4203).
+const toDeviceField = "de.sorunome.msc2409.to_device"
+
 // ephemeralReceiver records the ephemeral data an application service
 // receives, keyed by the transaction field it arrived in.
 type ephemeralReceiver struct {
@@ -46,7 +49,7 @@ func (r *ephemeralReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 	_ = json.NewDecoder(req.Body).Decode(&body)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, field := range []string{"ephemeral", "de.sorunome.msc2409.ephemeral"} {
+	for _, field := range []string{"ephemeral", "de.sorunome.msc2409.ephemeral", toDeviceField} {
 		r.fields[field] = append(r.fields[field], gjson.ParseBytes(body[field]).Array()...)
 	}
 	r.events += len(gjson.ParseBytes(body["events"]).Array())
@@ -73,7 +76,8 @@ func (r *ephemeralReceiver) count(field string) int {
 }
 
 // TestEphemeralToAppservices covers sending typing, receipts and presence to
-// application services that set receive_ephemeral (MSC2409).
+// application services that set receive_ephemeral (MSC2409), and to-device
+// events for the users in their namespaces (MSC4203).
 func TestEphemeralToAppservices(t *testing.T) {
 	alice := test.NewUser(t)
 	bridged := test.NewUser(t)
@@ -159,6 +163,22 @@ func TestEphemeralToAppservices(t *testing.T) {
 		publish(jetstream.OutputPresenceEvent, map[string]string{
 			jetstream.UserID: stranger.ID, "presence": "online", "last_active_ts": now,
 		})
+		sendToDevice := func(userID, deviceID, eventType string) {
+			t.Helper()
+			msg := nats.NewMsg(cfg.Global.JetStream.Prefixed(jetstream.OutputSendToDeviceEvent))
+			data, err := json.Marshal(map[string]any{
+				"user_id": userID, "device_id": deviceID,
+				"sender": alice.ID, "type": eventType, "content": map[string]any{"algorithm": "m.olm.v1.curve25519-aes-sha2"},
+			})
+			require.NoError(t, err)
+			msg.Data = data
+			msg.Header.Set("sender", alice.ID)
+			msg.Header.Set(jetstream.UserID, userID)
+			_, err = js.PublishMsg(msg)
+			require.NoError(t, err)
+		}
+		sendToDevice(alice.ID, "ALICEDEVICE", "m.room.encrypted")
+		sendToDevice(bridged.ID, "BRIDGEDEVICE", "m.room.encrypted")
 
 		wait := func(recv *ephemeralReceiver, field string, what string, match func(gjson.Result) bool) gjson.Result {
 			t.Helper()
@@ -210,6 +230,18 @@ func TestEphemeralToAppservices(t *testing.T) {
 			})
 			require.False(t, found)
 		}
+		for _, recv := range []*ephemeralReceiver{stable, unstable} {
+			toDevice := wait(recv, toDeviceField, "to-device event", ofType("m.room.encrypted"))
+			require.Equal(t, alice.ID, toDevice.Get("sender").Str, toDevice.Raw)
+			require.Equal(t, bridged.ID, toDevice.Get("to_user_id").Str, toDevice.Raw)
+			require.Equal(t, "BRIDGEDEVICE", toDevice.Get("to_device_id").Str, toDevice.Raw)
+			require.Equal(t, "m.olm.v1.curve25519-aes-sha2", toDevice.Get("content.algorithm").Str, toDevice.Raw)
+			// Only to-device events for users in the namespaces.
+			_, found := recv.find(toDeviceField, func(ev gjson.Result) bool { return ev.Get("to_user_id").Str == alice.ID })
+			require.False(t, found)
+			require.Equal(t, 1, recv.count(toDeviceField))
+		}
+		require.Zero(t, uninterested.count(toDeviceField))
 		require.Zero(t, stable.count("de.sorunome.msc2409.ephemeral"))
 		require.Zero(t, unstable.count("ephemeral"))
 		require.Zero(t, uninterested.count("ephemeral")+uninterested.count("de.sorunome.msc2409.ephemeral"))

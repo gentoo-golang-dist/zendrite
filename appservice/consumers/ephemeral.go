@@ -27,12 +27,13 @@ import (
 	syncTypes "codefloe.com/pat-s/zendrite/syncapi/types"
 )
 
-// ephemeralBatch is the most typing, receipt or presence updates that one
-// transaction carries.
+// ephemeralBatch is the most typing, receipt, presence or to-device updates
+// that one transaction carries.
 const ephemeralBatch = 50
 
 // EphemeralConsumer sends typing notifications, receipts and presence to
-// application services that set receive_ephemeral (MSC2409).
+// application services that set receive_ephemeral (MSC2409), and the
+// to-device events of the users in their namespaces (MSC4203).
 type EphemeralConsumer struct {
 	ctx       context.Context
 	cfg       *config.AppServiceAPI
@@ -64,6 +65,9 @@ type ephemeralStream struct {
 	// handle turns a batch of messages into the ephemeral data for the
 	// application service.
 	handle func(d *ephemeralDelivery, ctx context.Context, msgs []*nats.Msg) []json.RawMessage
+	// toDevice delivers the stream's data as to-device events (MSC4203)
+	// rather than ephemeral data, and needs the message bodies.
+	toDevice bool
 }
 
 // ephemeralDelivery is the state of one stream's delivery to one application
@@ -74,6 +78,8 @@ type ephemeralDelivery struct {
 	stream string
 	// typing is the typing state per room, which m.typing reports in full.
 	typing *caching.EDUCache
+	// toDevice sends the events as to-device events (MSC4203).
+	toDevice bool
 }
 
 func (s *EphemeralConsumer) streams() []ephemeralStream {
@@ -81,6 +87,7 @@ func (s *EphemeralConsumer) streams() []ephemeralStream {
 		{name: "Typing", topic: jetstream.OutputTypingEvent, handle: (*ephemeralDelivery).typingEvents},
 		{name: "Receipt", topic: jetstream.OutputReceiptEvent, handle: (*ephemeralDelivery).receiptEvents},
 		{name: "Presence", topic: jetstream.OutputPresenceEvent, handle: (*ephemeralDelivery).presenceEvents},
+		{name: "ToDevice", topic: jetstream.OutputSendToDeviceEvent, handle: (*ephemeralDelivery).toDeviceEvents, toDevice: true},
 	}
 }
 
@@ -114,18 +121,23 @@ func (s *EphemeralConsumer) Start() error {
 				EphemeralConsumer: s,
 				state:             &appserviceState{ApplicationService: &appsvc},
 				stream:            stream.name,
+				toDevice:          stream.toDevice,
 			}
 			if stream.topic == jetstream.OutputTypingEvent {
 				d.typing = caching.NewTypingCache(s.ctx)
 				d.typing.SetTimeoutCallback(d.onTypingTimeout)
 			}
 			handle := stream.handle
+			opts := []nats.SubOpt{nats.DeliverNew(), nats.ManualAck()}
+			if !stream.toDevice {
+				opts = append(opts, nats.HeadersOnly())
+			}
 			if err := jetstream.JetStreamConsumer(
 				s.ctx, s.jetstream, topic, durable, ephemeralBatch,
 				func(ctx context.Context, msgs []*nats.Msg) bool {
 					return d.send(ctx, handle(d, ctx, msgs), msgs[0]) == nil
 				},
-				nats.DeliverNew(), nats.ManualAck(), nats.HeadersOnly(),
+				opts...,
 			); err != nil {
 				return fmt.Errorf("failed to create %q consumer: %w", durable, err)
 			}
@@ -150,9 +162,12 @@ func (d *ephemeralDelivery) send(ctx context.Context, events []json.RawMessage, 
 		txnID = fmt.Sprintf("ephemeral_%s_t%d", d.stream, time.Now().UnixNano())
 	}
 	txn := ApplicationServiceTransaction{Events: []synctypes.ClientEvent{}}
-	if d.state.ReceiveEphemeral {
+	switch {
+	case d.toDevice:
+		txn.UnstableToDevice = events
+	case d.state.ReceiveEphemeral:
 		txn.Ephemeral = events
-	} else {
+	default:
 		txn.UnstableEphemeral = events
 	}
 	body, err := json.Marshal(txn)
@@ -371,4 +386,45 @@ func (d *ephemeralDelivery) presenceInterest(ctx context.Context, userID string)
 		}
 	}
 	return false
+}
+
+// toDeviceEvent is a to-device event for application services, which names
+// the user and device it is for (MSC4203).
+type toDeviceEvent struct {
+	Type       string          `json:"type"`
+	Sender     string          `json:"sender"`
+	ToUserID   string          `json:"to_user_id"`
+	ToDeviceID string          `json:"to_device_id"`
+	Content    json.RawMessage `json:"content"`
+}
+
+// toDeviceEvents returns the to-device events for the devices of local users
+// in the application service's namespaces (MSC4203). Senders produce one
+// message per device, having expanded a local wildcard device already.
+func (d *ephemeralDelivery) toDeviceEvents(_ context.Context, msgs []*nats.Msg) []json.RawMessage {
+	var events []json.RawMessage
+	for _, msg := range msgs {
+		if !isInterestedInUser(d.cfg, d.state.ApplicationService, msg.Header.Get(jetstream.UserID)) {
+			continue
+		}
+		var output syncTypes.OutputSendToDeviceEvent
+		if err := json.Unmarshal(msg.Data, &output); err != nil {
+			log.WithField("appservice", d.state.ID).WithError(err).Error("Unable to parse to-device event, ignoring")
+			continue
+		}
+		if output.DeviceID == "" || !isInterestedInUser(d.cfg, d.state.ApplicationService, output.UserID) {
+			continue
+		}
+		ev, err := json.Marshal(toDeviceEvent{
+			Type:       output.Type,
+			Sender:     output.Sender,
+			ToUserID:   output.UserID,
+			ToDeviceID: output.DeviceID,
+			Content:    output.Content,
+		})
+		if err == nil {
+			events = append(events, ev)
+		}
+	}
+	return events
 }

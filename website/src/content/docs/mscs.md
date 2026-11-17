@@ -569,6 +569,7 @@ It also drops the device list of a remote user who no longer shares a room with 
 | --- | --- | --- | --- |
 | [MSC3905](https://github.com/matrix-org/matrix-spec-proposals/pull/3905) | Application services should only be interested in local users | 1.5 | Implemented: `users` namespaces only match users on this server or its virtual hosts, so a remote sender, member or joined user no longer makes an event interesting to an application service |
 | [MSC2409](https://github.com/matrix-org/matrix-spec-proposals/pull/2409) | Typing, receipts and presence for application services | 1.13 | Implemented: see [ephemeral data](#ephemeral-data-for-application-services) |
+| [MSC4203](https://github.com/matrix-org/matrix-spec-proposals/pull/4203) | To-device events for application services | N/A | Implemented (unstable prefix): see [ephemeral data](#ephemeral-data-for-application-services) |
 | [MSC2659](https://github.com/matrix-org/matrix-spec-proposals/pull/2659) | Application service ping endpoint | 1.7 | Implemented: `POST /_matrix/client/v1/appservice/{appserviceId}/ping`, authenticated with the application service's `as_token`, calls `POST /_matrix/app/v1/ping` with the `hs_token` and the `transaction_id`, and returns `duration_ms`. Failures return `M_URL_NOT_SET`, `M_CONNECTION_FAILED`, `M_CONNECTION_TIMEOUT` (after 30 seconds) or `M_BAD_STATUS` with the status and up to 4 KiB of the body |
 | [MSC4326](https://github.com/matrix-org/matrix-spec-proposals/pull/4326) | Device masquerading for appservices | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
 | [MSC4190](https://github.com/matrix-org/matrix-spec-proposals/pull/4190) | Device management for application services | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
@@ -582,7 +583,10 @@ Typing notifications and receipts are sent for rooms the application service is 
 `m.typing` lists every user typing in the room, and a typing notification that times out sends an update without the user.
 Private read receipts are only sent for users in the user namespaces.
 Presence is sent for users in the user namespaces and for users who share a room with one of them.
+With either option, the to-device events for the devices of users in the user namespaces arrive in `de.sorunome.msc2409.to_device`, each with `to_user_id` and `to_device_id` (MSC4203).
+Together with [device masquerading and device management](#devices-of-application-services), this lets an application service take part in end-to-end encryption.
 Ephemeral data from before the application service enabled the option, or from while Zendrite was not running, is not sent.
+Under HA, only the owner sends to-device events, and after a takeover the successor resumes with the first one the former owner did not deliver.
 
 ### Devices of application services
 

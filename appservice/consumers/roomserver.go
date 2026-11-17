@@ -43,6 +43,9 @@ type ApplicationServiceTransaction struct {
 	// UnstableEphemeral is Ephemeral for application services that only set
 	// the unstable de.sorunome.msc2409.push_ephemeral.
 	UnstableEphemeral []json.RawMessage `json:"de.sorunome.msc2409.ephemeral,omitempty"`
+	// UnstableToDevice carries the to-device events of the users in the
+	// application service's namespaces (MSC4203). There is no stable name yet.
+	UnstableToDevice []json.RawMessage `json:"de.sorunome.msc2409.to_device,omitempty"`
 }
 
 // OutputRoomEventConsumer consumes events that originated in the room server.
