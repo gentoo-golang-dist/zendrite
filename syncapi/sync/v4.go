@@ -469,10 +469,25 @@ func (rp *RequestPool) recordDeliveredReceipts(ctx context.Context, connectionKe
 	return true
 }
 
-// OnIncomingSyncRequestV4 handles POST /v4/sync requests (MSC4186 Simplified Sliding Sync)
+// OnIncomingSyncRequestV4 serves Synapse's MSC4186 endpoint,
+// /unstable/org.matrix.simplified_msc3575/sync, whose extensions keep the
+// formats existing clients parse.
+func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userapi.Device) util.JSONResponse {
+	return rp.onIncomingSyncRequestV4(req, device, false)
+}
+
+// OnIncomingStableSyncRequestV4 serves /_matrix/client/v4/sync, whose
+// typing, to_device, e2ee, account_data and receipts extensions follow
+// MSC4508, MSC4538, MSC4543, MSC4548 and MSC4551.
+func (rp *RequestPool) OnIncomingStableSyncRequestV4(req *http.Request, device *userapi.Device) util.JSONResponse {
+	return rp.onIncomingSyncRequestV4(req, device, true)
+}
+
+// onIncomingSyncRequestV4 handles POST sliding sync requests (MSC4186
+// Simplified Sliding Sync). Stable is whether the request came to /v4/sync.
 //
 //nolint:gocyclo
-func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userapi.Device) util.JSONResponse {
+func (rp *RequestPool) onIncomingSyncRequestV4(req *http.Request, device *userapi.Device, stable bool) util.JSONResponse {
 	// Create a root span for tracing the entire sync request
 	trace, ctx := internal.StartTask(req.Context(), "SlidingSync.V4")
 	defer trace.EndTask()
@@ -495,6 +510,17 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 			Code: http.StatusBadRequest,
 			JSON: spec.BadJSON(fmt.Sprintf("Failed to parse request body: %s", err.Error())),
 		}
+	}
+
+	// The extension keys and checks of MSC4508 and the MSCs that build on it
+	// apply to /v4/sync only.
+	if stable {
+		v4Req.ExtensionFormat = v4Req.Extensions.NormalizeStableExtensions()
+		if errRes := validateStableExtensions(v4Req.Extensions); errRes != nil {
+			return *errRes
+		}
+	} else {
+		v4Req.Extensions.DropUnstableExtensionKeys()
 	}
 
 	// Read from query parameters if present (takes precedence over JSON body for compatibility)
@@ -605,7 +631,9 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 	// Delete the to-device messages the client has acknowledged, as v3 sync
 	// does: those up to the extension's since, or without one, up to the
 	// connection position the request carries.
-	if ackPos := toDeviceAckPosition(&v4Req, since); ackPos > 0 {
+	// A since beyond the latest message cannot have been issued; deleting up
+	// to it would drop messages the client has never received.
+	if ackPos := toDeviceAckPosition(&v4Req, since); ackPos > 0 && ackPos <= rp.Notifier.CurrentPosition().SendToDevicePosition {
 		if cleanupErr := rp.db.CleanSendToDeviceUpdates(req.Context(), device.UserID, device.ID, ackPos); cleanupErr != nil { //nolint:contextcheck
 			logrus.WithError(cleanupErr).Warn("Failed to clean up acknowledged send-to-device messages")
 		}

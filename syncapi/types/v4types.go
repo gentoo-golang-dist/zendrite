@@ -91,6 +91,10 @@ type SlidingSyncRequest struct {
 
 	// Extension data requests (Phase 9: to_device, e2ee, account_data, receipts, typing)
 	Extensions *ExtensionRequest `json:"extensions,omitempty"`
+
+	// ExtensionFormat is how the response writes its extensions, set by the
+	// endpoint the request came to.
+	ExtensionFormat ExtensionFormat `json:"-"`
 }
 
 // SlidingListConfig defines a filtered, windowed view of rooms.
@@ -346,13 +350,24 @@ type ExtensionRequest struct {
 	Profiles *ProfilesRequest `json:"org.matrix.msc4262.profiles,omitempty"`
 	// ThreadSubscriptions is the MSC4308 thread subscriptions extension.
 	ThreadSubscriptions *ThreadSubscriptionsRequest `json:"io.element.msc4308.thread_subscriptions,omitempty"`
+
+	// The keys MSC4508, MSC4538, MSC4543, MSC4548 and MSC4551 name for their
+	// extensions on /v4/sync until accepted. Only /v4/sync reads them, and
+	// NormalizeStableExtensions moves them to the unprefixed fields.
+	TypingMSC4508      *TypingRequest      `json:"org.matrix.msc4508.typing,omitempty"`
+	ToDeviceMSC4538    *ToDeviceRequest    `json:"org.matrix.msc4538.to_device,omitempty"`
+	E2EEMSC4543        *E2EERequest        `json:"org.matrix.msc4543.e2ee,omitempty"`
+	AccountDataMSC4548 *AccountDataRequest `json:"org.matrix.msc4548.account_data,omitempty"`
+	ReceiptsMSC4551    *ReceiptsRequest    `json:"org.matrix.msc4551.receipts,omitempty"`
 }
 
 // ToDeviceRequest configures to-device message extension.
 type ToDeviceRequest struct {
 	Enabled bool   `json:"enabled"`
 	Since   string `json:"since,omitempty"` // Token from previous next_batch
-	Limit   int    `json:"limit,omitempty"` // Max events to return (client default: 100)
+	// Limit is the maximum number of messages to return, 100 by default.
+	// /v4/sync rejects one that is not positive (MSC4538).
+	Limit *int `json:"limit,omitempty"`
 }
 
 // E2EERequest configures E2EE device extension (MSC3884).
@@ -430,6 +445,9 @@ type ExtensionResponse struct {
 	Profiles *ProfilesResponse `json:"org.matrix.msc4262.profiles,omitempty"`
 	// ThreadSubscriptions is omitted when no thread subscription changed.
 	ThreadSubscriptions *ThreadSubscriptionsResponse `json:"io.element.msc4308.thread_subscriptions,omitempty"`
+
+	// Format is how the response is written; see MarshalJSON.
+	Format ExtensionFormat `json:"-"`
 }
 
 // StickyEventsResponse carries unexpired MSC4354 sticky events per room,

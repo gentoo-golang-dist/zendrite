@@ -9,13 +9,18 @@ This page tracks the implementation status of notable MSCs in Zendrite.
 Many MSCs listed here have since been merged into the [Matrix specification](https://spec.matrix.org/) proper.
 They are listed by their original MSC number and the first spec version which includes them.
 Zendrite advertises spec versions up to v1.19; see the [client API conformance audit](/development/client-api-conformance/) for the evidence and the discovery policy.
-Open MSCs that clients use and Zendrite does not implement yet are tracked in [issue #558](https://codefloe.com/pat-s/zendrite/issues/558).
+Open MSCs that clients use and Zendrite does not implement yet are tracked in [issue #684](https://codefloe.com/pat-s/zendrite/issues/684), which follows [issue #558](https://codefloe.com/pat-s/zendrite/issues/558).
 
 ## Sync
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
 | [MSC4186](https://github.com/matrix-org/matrix-spec-proposals/pull/4186) | Simplified Sliding Sync | N/A | Implemented (native, no proxy needed) |
+| [MSC4508](https://github.com/matrix-org/matrix-spec-proposals/pull/4508) | Sliding sync extensions: common format and typing | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
+| [MSC4538](https://github.com/matrix-org/matrix-spec-proposals/pull/4538) | Sliding sync extension: to-device messages | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
+| [MSC4543](https://github.com/matrix-org/matrix-spec-proposals/pull/4543) | Sliding sync extension: end-to-end encryption | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
+| [MSC4548](https://github.com/matrix-org/matrix-spec-proposals/pull/4548) | Sliding sync extension: account data | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
+| [MSC4551](https://github.com/matrix-org/matrix-spec-proposals/pull/4551) | Sliding sync extension: receipts | N/A (accepted) | Partial: the format, not all delivery rules; see [sliding sync extensions](#sliding-sync-extensions) |
 | [MSC3575](https://github.com/matrix-org/matrix-spec-proposals/pull/3575) | Sliding Sync (v1) | N/A | Not supported: closed, superseded by MSC4186. Lists return only `count`, without MSC3575 `ops`, and `/.well-known/matrix/client` no longer advertises a sliding sync proxy |
 | [MSC4354](https://github.com/matrix-org/matrix-spec-proposals/pull/4354) | Sticky events | N/A | Implemented (unstable prefix): see [sticky events](#sticky-events) |
 | [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480) | Sliding sync extension: sticky events | N/A | Implemented: the `org.matrix.msc4354.sticky_events` extension |
@@ -24,6 +29,34 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) | `state_after` in `/sync` | 1.16 | Implemented: with `use_state_after=true`, joined and left rooms carry `state_after`, the state at the end of the timeline, instead of `state`. The unstable `org.matrix.msc4222.use_state_after` parameter is answered with `org.matrix.msc4222.state_after`. See [state after the timeline](#state-after-the-timeline) |
 | [MSC4445](https://github.com/matrix-org/matrix-spec-proposals/pull/4445) | Clarify `/sync` timeline order | N/A | Implemented (unstable prefix): the timeline of a room a sync sends for the first time is in topological order, an incremental timeline in stream order. See [timeline order](#timeline-order) |
 | [MSC4319](https://github.com/matrix-org/matrix-spec-proposals/pull/4319) | Room member events for invite and knock rooms in `/sync` | N/A (accepted) | Implemented: invited and knocked rooms carry the invite or knock in full under `state` and the unstable `org.matrix.msc4319.state`, and sliding sync sends it as their `required_state`. `invite_state` and `knock_state` keep the stripped event for older clients. The stripped state of invites Zendrite sends holds the inviter's membership and the topic |
+
+### Sliding sync extensions
+
+Zendrite serves sliding sync at two paths with the same rooms and lists, which differ only in their extensions:
+
+- `/_matrix/client/unstable/org.matrix.simplified_msc3575/sync`, Synapse's path, which Element X uses, keeps Synapse's formats: `to_device` messages under `events`, and typing and receipts as full `m.typing` and `m.receipt` events per room.
+- `/_matrix/client/v4/sync` follows the extension MSCs, which are accepted: `to_device` messages under `messages`, and per room the bare `{"user_ids": [...]}` of typing and the bare receipt content.
+
+On `/v4/sync`, each extension can be requested under its unprefixed key or the unstable one (`org.matrix.msc4508.typing`, `org.matrix.msc4538.to_device`, `org.matrix.msc4543.e2ee`, `org.matrix.msc4548.account_data`, `org.matrix.msc4551.receipts`), and its response uses the key of the request.
+`"*"` in the `lists` and `rooms` of an extension does not match everything there, since MSC4508 dropped it; a `lists` of `["*"]` matches nothing.
+A `to_device` `limit` that is not a positive integer is 400 `M_BAD_JSON`, and a `since` that is not a `next_batch` of the extension is 400 `M_INVALID_PARAM`.
+The unstable path accepts both, as Synapse does.
+
+On both paths:
+
+- Typing and receipts are only sent for rooms the user is joined to, although lists also hold invites, knocks and rooms the user was kicked from.
+- A room the response sends carries its current typing state, so a room entering a list's range shows who is typing even if that started before `pos`.
+- The first response of a connection with the account data extension enabled carries all global account data, also when the extension is enabled after the connection's first request.
+  Connections from before Zendrite tracked this receive their global account data once more.
+- `to_device` returns at most `limit` messages, 100 by default, with `next_batch` naming the last one, and the connection position stops there too, so clients with and without `since` receive the rest next.
+  Messages are deleted once a request acknowledges them with `since`, or without it with `pos`; a `since` beyond the latest message deletes nothing.
+- `/keys/changes` accepts a sliding sync `pos` as `from` and `to` (MSC4543), also after the connection has expired, since the `pos` carries its stream position.
+
+`/versions` advertises `org.matrix.msc4508`, `org.matrix.msc4538`, `org.matrix.msc4543` and `org.matrix.msc4548`, each with its `.stable` flag.
+The receipts extension is served in the format of MSC4551 but not advertised, since its delivery rules differ from the MSC:
+
+- Delivered receipts are recorded per connection rather than per `pos`, so a request retried after a lost response does not receive that response's receipts again.
+- When a room is sent with `initial` or `expanded_timeline`, other users' receipts outside its timeline that changed since `pos` are left out rather than sent with the timeline's receipts.
 
 ### Sticky events
 

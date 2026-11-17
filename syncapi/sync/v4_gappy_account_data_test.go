@@ -131,3 +131,47 @@ func TestProcessAccountDataExtension_DeletedGlobalAccountData(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, resp.Global, "initial responses leave deleted account data out")
 }
+
+// TestProcessAccountDataExtension_GlobalOnFirstEnable checks that the first
+// response of a connection to carry the account_data extension sends all
+// global account data, not only what changed since pos (MSC4548), and that
+// later responses go back to changes only.
+func TestProcessAccountDataExtension_GlobalOnFirstEnable(t *testing.T) {
+	t.Parallel()
+	const deleted = "org.matrix.msc3890.local_notification_settings.DEVICE"
+
+	snapshot := newMockSnapshot()
+	const deletedSincePos = "org.matrix.msc3890.local_notification_settings.OTHER"
+	snapshot.SetAccountDataChange("", "m.direct", 10)
+	snapshot.SetAccountDataChange("", deleted, 20)
+	snapshot.SetAccountDataChange("", deletedSincePos, 95)
+	db := newMockStreamStateDB()
+	rp := &RequestPool{db: db, userAPI: &mockUserAPI{
+		globalAccountData: map[string]json.RawMessage{"m.direct": json.RawMessage(`{}`)},
+	}}
+	fromPos := &types.StreamingToken{AccountDataPosition: 90}
+	toPos := types.StreamingToken{AccountDataPosition: 200}
+
+	// The extension was off for the responses so far: the connection has no
+	// global account data state.
+	connState := &V4ConnectionState{ConnectionKey: 1, ConnectionPosition: 42, PreviousStreamStates: map[string]map[string]*types.SlidingSyncStreamState{}}
+	resp, _, err := rp.processAccountDataExtension(context.Background(), snapshot, connState, "@alice:localhost", nil, nil, fromPos, toPos, nil, nil)
+	require.NoError(t, err)
+	sent := map[string]string{}
+	for _, ev := range resp.Global {
+		sent[ev.Type] = string(ev.Content)
+	}
+	assert.Equal(t, map[string]string{"m.direct": "{}", deletedSincePos: "{}"}, sent,
+		"all global account data, without what was deleted before pos, but with what was deleted since")
+	key := streamKey(globalAccountDataScope, accountDataStream)
+	require.Contains(t, db.writes, key, "the connection records that it sent global account data")
+
+	// Once sent, only changes after pos follow: here the deletion.
+	connState = &V4ConnectionState{ConnectionKey: 1, ConnectionPosition: 43, PreviousStreamStates: map[string]map[string]*types.SlidingSyncStreamState{
+		globalAccountDataScope: {accountDataStream: {LastToken: (&types.StreamingToken{AccountDataPosition: 90}).String()}},
+	}}
+	resp, _, err = rp.processAccountDataExtension(context.Background(), snapshot, connState, "@alice:localhost", nil, nil, fromPos, toPos, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, resp.Global, 1)
+	assert.Equal(t, deletedSincePos, resp.Global[0].Type)
+}

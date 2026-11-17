@@ -668,6 +668,21 @@ func (rp *RequestPool) OnIncomingSyncRequest(req *http.Request, device *userapi.
 	}
 }
 
+// keyChangeToken parses a from or to of /keys/changes: a /sync next_batch,
+// or a sliding sync pos (MSC4543). A pos carries the stream token it was
+// issued at, so it stays usable after its connection has expired.
+func keyChangeToken(s string) (types.StreamingToken, error) {
+	token, err := types.NewStreamTokenFromString(s)
+	if err == nil {
+		return token, nil
+	}
+	pos, posErr := types.ParseSlidingSyncStreamToken(s)
+	if posErr != nil || pos == nil {
+		return token, err
+	}
+	return pos.StreamToken, nil
+}
+
 func (rp *RequestPool) OnIncomingKeyChangeRequest(req *http.Request, device *userapi.Device) util.JSONResponse {
 	from := req.URL.Query().Get("from")
 	to := req.URL.Query().Get("to")
@@ -677,14 +692,14 @@ func (rp *RequestPool) OnIncomingKeyChangeRequest(req *http.Request, device *use
 			JSON: spec.InvalidParam("missing ?from= or ?to="),
 		}
 	}
-	fromToken, err := types.NewStreamTokenFromString(from)
+	fromToken, err := keyChangeToken(from)
 	if err != nil {
 		return util.JSONResponse{
 			Code: 400, //nolint:mnd
 			JSON: spec.InvalidParam("bad 'from' value"),
 		}
 	}
-	toToken, err := types.NewStreamTokenFromString(to)
+	toToken, err := keyChangeToken(to)
 	if err != nil {
 		return util.JSONResponse{
 			Code: 400, //nolint:mnd

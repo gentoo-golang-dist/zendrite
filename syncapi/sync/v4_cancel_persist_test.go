@@ -45,7 +45,8 @@ type cancellingWriteDB struct {
 	cancelAt   int
 	writes     atomic.Int64
 	lateWrites atomic.Int64
-	failRoom   string
+	// failRoom is a room whose writes fail, if not empty.
+	failRoom string
 }
 
 func (db *cancellingWriteDB) write(ctx context.Context, roomID string, real func() error) error {
@@ -57,7 +58,9 @@ func (db *cancellingWriteDB) write(ctx context.Context, roomID string, real func
 		db.cancel(nil)
 		return fmt.Errorf("write: %w", ctx.Err())
 	}
-	if roomID == db.failRoom {
+	// An empty failRoom fails nothing: "" is the room ID under which
+	// global account data is tracked.
+	if db.failRoom != "" && roomID == db.failRoom {
 		return errBrokenDatabase
 	}
 	if real == nil {
@@ -356,6 +359,9 @@ func testSlidingSyncRetryAfterCanceledPersistence(t *testing.T, dbType test.DBTy
 	require.NoError(t, err)
 	configs, err = realDB.GetRoomConfigsByPosition(ctx, next.ConnectionPosition)
 	require.NoError(t, err)
+	// Besides the rooms, the account_data stream tracks global account data.
+	require.Contains(t, streams, globalAccountDataScope)
+	delete(streams, globalAccountDataScope)
 	require.Len(t, streams, rooms)
 	require.Len(t, configs, rooms)
 	for roomID, roomStreams := range streams {
@@ -506,5 +512,7 @@ func testSlidingSyncSupersededByNewerRequest(t *testing.T, dbType test.DBType, r
 	require.NotEqual(t, acked, next.ConnectionPosition)
 	streams, err := realDB.GetConnectionStreamsByPosition(ctx, next.ConnectionPosition)
 	require.NoError(t, err)
-	assert.Len(t, streams, rooms)
+	// The rooms, and global account data.
+	assert.Len(t, streams, rooms+1)
+	assert.Contains(t, streams, globalAccountDataScope)
 }

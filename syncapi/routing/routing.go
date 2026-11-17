@@ -47,7 +47,7 @@ func Setup(
 	// MSC4186: Simplified Sliding Sync
 	// Official endpoint path per MSC4186: /_matrix/client/v4/sync
 	v4mux.Handle("/sync", httputil.MakeAuthAPI("sliding_sync_v4", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
-		return srp.OnIncomingSyncRequestV4(req, device)
+		return srp.OnIncomingStableSyncRequestV4(req, device)
 	}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests())).Methods(http.MethodPost, http.MethodOptions)
 
 	// MSC4186: Simplified Sliding Sync - Synapse compatibility endpoint

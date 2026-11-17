@@ -53,7 +53,7 @@ func TestSlidingToDeviceLimitKeepsRemainder(t *testing.T) {
 		for range queued {
 			snapshot, err := db.NewDatabaseSnapshot(ctx)
 			require.NoError(t, err)
-			res, _, err := rp.processToDeviceExtension(ctx, snapshot, alice.ID, "DEVICE", &types.ToDeviceRequest{Enabled: true, Limit: 2, Since: since}, nil, toPos)
+			res, _, err := rp.processToDeviceExtension(ctx, snapshot, alice.ID, "DEVICE", &types.ToDeviceRequest{Enabled: true, Limit: new(2), Since: since}, nil, toPos)
 			require.NoError(t, snapshot.Rollback())
 			require.NoError(t, err)
 			require.LessOrEqual(t, len(res.Events), 2)
@@ -76,7 +76,7 @@ func TestSlidingToDeviceLimitKeepsRemainder(t *testing.T) {
 		snapshot, err := db.NewDatabaseSnapshot(ctx)
 		require.NoError(t, err)
 		defer snapshot.Rollback() //nolint:errcheck
-		req := &types.SlidingSyncRequest{Extensions: &types.ExtensionRequest{ToDevice: &types.ToDeviceRequest{Enabled: true, Limit: 2}}}
+		req := &types.SlidingSyncRequest{Extensions: &types.ExtensionRequest{ToDevice: &types.ToDeviceRequest{Enabled: true, Limit: new(2)}}}
 		res, pos, _, err := rp.ProcessExtensions(ctx, snapshot, nil, req, alice.ID, "DEVICE", 0, nil, toPos, nil, nil, nil)
 		require.NoError(t, err)
 		require.Len(t, res.ToDevice.Events, 2)
@@ -84,7 +84,7 @@ func TestSlidingToDeviceLimitKeepsRemainder(t *testing.T) {
 		require.Less(t, pos.SendToDevicePosition, latest)
 
 		// A negative limit falls back to the default rather than failing.
-		res, pos, _, err = rp.ProcessExtensions(ctx, snapshot, nil, &types.SlidingSyncRequest{Extensions: &types.ExtensionRequest{ToDevice: &types.ToDeviceRequest{Enabled: true, Limit: -1}}}, alice.ID, "DEVICE", 0, nil, toPos, nil, nil, nil)
+		res, pos, _, err = rp.ProcessExtensions(ctx, snapshot, nil, &types.SlidingSyncRequest{Extensions: &types.ExtensionRequest{ToDevice: &types.ToDeviceRequest{Enabled: true, Limit: new(-1)}}}, alice.ID, "DEVICE", 0, nil, toPos, nil, nil, nil)
 		require.NoError(t, err)
 		require.Len(t, res.ToDevice.Events, queued)
 		require.Equal(t, latest, pos.SendToDevicePosition)

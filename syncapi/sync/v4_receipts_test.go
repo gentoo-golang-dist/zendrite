@@ -158,7 +158,7 @@ func TestSlidingTypingJoinedRoomsOnly(t *testing.T) {
 	pool := RequestPool{streams: &streams.Streams{TypingStreamProvider: &streams.TypingStreamProvider{EDUCache: cache}}}
 	subscriptions := map[string]bool{"!joined:test": true, "!invited:test": true}
 
-	response, err := pool.processTypingExtension(t.Context(), joinedTo("!joined:test"), "@alice:test", nil, nil, nil, types.StreamingToken{}, nil, subscriptions)
+	response, err := pool.processTypingExtension(t.Context(), joinedTo("!joined:test"), "@alice:test", nil, nil, nil, types.StreamingToken{}, nil, subscriptions, nil)
 	require.NoError(t, err)
 	require.Contains(t, response.Rooms, "!joined:test")
 	require.NotContains(t, response.Rooms, "!invited:test")

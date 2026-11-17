@@ -157,7 +157,7 @@ func (rp *RequestPool) ProcessExtensions(
 		return &types.ExtensionResponse{}, toPos, nil, nil
 	}
 
-	resp := &types.ExtensionResponse{}
+	resp := &types.ExtensionResponse{Format: req.ExtensionFormat}
 	isInitialSync := (fromPos == nil)
 
 	// Track updated positions from extensions (like v3 sync stream providers)
@@ -285,7 +285,7 @@ func (rp *RequestPool) ProcessExtensions(
 
 	// Process typing extension (PostProcess)
 	if req.Extensions.Typing != nil && req.Extensions.Typing.Enabled {
-		typingResp, err := rp.processTypingExtension(ctx, snapshot, userID, req.Extensions.Typing.Lists, req.Extensions.Typing.Rooms, fromPos, toPos, responseLists, roomSubscriptions)
+		typingResp, err := rp.processTypingExtension(ctx, snapshot, userID, req.Extensions.Typing.Lists, req.Extensions.Typing.Rooms, fromPos, toPos, responseLists, roomSubscriptions, responseRooms)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, toPos, nil, ctx.Err()
@@ -440,10 +440,11 @@ func (rp *RequestPool) processToDeviceExtension(
 	}
 
 	// Apply limit (default 100 as per spec). Synapse accepts a limit of 0,
-	// and a negative one must not break the request either.
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 100
+	// and a negative one must not break the request either; /v4/sync has
+	// rejected both already (MSC4538).
+	limit := 100
+	if req.Limit != nil && *req.Limit > 0 {
+		limit = *req.Limit
 	}
 
 	// Truncate events if over limit. next_batch then names the last message
@@ -598,6 +599,12 @@ func (rp *RequestPool) processE2EEExtension(
 // per-room account_data tracking, independent of the "events" stream used
 // for the timeline.
 const accountDataStream = "account_data"
+
+// globalAccountDataScope is the room ID under which the account_data stream
+// state tracks global account data, which has no room. The connection has
+// never sent global account data while it has no state there, so enabling
+// the extension partway through a connection sends all of it (MSC4548).
+const globalAccountDataScope = ""
 
 // accountDataQueryLimit caps a single account data range query. A result that
 // hits it is truncated to the OLDEST rows, since the query orders by id ASC,
@@ -768,6 +775,10 @@ func (rp *RequestPool) processAccountDataExtension(
 	// served by the base query below, which is also the only query global
 	// account data is taken from: widening a single shared query to the oldest
 	// floor would re-deliver every relevant room's full history along with it.
+	//
+	// Global account data is tracked the same way, under
+	// globalAccountDataScope, so that it is all sent the first time the
+	// extension is enabled on a connection, not only what changed since pos.
 	gapFloors := make(map[types.StreamPosition][]string)
 	if canPersist {
 		for roomID := range relevantRoomIDs {
@@ -776,6 +787,9 @@ func (rp *RequestPool) processAccountDataExtension(
 				continue
 			}
 			gapFloors[floor] = append(gapFloors[floor], roomID)
+		}
+		if floor := accountDataFloorForRoom(connState, globalAccountDataScope, from); floor < from {
+			gapFloors[floor] = append(gapFloors[floor], globalAccountDataScope)
 		}
 	}
 
@@ -809,9 +823,21 @@ func (rp *RequestPool) processAccountDataExtension(
 	// covers the rooms that kept up; gap rooms start at their own floor, which
 	// is where they stay if their query fails, so a failure re-tries the gap
 	// next time instead of skipping it.
-	roomPositions := make(map[string]types.StreamPosition, len(relevantRoomIDs))
+	roomPositions := make(map[string]types.StreamPosition, len(relevantRoomIDs)+1)
 	for roomID := range relevantRoomIDs {
 		roomPositions[roomID] = lastPos
+	}
+	roomPositions[globalAccountDataScope] = lastPos
+	// globalFrom is where global account data was read from, which is below
+	// from when the connection has not sent it before.
+	globalFrom := from
+	// changedGlobal are the global types that changed after from, which the
+	// base query read. Those deleted since are sent with empty content even
+	// when all global account data is sent from globalFrom 0, as for a
+	// connection whose positions predate tracking global account data.
+	changedGlobal := make(map[string]bool, len(dataTypes[globalAccountDataScope]))
+	for _, dataType := range dataTypes[globalAccountDataScope] {
+		changedGlobal[dataType] = true
 	}
 	for floor, rooms := range gapFloors {
 		for _, roomID := range rooms {
@@ -834,6 +860,9 @@ func (rp *RequestPool) processAccountDataExtension(
 				dataTypes[roomID] = types
 			}
 			roomPositions[roomID] = gapLastPos
+			if roomID == globalAccountDataScope {
+				globalFrom = floor
+			}
 		}
 	}
 
@@ -873,9 +902,10 @@ func (rp *RequestPool) processAccountDataExtension(
 			if roomID == "" {
 				// Global account data. An entry that changed in range but no
 				// longer exists was deleted; incremental responses carry it
-				// with empty content, as Synapse does (MSC3391).
+				// with empty content, as Synapse does (MSC3391). Responses
+				// that send all global account data leave it out instead.
 				globalData, ok := dataRes.GlobalAccountData[dataType]
-				if !ok && from > 0 {
+				if !ok && (globalFrom > 0 || changedGlobal[dataType]) && from > 0 {
 					globalData, ok = []byte("{}"), true
 				}
 				if ok {
@@ -1117,6 +1147,7 @@ func (rp *RequestPool) processTypingExtension(
 	_ types.StreamingToken, // unused - typing uses fromPos only
 	actualLists map[string]types.SlidingList, // Actual lists in response
 	actualRoomSubscriptions map[string]bool, // Actual room subscriptions from request
+	responseRooms map[string]types.SlidingRoomData, // Rooms in the response, which get their current typing state
 ) (*types.TypingResponse, error) {
 	// Determine which rooms to process using unified helper (MSC3959/MSC3960)
 	relevantRoomIDs := findRelevantRoomIDsForExtension(
@@ -1157,9 +1188,19 @@ func (rp *RequestPool) processTypingExtension(
 		Rooms: make(map[string]synctypes.ClientEvent),
 	}
 
-	// Check each room for typing updates
+	// Check each room for typing updates. A room the response sends may have
+	// just entered scope, as rooms entering a list's range do, and must then
+	// carry its current typing state even if it did not change since pos
+	// (MSC4508). Typing is latest state, so sending it again for a room that
+	// was in scope already does no harm.
 	for _, roomID := range roomsToCheck {
 		users, updated := typingProvider.EDUCache.GetTypingUsersIfUpdatedAfter(roomID, int64(from))
+		if _, sent := responseRooms[roomID]; sent && !updated {
+			// Any typing the cache knows of for the room, including that
+			// nobody types any more, which a client that saw someone typing
+			// before the room left scope needs.
+			users, updated = typingProvider.EDUCache.GetTypingUsersIfUpdatedAfter(roomID, 0)
+		}
 		if !updated {
 			continue // No typing updates for this room
 		}

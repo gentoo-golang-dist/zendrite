@@ -55,6 +55,14 @@ func TestVersions(t *testing.T) {
 		"org.matrix.msc3881":                             true,
 		"com.beeper.msc4446":                             true,
 		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,
+		"org.matrix.msc4508":                             true,
+		"org.matrix.msc4508.stable":                      true,
+		"org.matrix.msc4538":                             true,
+		"org.matrix.msc4538.stable":                      true,
+		"org.matrix.msc4543":                             true,
+		"org.matrix.msc4543.stable":                      true,
+		"org.matrix.msc4548":                             true,
+		"org.matrix.msc4548.stable":                      true,
 		// MSC4445: initial sync timelines in topological order.
 		"org.matrix.msc4445.initial_sync_timeline_topological_ordering": true,
 	}
