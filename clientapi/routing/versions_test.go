@@ -36,6 +36,7 @@ func TestVersions(t *testing.T) {
 		"org.matrix.msc4140":                             false,
 		"org.matrix.msc4140.stable":                      false,
 		"org.matrix.msc4143":                             false,
+		"org.matrix.msc4143.stable":                      true,
 		"org.matrix.msc4262":                             true,
 		"org.matrix.msc4429":                             true,
 		"org.matrix.msc4354":                             true,

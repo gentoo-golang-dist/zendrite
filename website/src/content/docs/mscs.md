@@ -675,7 +675,8 @@ mscs:
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
 | [MSC4140](https://github.com/matrix-org/matrix-spec-proposals/pull/4140) | Cancellable delayed events | N/A (accepted) | Implemented with stable and unstable endpoints, disabled by default: see [delayed events](#delayed-events) |
-| [MSC4143](https://github.com/matrix-org/matrix-spec-proposals/pull/4143) | MatrixRTC transport discovery | N/A | Implemented (configure via [`rtc_foci`](/administration/matrixrtc/)) |
+| [MSC4143](https://github.com/matrix-org/matrix-spec-proposals/pull/4143) | MatrixRTC transport discovery | N/A (accepted) | Implemented with stable and unstable endpoints (configure via [`rtc_foci`](/administration/matrixrtc/)) |
+| [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195) | LiveKit transport for MatrixRTC | N/A (accepted) | Partial: `livekit` transports pointing at lk-jwt-service are advertised; the homeserver `rtc/livekit/get_token` and `delegate_delayed_leave` endpoints are not implemented, so `org.matrix.msc4195.stable` is not advertised |
 
 ### Delayed events
 

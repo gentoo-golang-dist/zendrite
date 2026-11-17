@@ -6,6 +6,7 @@
 package routing
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/setup/config"
+	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // wantFociJSON is the shape clients parse: a flat livekit_service_url on the
@@ -100,7 +102,7 @@ func TestGetRTCTransports(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			response := GetRTCTransports(tc.foci)
+			response := GetRTCTransports(tc.foci, unstableRTCTransportsKey)
 			require.Equal(t, http.StatusOK, response.Code)
 
 			data, err := json.Marshal(response.JSON)
@@ -111,4 +113,69 @@ func TestGetRTCTransports(t *testing.T) {
 			assert.Equal(t, map[string]any{"rtc_transports": tc.want}, got)
 		})
 	}
+}
+
+// rtcGuestUserAPI authenticates every access token as a guest, which both
+// transports endpoints must admit.
+type rtcGuestUserAPI struct {
+	userapi.ClientUserAPI
+}
+
+func (rtcGuestUserAPI) QueryAccessToken(_ context.Context, _ *userapi.QueryAccessTokenRequest, res *userapi.QueryAccessTokenResponse) error {
+	res.Device = &userapi.Device{UserID: "@guest:test", ID: "device", AccountType: userapi.AccountTypeGuest}
+	return nil
+}
+
+// TestRTCTransportsRoutes checks both endpoints through the router: the stable
+// MSC4143 endpoint answers with "transports", also without configured
+// transports, while the unstable one keeps "rtc_transports".
+func TestRTCTransportsRoutes(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		foci []config.RTCFocus
+		path string
+		want map[string]any
+	}{
+		{name: "stable", foci: testFoci(), path: "/_matrix/client/v1/rtc/transports", want: map[string]any{"transports": wantFociJSON}},
+		{name: "stable without transports", path: "/_matrix/client/v1/rtc/transports", want: map[string]any{"transports": []any{}}},
+		{name: "unstable", foci: testFoci(), path: "/_matrix/client/unstable/org.matrix.msc4143/rtc/transports", want: map[string]any{"rtc_transports": wantFociJSON}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg config.Zendrite
+			cfg.Defaults(config.DefaultOpts{})
+			cfg.Global.RTCFoci = tc.foci
+
+			routers := httputil.NewRouters()
+			Setup(routers, &cfg, nil, nil, rtcGuestUserAPI{}, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set("Authorization", "Bearer guest-token")
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	t.Run("requires authentication", func(t *testing.T) {
+		t.Parallel()
+
+		var cfg config.Zendrite
+		cfg.Defaults(config.DefaultOpts{})
+
+		routers := httputil.NewRouters()
+		Setup(routers, &cfg, nil, nil, rtcGuestUserAPI{}, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
+
+		req := httptest.NewRequest(http.MethodGet, "/_matrix/client/v1/rtc/transports", nil)
+		rec := httptest.NewRecorder()
+		routers.Client.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+	})
 }

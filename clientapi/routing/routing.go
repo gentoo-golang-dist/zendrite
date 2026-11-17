@@ -101,6 +101,7 @@ func Setup(
 		"org.matrix.msc4140":            cfg.DelayedEvents.Enabled(),
 		"org.matrix.msc4140.stable":     cfg.DelayedEvents.Enabled(), // MSC4140: stable delayed event endpoints
 		"org.matrix.msc4143":            len(cfg.Matrix.RTCFoci) > 0,
+		"org.matrix.msc4143.stable":     true, // MSC4143: GET /v1/rtc/transports, always served
 		"org.matrix.msc4262":            true, // MSC4262: sliding sync profile updates
 		"org.matrix.msc4429":            true, // MSC4429: profile updates in /sync
 		"org.matrix.msc4354":            true, // MSC4354: sticky events
@@ -569,12 +570,17 @@ func Setup(
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPost, http.MethodOptions)
 
-	// MSC4143: MatrixRTC transports
-	unstableMux.Handle("/org.matrix.msc4143/rtc/transports",
-		httputil.MakeAuthAPI("rtc_transports", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
-			return GetRTCTransports(cfg.Matrix.RTCFoci)
-		}, httputil.WithAllowCallGuests()),
-	).Methods(http.MethodGet, http.MethodOptions)
+	// MSC4143: MatrixRTC transports. Both endpoints are open to guests, as the
+	// MSC asks, and to call guests so that they can join calls by link.
+	rtcTransports := func(key string) http.Handler {
+		return httputil.MakeAuthAPI("rtc_transports", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			return GetRTCTransports(cfg.Matrix.RTCFoci, key)
+		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests())
+	}
+	unstableMux.Handle("/org.matrix.msc4143/rtc/transports", rtcTransports(unstableRTCTransportsKey)).
+		Methods(http.MethodGet, http.MethodOptions)
+	v1mux.Handle("/rtc/transports", rtcTransports(stableRTCTransportsKey)).
+		Methods(http.MethodGet, http.MethodOptions)
 
 	// Room Summary API (Matrix v1.15, previously MSC3266).
 	// Supports both authenticated and unauthenticated requests.

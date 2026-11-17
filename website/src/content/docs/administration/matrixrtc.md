@@ -29,12 +29,13 @@ Zendrite validates the list at startup and refuses to start if a `livekit` focus
 
 ## What clients see
 
-With at least one focus configured, Zendrite exposes it in two places:
+With at least one focus configured, Zendrite exposes it in three places:
 
 - `/.well-known/matrix/client` gains an `org.matrix.msc4143.rtc_foci` key.
-- `GET /_matrix/client/unstable/org.matrix.msc4143/rtc/transports` returns the same list to authenticated clients.
+- `GET /_matrix/client/v1/rtc/transports` returns the same list as `transports` to authenticated clients, guests and call guests.
+- `GET /_matrix/client/unstable/org.matrix.msc4143/rtc/transports` returns it as `rtc_transports` to the same users, for clients that still use the unstable endpoint.
 
-Both use the flat wire format that clients expect:
+All three use the flat wire format that clients expect:
 
 ```json
 "org.matrix.msc4143.rtc_foci": [
@@ -46,7 +47,8 @@ Both use the flat wire format that clients expect:
 ```
 
 `GET /_matrix/client/versions` also advertises `org.matrix.msc4143` in `unstable_features`, but only while at least one focus is configured.
-Without `rtc_foci`, none of the above is served and clients have no focus to discover.
+It always advertises `org.matrix.msc4143.stable`, as Synapse (and so matrix.org) does, since the stable endpoint is always served.
+Without `rtc_foci`, the stable endpoint returns an empty `transports` list, and clients have no focus to discover.
 
 ## Call membership
 
