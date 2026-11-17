@@ -1,6 +1,6 @@
 # Zendrite
 
-<img src="website/public/favicon.svg" width="120" align="right" alt="Zendrite logo">
+<img src="website/public/avatar.png" width="120" align="right" alt="Zendrite logo">
 
 Zendrite is a Matrix homeserver written in Go, designed to be efficient, reliable, and scalable.
 
