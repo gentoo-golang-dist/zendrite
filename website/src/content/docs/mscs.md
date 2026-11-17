@@ -144,6 +144,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC3389](https://github.com/matrix-org/matrix-spec-proposals/pull/3389) | Redaction changes for events with a relation | N/A | Implemented (unstable room version): see [relation redactions](#relation-redactions) |
 | [MSC3874](https://github.com/matrix-org/matrix-spec-proposals/pull/3874) | Filtering threads from the `/messages` endpoint | N/A | Implemented (unstable prefix): see [relation type and label filters](#relation-type-and-label-filters) |
 | [MSC2326](https://github.com/matrix-org/matrix-spec-proposals/pull/2326) | Label based filtering | N/A | Implemented (unstable prefix): see [relation type and label filters](#relation-type-and-label-filters) |
+| [MSC4194](https://github.com/matrix-org/matrix-spec-proposals/pull/4194) | Batch redaction of events by sender within a room | N/A | Opt-in (`msc4194`, unstable prefix): see [MSC4194](#msc4194-redacting-a-users-events) |
 | [MSC4169](https://github.com/matrix-org/matrix-spec-proposals/pull/4169) | Backwards-compatible redaction sending using `/send` | 1.18 | Implemented: `PUT /send/m.room.redaction` copies `content.redacts` to the top level, so it redacts in every room version. Advertised as `com.beeper.msc4169` in `/versions` |
 
 ### Bundled aggregations
@@ -761,6 +762,7 @@ mscs:
     - msc3814
     - msc3861
     - msc4028
+    - msc4194
     - msc4502
 ```
 
@@ -841,6 +843,38 @@ mscs:
 
 See [Delegated authentication (OIDC)](/administration/oidc/) for the full setup guide, the complete configuration reference, client support, account provisioning rules, migration caveats and troubleshooting.
 It is qualified for active-passive HA; [High availability](/administration/oidc/#high-availability) there lists what a takeover loses and how clients recover.
+
+### MSC4194: Redacting a user's events
+
+MSC4194 lets a room moderator, or a moderation bot such as Meowlnir, redact everything one user sent to a room with one request per page, for example after banning a spammer.
+It also reaches events the server soft failed, which clients never received and so cannot redact one by one.
+It is off by default and uses the unstable names.
+
+**What changes when MSC4194 is enabled:**
+
+- `/versions` advertises `org.matrix.msc4194: true` in `unstable_features`. Without the MSC the endpoint answers 404 `M_UNRECOGNIZED`.
+- `POST /_matrix/client/unstable/org.matrix.msc4194/rooms/{roomId}/redact/user/{userId}?limit={limit}` sends an `m.room.redaction` for each of the user's events in the room, newest first, as the requester. The optional body `{"reason": "..."}` becomes the reason of each redaction.
+- It answers with how many events it redacted and whether any are left:
+
+  ```json
+  {"is_more_events": true, "redacted_events": {"total": 25, "soft_failed": 3}}
+  ```
+
+  Events that are already redacted are skipped and not counted, so a client calls again while `is_more_events` is `true`, and each call makes progress.
+- `limit` defaults to 25. A larger value is capped at 100, so the server may redact fewer events than asked for while `is_more_events` is `true`, as the MSC allows. A `limit` that is not a positive integer is 400 `M_INVALID_PARAM`.
+- The requester must be joined to the room. Redacting another user's events needs the room's redact power level, as `/redact` does; a user may always redact their own, also while suspended. Otherwise the answer is 403 `M_FORBIDDEN`, or `M_USER_SUSPENDED` for a suspended user redacting someone else's events.
+- Create events and redactions are not redacted. Every other event of the user is, state events such as their membership included, whose redaction removes for example the display name and avatar it carried.
+- A request counts once against the client rate limit, however many events it redacts.
+
+Zendrite only finds the events it has stored, which are those since this server joined the room and the history it has fetched since.
+It does not apply history visibility: a moderator can redact events from before they joined.
+Zendrite does not record soft failure, so `soft_failed` counts the redacted events that were stored with state but never delivered to clients as new events: soft-failed events, and also older history fetched by backfill.
+The room's events have no index by sender, so a request reads the room's unredacted events from the newest down until it has found enough of the user's; in a very large room, a user whose last event is old takes longer to find.
+
+MSC4194 is qualified for active-passive HA.
+Each redaction is a roomserver write to the global database, and nothing is kept in memory between requests.
+When the owner changes during a request, the redactions already made stay, and the client's next request carries on from the newest unredacted event.
+If the owner made a redaction but its answer was lost, the retried request may redact a few of the events once more; that is harmless.
 
 ### MSC4502: Room member queries
 

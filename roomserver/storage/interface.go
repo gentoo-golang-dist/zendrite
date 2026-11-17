@@ -40,6 +40,10 @@ type Database interface {
 	// ExpireRedactedContent forgets the content of events redacted longer
 	// ago than the retention period.
 	ExpireRedactedContent(ctx context.Context) (int64, error)
+	// UnredactedEventsBySender returns up to limit events of the room sent
+	// by senderID that no validated redaction covers, newest first
+	// (MSC4194).
+	UnredactedEventsBySender(ctx context.Context, roomNID types.RoomNID, senderID spec.SenderID, limit int) ([]types.SenderEvent, error)
 	// Do we support processing input events for more than one room at a time?
 	SupportsConcurrentRoomInputs() bool
 	AssignRoomNID(ctx context.Context, roomID spec.RoomID, roomVersion gomatrixserverlib.RoomVersion) (roomNID types.RoomNID, err error)

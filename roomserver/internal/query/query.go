@@ -685,6 +685,15 @@ func (r *Queryer) QueryUnredactedEvent(ctx context.Context, roomID spec.RoomID, 
 	return &types.HeaderedEvent{PDU: event}, retention, nil
 }
 
+// QueryUnredactedEventsBySender implements api.ClientRoomserverAPI.
+func (r *Queryer) QueryUnredactedEventsBySender(ctx context.Context, roomID spec.RoomID, senderID spec.SenderID, limit int) ([]types.SenderEvent, error) {
+	roomInfo, err := r.DB.RoomInfo(ctx, roomID.String())
+	if err != nil || roomInfo == nil {
+		return nil, err
+	}
+	return r.DB.UnredactedEventsBySender(ctx, roomInfo.RoomNID, senderID, limit)
+}
+
 // QueryMissingEvents implements api.RoomserverInternalAPI.
 func (r *Queryer) QueryMissingEvents(
 	ctx context.Context,

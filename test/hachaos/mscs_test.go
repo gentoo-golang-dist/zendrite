@@ -19,8 +19,9 @@ import (
 // haMSCs are the experimental MSCs qualified for HA. Every scenario runs with
 // them enabled on the candidates and, except MSC3861, the remote server, so
 // every fault is also a fault for their consumers, tables, federation
-// traffic and, with MSC3861, the authentication of every request.
-var haMSCs = []string{"msc2444", "msc2753", "msc2836", msc3861}
+// traffic, with MSC3861 the authentication of every request, and with
+// MSC4194 a moderator's batch of redactions.
+var haMSCs = []string{"msc2444", "msc2753", "msc2836", msc3861, msc4194}
 
 const (
 	kindMSCReply       = "msc-reply"

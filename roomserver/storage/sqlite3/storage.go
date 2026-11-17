@@ -228,6 +228,10 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 	if err != nil {
 		return err
 	}
+	senderEvents, err := PrepareSenderEventStatements(db)
+	if err != nil {
+		return err
+	}
 	userRoomKeys, err := PrepareUserRoomKeysTable(db)
 	if err != nil {
 		return err
@@ -304,6 +308,7 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 		PublishedTable:          published,
 		GetRoomUpdaterFn:        d.GetRoomUpdater,
 		Purge:                   purge,
+		SenderEvents:            senderEvents,
 		UserRoomKeyTable:        userRoomKeys,
 		ErasedUsersTable:        erasedUsers,
 		ReportedRoomsTable:      reportedRooms,

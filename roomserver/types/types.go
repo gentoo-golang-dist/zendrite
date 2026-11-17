@@ -386,3 +386,12 @@ func (s *DeviceOrServerName) Device() *userapi.Device {
 func (s *DeviceOrServerName) ServerName() *spec.ServerName {
 	return s.serverName
 }
+
+// SenderEvent is an event of a sender that MSC4194 may redact.
+type SenderEvent struct {
+	EventID string
+	// Undelivered is true for an event that has state but was never
+	// delivered to clients as a new event: a soft-failed event, or one
+	// fetched by backfill.
+	Undelivered bool
+}

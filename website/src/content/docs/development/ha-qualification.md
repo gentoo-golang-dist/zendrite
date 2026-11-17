@@ -32,11 +32,12 @@ While a fault is injected, clients keep working the way a careful client does:
 - To-device messages, read receipts, media uploads and downloads, and search run alongside.
 - A user on the remote server writes to the same room, and syncs to receive local messages over federation.
   The remote user also sends to-device messages and read receipts to the local user, which reach the HA server only as EDUs in federation transactions.
-- Every server runs with the HA-qualified MSCs `msc2444`, `msc2753` and `msc2836` enabled, and the HA candidates also with `msc3861`; `HACHAOS_MSCS=none` turns them off.
+- Every server runs with the HA-qualified MSCs `msc2444`, `msc2753`, `msc2836` and `msc4194` enabled, and the HA candidates also with `msc3861`; `HACHAOS_MSCS=none` turns them off.
   With `msc3861`, the candidates delegate authentication to a mock MAS in the harness, and the HA server's users get their tokens from it instead of registering.
   An MSC probe sends thread replies into world-readable room version 11 and 12 rooms, which a local user peeks into via `/sync` and a remote user peeks into over federation.
   The local user also peeks into a room on the remote server, in which the remote user writes.
   An OIDC probe signs new users in, half provisioned through the MAS API first and half on demand by their first request, and rotates signed-in users' tokens.
+  An MSC4194 probe has a local user write into a room of its own, while the room's creator keeps redacting that user's events with the MSC4194 endpoint, two per request, paging while `is_more_events` is true, so faults hit the moderator halfway through a batch.
 
 ## What is checked
 
@@ -47,6 +48,7 @@ After the fault heals, the harness compares what clients were told with what the
 - Every acknowledged write reaches the syncing client with the token it held before the fault, and reaches the remote server.
 - Every acknowledged thread reply is returned by `/event_relationships`, and reaches the local and remote peekers with the tokens they held before the fault.
   Every acknowledged write in the remote room reaches the local peeker.
+- Once the moderator has redacted what is left, every acknowledged message of the MSC4194 probe's user is redacted and the moderator's own message is not; events redacted more than once, by a request retried after its answer was lost, are reported.
 - Every acknowledged OIDC sign-in still authenticates as its user and device, and left exactly one account, subject mapping and device, with the display name MAS provisioned.
 - Every acknowledged to-device message is delivered, the newest acknowledged receipt (or one still in flight when the workload stopped) is visible, media uploaded before the fault is intact, and search finds messages from before and after it.
 - The same holds for the remote user's to-device messages and receipts, which arrive over federation.

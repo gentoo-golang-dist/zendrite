@@ -305,6 +305,10 @@ type ClientRoomserverAPI interface {
 
 	// QueryServerJoinedToRoom tells whether any user of a server is joined to a room.
 	QueryServerJoinedToRoom(ctx context.Context, req *QueryServerJoinedToRoomRequest, res *QueryServerJoinedToRoomResponse) error
+	// QueryUnredactedEventsBySender returns up to limit events of the room
+	// sent by senderID that no validated redaction covers, newest first,
+	// soft-failed events included (MSC4194). An unknown room has none.
+	QueryUnredactedEventsBySender(ctx context.Context, roomID spec.RoomID, senderID spec.SenderID, limit int) ([]types.SenderEvent, error)
 
 	QueryMembershipForUser(ctx context.Context, req *QueryMembershipForUserRequest, res *QueryMembershipForUserResponse) error
 	QueryMembershipsForRoom(ctx context.Context, req *QueryMembershipsForRoomRequest, res *QueryMembershipsForRoomResponse) error

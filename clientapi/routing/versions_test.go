@@ -82,6 +82,11 @@ func TestVersions(t *testing.T) {
 			features: map[string]bool{"org.matrix.msc4028": true},
 		},
 		{
+			name:     "MSC4194 redacting a user's events",
+			mscs:     []string{"msc4194"},
+			features: map[string]bool{"org.matrix.msc4194": true},
+		},
+		{
 			name:     "MSC4502 room member queries",
 			mscs:     []string{"msc4502"},
 			features: map[string]bool{"io.element.msc4502": true},

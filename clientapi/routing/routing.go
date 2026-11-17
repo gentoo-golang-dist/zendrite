@@ -147,6 +147,11 @@ func Setup(
 	// MSC4502: like Synapse, the flag is always present and tells whether
 	// GET /rooms/{roomId}/is_joined is served.
 	unstableFeatures["io.element.msc4502"] = mscCfg.Enabled("msc4502")
+	// MSC4194: redacting a user's events in a room. Meowlnir checks the flag
+	// before using the endpoint.
+	if mscCfg.Enabled("msc4194") {
+		unstableFeatures["org.matrix.msc4194"] = true
+	}
 
 	// singleflight protects /join endpoints from being invoked
 	// multiple times from the same user and room, otherwise
@@ -616,6 +621,24 @@ func Setup(
 				return GetRoomIsJoined(req, device, vars["roomID"], cfg, rsAPI)
 			}),
 		).Methods(http.MethodGet, http.MethodOptions)
+	}
+
+	// MSC4194: redacting a user's events in a room, only registered when
+	// the MSC is enabled. A request is rate limited once, however many
+	// events it redacts, as the MSC asks.
+	if mscCfg.Enabled("msc4194") {
+		unstableMux.Handle("/org.matrix.msc4194/rooms/{roomID}/redact/user/{userID}",
+			httputil.MakeAuthAPI("msc4194_redact_user", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+				if r := rateLimits.Limit(req, device); r != nil {
+					return *r
+				}
+				vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+				if err != nil {
+					return util.ErrorResponse(err)
+				}
+				return RedactUserEvents(req, device, vars["roomID"], vars["userID"], rsAPI)
+			}),
+		).Methods(http.MethodPost, http.MethodOptions)
 	}
 
 	v3mux.Handle("/createRoom",

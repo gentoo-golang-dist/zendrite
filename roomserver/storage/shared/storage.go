@@ -51,8 +51,10 @@ type Database struct {
 	MembershipTable    tables.Membership
 	PublishedTable     tables.Published
 	Purge              tables.Purge
-	UserRoomKeyTable   tables.UserRoomKeys
-	PartialStateTable  tables.PartialState
+	// SenderEvents searches for a sender's events (MSC4194).
+	SenderEvents      tables.SenderEvents
+	UserRoomKeyTable  tables.UserRoomKeys
+	PartialStateTable tables.PartialState
 	// PartialStateEventsTable tracks the events with partial state (MSC3902).
 	PartialStateEventsTable tables.PartialStateEvents
 	// ErasedUsersTable records users erased on deactivation (MSC4025).
@@ -2764,6 +2766,44 @@ func (d *Database) RedactedEventContent(ctx context.Context, roomNID types.RoomN
 		return nil, nil
 	}
 	return d.RedactedContentTable.SelectRedactedContent(ctx, nil, nid.EventNID, d.redactedContentCutoff(time.Now()))
+}
+
+// senderEventCandidatesBatch is how many candidate events
+// UnredactedEventsBySender reads at a time.
+const senderEventCandidatesBatch = 500
+
+// UnredactedEventsBySender implements storage.Database.
+func (d *Database) UnredactedEventsBySender(ctx context.Context, roomNID types.RoomNID, senderID spec.SenderID, limit int) ([]types.SenderEvent, error) {
+	sender := string(senderID)
+	// The database finds events whose JSON contains the sender's ID as it
+	// is encoded there. An ID that JSON may escape is not searched for, so
+	// every event is checked.
+	needle := sender
+	if encoded, err := json.Marshal(sender); err != nil || string(encoded) != `"`+sender+`"` {
+		needle = ""
+	}
+	var result []types.SenderEvent
+	before := types.EventNID(math.MaxInt64)
+	for len(result) < limit {
+		candidates, err := d.SenderEvents.SelectSenderEventCandidates(ctx, nil, roomNID, needle, before, senderEventCandidatesBatch)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range candidates {
+			before = c.EventNID
+			if gjson.GetBytes(c.EventJSON, "sender").Str != sender {
+				continue
+			}
+			result = append(result, types.SenderEvent{EventID: c.EventID, Undelivered: c.Undelivered})
+			if len(result) == limit {
+				break
+			}
+		}
+		if len(candidates) < senderEventCandidatesBatch {
+			break
+		}
+	}
+	return result, nil
 }
 
 // ExpireRedactedContent implements storage.Database.

@@ -95,53 +95,9 @@ func SendRedaction(
 		return *resErr
 	}
 
-	// create the new event and set all the fields we can
-	proto := gomatrixserverlib.ProtoEvent{
-		SenderID: string(*senderID),
-		RoomID:   roomID,
-		Type:     spec.MRoomRedaction,
-		Redacts:  eventID,
-	}
-
-	// Room version 11 expects the "redacts" field on the
-	// content field, so add it here as well
-	r.Redacts = eventID
-
-	err = proto.SetContent(r)
-	if err != nil {
-		util.GetLogger(req.Context()).WithError(err).Error("proto.SetContent failed")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
-
-	identity, err := rsAPI.SigningIdentityFor(req.Context(), *validRoomID, *deviceUserID)
-	if err != nil {
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
-
-	var queryRes roomserverAPI.QueryLatestEventsAndStateResponse
-	e, err := eventutil.QueryAndBuildEvent(req.Context(), &proto, &identity, time.Now(), rsAPI, &queryRes)
-	if errors.Is(err, eventutil.ErrRoomNoExists{}) {
-		return util.JSONResponse{
-			Code: http.StatusNotFound,
-			JSON: spec.NotFound("Room does not exist"),
-		}
-	}
-	domain := device.UserDomain()
-	if err = roomserverAPI.SendEvents(context.Background(), rsAPI, roomserverAPI.KindNew, []*types.HeaderedEvent{e}, device.UserDomain(), domain, domain, nil, false); err != nil { //nolint:contextcheck
-		if res, ok := roomserverAPI.PolicyServerRejection(err); ok {
-			return res
-		}
-		util.GetLogger(req.Context()).WithError(err).Errorf("failed to SendEvents")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
+	e, resErr := sendRedactionEvent(req.Context(), device, *validRoomID, *senderID, eventID, r, rsAPI)
+	if resErr != nil {
+		return *resErr
 	}
 
 	res := util.JSONResponse{
@@ -157,6 +113,77 @@ func SendRedaction(
 	}
 
 	return res
+}
+
+// sendRedactionEvent builds a redaction of eventID by senderID with the
+// given content and sends it to the roomserver, waiting until the roomserver
+// has stored it.
+func sendRedactionEvent(
+	ctx context.Context, device *userapi.Device, roomID spec.RoomID, senderID spec.SenderID, eventID string,
+	content redactionContent, rsAPI roomserverAPI.ClientRoomserverAPI,
+) (*types.HeaderedEvent, *util.JSONResponse) {
+	// create the new event and set all the fields we can
+	proto := gomatrixserverlib.ProtoEvent{
+		SenderID: string(senderID),
+		RoomID:   roomID.String(),
+		Type:     spec.MRoomRedaction,
+		Redacts:  eventID,
+	}
+
+	// Room version 11 expects the "redacts" field on the
+	// content field, so add it here as well
+	content.Redacts = eventID
+
+	if err := proto.SetContent(content); err != nil {
+		util.GetLogger(ctx).WithError(err).Error("proto.SetContent failed")
+		return nil, &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+
+	deviceUserID, err := spec.NewUserID(device.UserID, true)
+	if err != nil {
+		return nil, &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	identity, err := rsAPI.SigningIdentityFor(ctx, roomID, *deviceUserID)
+	if err != nil {
+		return nil, &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+
+	var queryRes roomserverAPI.QueryLatestEventsAndStateResponse
+	e, err := eventutil.QueryAndBuildEvent(ctx, &proto, &identity, time.Now(), rsAPI, &queryRes)
+	if errors.Is(err, eventutil.ErrRoomNoExists{}) {
+		return nil, &util.JSONResponse{
+			Code: http.StatusNotFound,
+			JSON: spec.NotFound("Room does not exist"),
+		}
+	}
+	if err != nil {
+		util.GetLogger(ctx).WithError(err).Error("eventutil.QueryAndBuildEvent failed")
+		return nil, &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	domain := device.UserDomain()
+	if err = roomserverAPI.SendEvents(context.Background(), rsAPI, roomserverAPI.KindNew, []*types.HeaderedEvent{e}, device.UserDomain(), domain, domain, nil, false); err != nil { //nolint:contextcheck
+		if res, ok := roomserverAPI.PolicyServerRejection(err); ok {
+			return nil, &res
+		}
+		util.GetLogger(ctx).WithError(err).Errorf("failed to SendEvents")
+		return nil, &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	return e, nil
 }
 
 // checkRedactionAllowed reports whether senderID may redact eventID in

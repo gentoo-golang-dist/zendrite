@@ -90,6 +90,26 @@ type Events interface {
 	UpdateEventUnrejected(ctx context.Context, txn *sql.Tx, eventNID types.EventNID) error
 }
 
+// SenderEvents searches for a sender's events (MSC4194).
+type SenderEvents interface {
+	// SelectSenderEventCandidates returns up to limit accepted events of the
+	// room before beforeNID, newest first, whose JSON contains needle and
+	// that no validated redaction covers (MSC4194). Create and redaction
+	// events are left out. The caller checks each event's sender.
+	SelectSenderEventCandidates(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, needle string, beforeNID types.EventNID, limit int) ([]SenderEventCandidate, error)
+}
+
+// SenderEventCandidate is an event that may have been sent by the sender
+// whose events MSC4194 redacts.
+type SenderEventCandidate struct {
+	EventNID  types.EventNID
+	EventID   string
+	EventJSON []byte
+	// Undelivered is true for an event that has state but was never
+	// delivered to clients as a new event.
+	Undelivered bool
+}
+
 // AuthTypeEvent is a stored event of a type that can be an auth event.
 type AuthTypeEvent struct {
 	EventNID         types.EventNID

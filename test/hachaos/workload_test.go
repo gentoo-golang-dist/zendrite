@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -60,6 +61,8 @@ type workload struct {
 	msc *mscProbe
 	// oidc is the delegated authentication probe, when MSC3861 is enabled.
 	oidc *oidcProbe
+	// redact is the MSC4194 probe, when MSC4194 is enabled.
+	redact *redactProbe
 	// setupNotes record setup steps slow enough to report.
 	setupNotes []string
 	// unavailable counts HTTP 503 responses to the local clients.
@@ -177,6 +180,12 @@ func startWorkload(ctx context.Context, e *environment) (*workload, error) {
 	}
 	if e.mas != nil {
 		w.oidc = startOIDCProbe(w) //nolint:contextcheck // Traffic runs on the workload's context.
+	}
+	if slices.Contains(e.settings.mscs, msc4194) {
+		if w.redact, err = startRedactProbe(ctx, w); err != nil {
+			w.halt()
+			return nil, fmt.Errorf("start the MSC4194 probe: %w", err)
+		}
 	}
 	return w, nil
 }

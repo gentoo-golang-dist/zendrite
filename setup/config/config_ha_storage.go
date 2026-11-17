@@ -75,6 +75,12 @@ var haQualifiedMSCs = map[string]struct{}{
 	// cross-signing reset confirmations) is lost on takeover, and every one
 	// of them fails closed: the client retries or starts the flow again.
 	"msc3861": {},
+	// Redacting a user's events in a room. It has no state of its own: each
+	// redaction is a roomserver write to the global database, the request
+	// finds what is left to redact afresh, and redacted events are skipped,
+	// so a client retrying against the successor carries on where the
+	// former owner stopped.
+	"msc4194": {},
 }
 
 func sortedKeys(m map[string]struct{}) []string {

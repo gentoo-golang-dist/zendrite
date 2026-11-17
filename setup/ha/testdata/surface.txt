@@ -611,6 +611,7 @@ index roomserver_events | roomserver_event_id_unique | CREATE UNIQUE INDEX rooms
 index roomserver_events | roomserver_event_state_key_nid_idx | CREATE INDEX roomserver_event_state_key_nid_idx ON public.roomserver_events USING btree (event_state_key_nid)
 index roomserver_events | roomserver_events_memberships_idx | CREATE INDEX roomserver_events_memberships_idx ON public.roomserver_events USING btree (room_nid, event_state_key_nid) WHERE (event_type_nid = 5)
 index roomserver_events | roomserver_events_pkey | CREATE UNIQUE INDEX roomserver_events_pkey ON public.roomserver_events USING btree (event_nid)
+index roomserver_events | roomserver_events_room_nid_idx | CREATE INDEX roomserver_events_room_nid_idx ON public.roomserver_events USING btree (room_nid, event_nid)
 index roomserver_invites | roomserver_invites_active_idx | CREATE INDEX roomserver_invites_active_idx ON public.roomserver_invites USING btree (target_nid, room_nid) WHERE (NOT retired)
 index roomserver_invites | roomserver_invites_pkey | CREATE UNIQUE INDEX roomserver_invites_pkey ON public.roomserver_invites USING btree (invite_event_id)
 index roomserver_membership | roomserver_membership_room_nid_target_nid_key | CREATE UNIQUE INDEX roomserver_membership_room_nid_target_nid_key ON public.roomserver_membership USING btree (room_nid, target_nid)
