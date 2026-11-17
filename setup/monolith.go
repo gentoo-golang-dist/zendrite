@@ -13,6 +13,7 @@ import (
 	appserviceAPI "codefloe.com/pat-s/zendrite/appservice/api"
 	"codefloe.com/pat-s/zendrite/clientapi"
 	"codefloe.com/pat-s/zendrite/clientapi/api"
+	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/federationapi"
 	federationAPI "codefloe.com/pat-s/zendrite/federationapi/api"
 	"codefloe.com/pat-s/zendrite/internal/caching"
@@ -66,6 +67,10 @@ func (m *Monolith) AddAllPublicRoutes(
 	caches *caching.Caches,
 	enableMetrics bool,
 ) (startSending func()) {
+	// Every API authenticates clients through clientapi/auth, so the setting
+	// is made once here for all of them.
+	auth.SetQueryStringAuth(!cfg.ClientAPI.DisableQueryStringAuth)
+
 	userDirectoryProvider := m.ExtUserDirectoryProvider
 	if userDirectoryProvider == nil {
 		userDirectoryProvider = m.UserAPI

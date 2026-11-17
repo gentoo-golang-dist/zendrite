@@ -40,6 +40,14 @@ type ClientAPI struct {
 	// is forbidden either way.
 	GuestsDisabled bool `yaml:"guests_disabled"`
 
+	// DisableQueryStringAuth refuses access tokens in the access_token query
+	// parameter, which spec v1.20 removes (MSC4127); only the Authorization
+	// header is accepted then. Off by default while Zendrite advertises spec
+	// versions that still allow it. The
+	// zendrite_clientapi_query_string_auth_total metric counts requests that
+	// would be refused.
+	DisableQueryStringAuth bool `yaml:"disable_query_string_auth"`
+
 	// Boolean stating whether catpcha registration is enabled
 	// and required
 	RecaptchaEnabled bool `yaml:"enable_registration_captcha"`

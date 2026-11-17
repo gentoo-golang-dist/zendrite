@@ -14,9 +14,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
@@ -48,6 +51,9 @@ func VerifyUserFromRequest(
 ) (*api.Device, *util.JSONResponse) {
 	// Try to find the Application Service user
 	token, err := ExtractAccessToken(req)
+	if RelyOnQueryStringAuth(req) {
+		queryStringAuthRequests.Inc()
+	}
 	if err != nil {
 		return nil, &util.JSONResponse{
 			Code: http.StatusUnauthorized,
@@ -158,12 +164,54 @@ func GenerateAccessToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// queryStringAuthDisabled is client_api.disable_query_string_auth.
+var queryStringAuthDisabled atomic.Bool
+
+// SetQueryStringAuth sets whether access tokens are accepted in the
+// access_token query parameter, which spec v1.20 removes (MSC4127).
+func SetQueryStringAuth(enabled bool) {
+	queryStringAuthDisabled.Store(!enabled)
+}
+
+// QueryStringAuthEnabled reports whether access tokens are accepted in the
+// access_token query parameter.
+func QueryStringAuthEnabled() bool {
+	return !queryStringAuthDisabled.Load()
+}
+
+// queryStringAuthRequests counts authenticated requests that send their
+// access token only in the query string, which
+// client_api.disable_query_string_auth refuses, so that administrators can
+// tell whether turning it on would refuse any clients. It counts in
+// VerifyUserFromRequest, which runs once per request.
+var queryStringAuthRequests = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: "zendrite",
+	Subsystem: "clientapi",
+	Name:      "query_string_auth_total",
+	Help:      "Authenticated requests that sent their access token only in the access_token query parameter (removed in spec v1.20, MSC4127)",
+})
+
+// RelyOnQueryStringAuth reports whether a request sends its access token
+// only in the access_token query parameter, which spec v1.20 removes, rather
+// than in the Authorization header.
+func RelyOnQueryStringAuth(req *http.Request) bool {
+	return req.Header.Get("Authorization") == "" && req.URL.Query().Get("access_token") != ""
+}
+
 // ExtractAccessToken from a request, or return an error detailing what went wrong. The
 // error message MUST be human-readable and comprehensible to the client.
 func ExtractAccessToken(req *http.Request) (string, error) {
 	// cf https://github.com/matrix-org/synapse/blob/v0.19.2/synapse/api/auth.py#L631
 	authBearer := req.Header.Get("Authorization")
 	queryToken := req.URL.Query().Get("access_token")
+	// Without query string authentication, the parameter means nothing, as
+	// in spec v1.20, and only the header counts.
+	if queryStringAuthDisabled.Load() {
+		if authBearer == "" && queryToken != "" {
+			return "", fmt.Errorf("the access_token query parameter is not supported, use the Authorization header")
+		}
+		queryToken = ""
+	}
 	if authBearer != "" && queryToken != "" {
 		return "", fmt.Errorf("mixing Authorization headers and access_token query parameters")
 	}

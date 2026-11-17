@@ -145,7 +145,10 @@ func (r *rendezvous) limitCreate(req *http.Request, device *userapi.Device) *uti
 // authenticated endpoint, as MSC4388 requires, so that a client can tell a
 // token that needs refreshing from a server that refuses it.
 func (r *rendezvous) optionalDevice(req *http.Request) (*userapi.Device, *util.JSONResponse) {
-	if req.Header.Get("Authorization") == "" && req.URL.Query().Get("access_token") == "" {
+	// Without query string authentication, the access_token parameter is
+	// no token at all.
+	queryToken := auth.QueryStringAuthEnabled() && req.URL.Query().Get("access_token") != ""
+	if req.Header.Get("Authorization") == "" && !queryToken {
 		return nil, nil
 	}
 	device, errRes := auth.VerifyUserFromRequest(req, r.userAPI)

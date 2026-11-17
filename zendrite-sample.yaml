@@ -244,6 +244,12 @@ client_api:
   # disabled implicitly by setting 'registration_disabled' above.
   guests_disabled: true
 
+  # Refuses access tokens in the access_token query parameter, which spec v1.20
+  # removes (MSC4127), so that only the Authorization header works. The
+  # zendrite_clientapi_query_string_auth_total metric counts the requests that
+  # still use the parameter.
+  disable_query_string_auth: false
+
   # If set, allows registration by anyone who knows the shared secret, regardless
   # of whether registration is otherwise disabled.
   registration_shared_secret: ''
