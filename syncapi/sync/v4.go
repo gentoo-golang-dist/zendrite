@@ -602,6 +602,15 @@ func (rp *RequestPool) OnIncomingSyncRequestV4(req *http.Request, device *userap
 		}
 	}
 
+	// Delete the to-device messages the client has acknowledged, as v3 sync
+	// does: those up to the extension's since, or without one, up to the
+	// connection position the request carries.
+	if ackPos := toDeviceAckPosition(&v4Req, since); ackPos > 0 {
+		if cleanupErr := rp.db.CleanSendToDeviceUpdates(req.Context(), device.UserID, device.ID, ackPos); cleanupErr != nil { //nolint:contextcheck
+			logrus.WithError(cleanupErr).Warn("Failed to clean up acknowledged send-to-device messages")
+		}
+	}
+
 	// Phase 10: Load previous stream states and room configs for delta computation
 	// IMPORTANT: Only load previous states for incremental syncs (pos is non-empty)
 	// For initial syncs (pos=""), start fresh with no previous state

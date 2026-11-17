@@ -169,7 +169,7 @@ func (rp *RequestPool) ProcessExtensions(
 
 	// Process to_device extension (PreProcess)
 	if req.Extensions.ToDevice != nil && req.Extensions.ToDevice.Enabled {
-		toDeviceResp, err := rp.processToDeviceExtension(ctx, snapshot, userID, deviceID, req.Extensions.ToDevice, fromPos, toPos)
+		toDeviceResp, toDevicePos, err := rp.processToDeviceExtension(ctx, snapshot, userID, deviceID, req.Extensions.ToDevice, fromPos, toPos)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, toPos, nil, ctx.Err()
@@ -178,6 +178,13 @@ func (rp *RequestPool) ProcessExtensions(
 			// Continue anyway - extensions are optional
 		} else {
 			resp.ToDevice = toDeviceResp
+			// A response cut off at limit must not move the connection
+			// position past its last message: clients without since resume
+			// from it, and the next long poll returns at once while
+			// messages remain.
+			if toDevicePos < updatedPos.SendToDevicePosition {
+				updatedPos.SendToDevicePosition = toDevicePos
+			}
 		}
 	}
 
@@ -400,7 +407,7 @@ func (rp *RequestPool) processToDeviceExtension(
 	req *types.ToDeviceRequest,
 	fromPos *types.StreamingToken,
 	toPos types.StreamingToken,
-) (*types.V4ToDeviceResponse, error) {
+) (*types.V4ToDeviceResponse, types.StreamPosition, error) {
 	// Parse the to_device-specific "since" token from request
 	// This is separate from the main sliding sync position
 	var from types.StreamPosition
@@ -429,19 +436,27 @@ func (rp *RequestPool) processToDeviceExtension(
 		ctx, userID, deviceID, from, toPos.SendToDevicePosition,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("SendToDeviceUpdatesForSync failed: %w", err)
+		return nil, 0, fmt.Errorf("SendToDeviceUpdatesForSync failed: %w", err)
 	}
 
-	// Apply limit (default 100 as per spec)
+	// Apply limit (default 100 as per spec). Synapse accepts a limit of 0,
+	// and a negative one must not break the request either.
 	limit := req.Limit
-	if limit == 0 {
+	if limit <= 0 {
 		limit = 100
 	}
 
-	// Truncate events if over limit
-	clientEvents := make([]gomatrixserverlib.SendToDeviceEvent, 0, len(events))
+	// Truncate events if over limit. next_batch then names the last message
+	// returned, not the last one read: the client acknowledges everything up
+	// to next_batch with its next since, so naming a later position would
+	// skip the messages left out, which were never delivered. The connection
+	// position stops there too, for clients that send no since.
+	deliveredPos := toPos.SendToDevicePosition
+	clientEvents := make([]gomatrixserverlib.SendToDeviceEvent, 0, min(len(events), limit))
 	for i, event := range events {
 		if i >= limit {
+			lastPos = events[limit-1].ID
+			deliveredPos = lastPos
 			break
 		}
 		clientEvents = append(clientEvents, event.SendToDeviceEvent)
@@ -453,7 +468,28 @@ func (rp *RequestPool) processToDeviceExtension(
 	return &types.V4ToDeviceResponse{
 		NextBatch: fmt.Sprintf("%d", lastPos),
 		Events:    clientEvents,
-	}, nil
+	}, deliveredPos, nil
+}
+
+// toDeviceAckPosition returns the position up to which the client has
+// acknowledged its to-device messages with this request: the extension's
+// since, or without one, the to-device position of the connection position
+// it sends. It is 0 when the extension is off or nothing is acknowledged.
+func toDeviceAckPosition(req *types.SlidingSyncRequest, since *types.SlidingSyncStreamToken) types.StreamPosition {
+	if req.Extensions == nil || req.Extensions.ToDevice == nil || !req.Extensions.ToDevice.Enabled {
+		return 0
+	}
+	if req.Extensions.ToDevice.Since != "" {
+		pos, err := types.NewStreamPositionFromString(req.Extensions.ToDevice.Since)
+		if err != nil {
+			return 0
+		}
+		return pos
+	}
+	if since != nil {
+		return since.StreamToken.SendToDevicePosition
+	}
+	return 0
 }
 
 // processE2EEExtension handles E2EE device extension (MSC3884)
