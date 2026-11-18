@@ -62,6 +62,9 @@ func (c *Zendrite) VerifyHAStorage(errs *ConfigErrors) {
 // haQualifiedMSCs are the experimental MSCs whose storage, request handling
 // and takeover behavior passed HA qualification. Every other MSC is refused.
 var haQualifiedMSCs = map[string]struct{}{
+	// The retention policy configuration endpoint. It has no state of its
+	// own: each request reports global.retention.
+	"msc1763": {},
 	// Peeking over federation.
 	"msc2444": {},
 	// Peeking via /sync.

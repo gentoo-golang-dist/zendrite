@@ -532,6 +532,9 @@ func generateSendEvent(
 			JSON: spec.InternalServerError{},
 		}
 	}
+	if res := validateRetentionEvent(eventType, stateKey, proto.Content); res != nil {
+		return nil, res
+	}
 	if proto.Type == spec.MRoomCreate && proto.StateKey != nil && *proto.StateKey == "" {
 		return nil, &util.JSONResponse{
 			Code: http.StatusBadRequest,

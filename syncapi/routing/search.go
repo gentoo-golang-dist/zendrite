@@ -174,6 +174,35 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 		}
 	}
 
+	// MSC1763: drop results past their room's retention policy, and their
+	// highlights and share of the count with them. Pagination still moves
+	// past every hit of this page.
+	consumedHits := len(result.Hits)
+	count := int(result.Total)
+	retentionFilter := internal.NewRetentionFilter(snapshot)
+	evs, err = retentionFilter.Drop(ctx, evs)
+	if err != nil {
+		logrus.WithError(err).Error("failed to apply retention policies")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	if retentionFilter != nil {
+		served := make(map[string]struct{}, len(evs))
+		for _, ev := range evs {
+			served[ev.EventID()] = struct{}{}
+		}
+		keptHits := result.Hits[:0:0]
+		for _, hit := range result.Hits {
+			if _, ok := served[hit.ID]; ok {
+				keptHits = append(keptHits, hit)
+			}
+		}
+		count -= len(result.Hits) - len(keptHits)
+		result.Hits = keptHits
+	}
+
 	groups := make(map[string]RoomResult)
 	knownUsersProfiles := make(map[string]ProfileInfoResponse)
 
@@ -203,6 +232,16 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 		eventsBefore, eventsAfter, startToken, endToken, err := contextWindow(ctx, snapshot, event.RoomID().String(), event.EventID(), roomFilter, eventContext.BeforeLimit, eventContext.AfterLimit)
 		if err != nil {
 			logrus.WithError(err).Error("failed to get context events")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
+		}
+		if eventsBefore, err = retentionFilter.Drop(ctx, eventsBefore); err == nil {
+			eventsAfter, err = retentionFilter.Drop(ctx, eventsAfter)
+		}
+		if err != nil {
+			logrus.WithError(err).Error("failed to apply retention policies")
 			return util.JSONResponse{
 				Code: http.StatusInternalServerError,
 				JSON: spec.InternalServerError{},
@@ -296,10 +335,10 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 	}
 
 	var nextBatchResult *string = nil
-	if int(result.Total) > nextBatch+len(results) {
-		nb := strconv.Itoa(len(results) + nextBatch)
+	if int(result.Total) > nextBatch+consumedHits {
+		nb := strconv.Itoa(consumedHits + nextBatch)
 		nextBatchResult = &nb
-	} else if int(result.Total) == nextBatch+len(results) {
+	} else if int(result.Total) == nextBatch+consumedHits {
 		// Sytest expects a next_batch even if we don't actually have any more results
 		nb := ""
 		nextBatchResult = &nb
@@ -308,7 +347,7 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 	res := SearchResponse{
 		SearchCategories: SearchCategoriesResponse{
 			RoomEvents: RoomEventsResponse{
-				Count:      int(result.Total),
+				Count:      count,
 				Groups:     Groups{RoomID: groups},
 				Results:    results,
 				NextBatch:  nextBatchResult,
@@ -327,7 +366,6 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 	}
 }
 
-// contextEvents returns the events around a given eventID.
 type EventContext struct {
 	AfterLimit     int  `json:"after_limit,omitempty"`
 	BeforeLimit    int  `json:"before_limit,omitempty"`

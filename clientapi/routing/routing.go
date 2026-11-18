@@ -711,6 +711,16 @@ func Setup(
 		).Methods(http.MethodPost, http.MethodOptions)
 	}
 
+	// MSC1763: the server's retention policies. As in Synapse, only
+	// registered when both the MSC and retention policies are enabled.
+	if mscCfg.Enabled("msc1763") && zendriteCfg.Global.Retention.Enabled {
+		unstableMux.Handle("/org.matrix.msc1763/retention/configuration",
+			httputil.MakeAuthAPI("msc1763_retention_configuration", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+				return GetRetentionConfiguration(&zendriteCfg.Global.Retention)
+			}),
+		).Methods(http.MethodGet, http.MethodOptions)
+	}
+
 	// MSC4194: redacting a user's events in a room, only registered when
 	// the MSC is enabled. A request is rate limited once, however many
 	// events it redacts, as the MSC asks.

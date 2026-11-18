@@ -126,6 +126,17 @@ func ApplyHistoryVisibilityFilter(
 	}
 	start := time.Now()
 
+	// MSC1763: events past the room's retention policy are no longer served,
+	// even before a purge job deletes them. Dropping them first spares the
+	// visibility lookups below.
+	events, err := NewRetentionFilter(syncDB).Drop(ctx, events)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		return events, nil
+	}
+
 	// try to get the current membership of the user
 	membershipCurrent, _, err := syncDB.SelectMembershipForUser(ctx, events[0].RoomID().String(), userID.String(), math.MaxInt64)
 	if err != nil {

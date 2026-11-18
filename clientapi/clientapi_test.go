@@ -1244,6 +1244,74 @@ func TestMSC3848Errcodes(t *testing.T) {
 	})
 }
 
+// MSC1763: malformed m.room.retention events are refused, and the
+// configuration endpoint reports the server's policy.
+func TestRetentionPolicy(t *testing.T) {
+	alice := test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.ClientAPI.RateLimiting.Enabled = false
+		cfg.MSCs.MSCs = []string{"msc1763"}
+		cfg.Global.Retention = config.Retention{
+			Enabled:            true,
+			DefaultPolicy:      config.RetentionPolicy{MaxLifetime: 365 * 24 * time.Hour},
+			AllowedLifetimeMin: 24 * time.Hour,
+		}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+		asPI := appservice.NewInternalAPI(processCtx, cfg, natsInstance, userAPI, rsAPI)
+		AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, asPI, nil, nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+		accessTokens := map[*test.User]userDevice{alice: {}}
+		createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+		do := func(method, path, body string) *httptest.ResponseRecorder {
+			t.Helper()
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+accessTokens[alice].accessToken)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			return rec
+		}
+
+		rec := do(http.MethodGet, "/_matrix/client/unstable/org.matrix.msc1763/retention/configuration", "")
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.JSONEq(t, `{"policies":{"*":{"max_lifetime":31536000000}},"limits":{"max_lifetime":{"min":86400000}}}`, rec.Body.String())
+
+		for _, content := range []string{
+			`{"max_lifetime":"1d"}`,
+			`{"max_lifetime":1.5}`,
+			`{"max_lifetime":-1}`,
+			`{"min_lifetime":true}`,
+			`{"min_lifetime":2000,"max_lifetime":1000}`,
+		} {
+			rec = do(http.MethodPost, "/_matrix/client/v3/createRoom", `{"initial_state":[{"type":"m.room.retention","state_key":"","content":`+content+`}]}`)
+			assert.Equal(t, http.StatusBadRequest, rec.Code, "createRoom with %s: %s", content, rec.Body.String())
+			assert.Equal(t, "M_BAD_JSON", gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
+		}
+
+		rec = do(http.MethodPost, "/_matrix/client/v3/createRoom", `{"initial_state":[{"type":"m.room.retention","state_key":"","content":{"max_lifetime":86400000}}]}`)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		roomID := gjson.GetBytes(rec.Body.Bytes(), "room_id").Str
+
+		for _, content := range []string{`{"max_lifetime":"1d"}`, `{"min_lifetime":2000,"max_lifetime":1000}`} {
+			rec = do(http.MethodPut, "/_matrix/client/v3/rooms/"+roomID+"/state/m.room.retention/", content)
+			assert.Equal(t, http.StatusBadRequest, rec.Code, "state %s: %s", content, rec.Body.String())
+			assert.Equal(t, "M_BAD_JSON", gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
+		}
+		for _, content := range []string{`{"min_lifetime":1000,"max_lifetime":2000}`, `{"max_lifetime":null}`, `{}`} {
+			rec = do(http.MethodPut, "/_matrix/client/v3/rooms/"+roomID+"/state/m.room.retention/", content)
+			assert.Equal(t, http.StatusOK, rec.Code, "state %s: %s", content, rec.Body.String())
+		}
+	})
+}
+
 func TestTyping(t *testing.T) {
 	alice := test.NewUser(t)
 	room := test.NewRoom(t, alice)

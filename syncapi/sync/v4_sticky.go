@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
+	"codefloe.com/pat-s/zendrite/syncapi/internal"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
@@ -107,6 +108,11 @@ func (rp *RequestPool) processStickyEventsExtension(
 	events, err := snapshot.Events(ctx, eventIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load events: %w", err)
+	}
+	// MSC1763: an event past its room's retention policy is not served,
+	// sticky or not.
+	if events, err = internal.DropExpiredEvents(ctx, snapshot, events); err != nil {
+		return nil, fmt.Errorf("apply retention policies: %w", err)
 	}
 	eventsByID := make(map[string]*rstypes.HeaderedEvent, len(events))
 	for _, ev := range events {

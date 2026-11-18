@@ -25,6 +25,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
+	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/tables"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
@@ -57,6 +58,21 @@ type Database struct {
 	StickyEvents            tables.StickyEvents
 	EventLabels             tables.EventLabels
 	ProfileUpdates          tables.ProfileUpdates
+
+	// retention is the server's retention configuration (MSC1763), nil
+	// until SetRetentionConfig.
+	retention *config.Retention
+}
+
+// SetRetentionConfig sets the retention configuration (MSC1763) that the
+// history visibility filters read from this database's transactions.
+func (d *Database) SetRetentionConfig(cfg *config.Retention) {
+	d.retention = cfg
+}
+
+// RetentionConfig returns the retention configuration, nil if unset.
+func (d *Database) RetentionConfig() *config.Retention {
+	return d.retention
 }
 
 func (d *Database) NewDatabaseSnapshot(ctx context.Context) (*DatabaseTransaction, error) {

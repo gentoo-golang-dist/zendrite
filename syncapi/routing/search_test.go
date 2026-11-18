@@ -7,16 +7,20 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/internal/fulltext"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	rsapi "codefloe.com/pat-s/zendrite/roomserver/api"
 	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
+	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
@@ -38,6 +42,11 @@ func TestSearch(t *testing.T) {
 	room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "context before"})
 	room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "hello world3!"})
 	room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "context after"})
+
+	// MSC1763: a match older than the retention policy of the last subtest.
+	// CreateEvent leaves the room as it is, for the parallel subtests.
+	expiredEvent := room.CreateEvent(t, alice, "m.room.message", map[string]any{"body": "hello ancient"}, test.WithTimestamp(time.Now().Add(-2*time.Hour)))
+	expiredEvent.EventID()
 
 	// Pre-compute event IDs so the lazy cache in eventV2.EventID() is populated
 	// before the parallel sqlite/postgres subtests race on the shared events.
@@ -305,6 +314,40 @@ func TestSearch(t *testing.T) {
 			resp, ok := res.JSON.(SearchResponse)
 			assert.True(t, ok)
 			assert.Equal(t, 1, resp.SearchCategories.RoomEvents.Count)
+		})
+
+		// MSC1763: an expired match is left out of the results, highlights
+		// and count, and pagination still moves past it.
+		t.Run("expired matches are left out", func(t *testing.T) {
+			oldCopy := *expiredEvent
+			sp, writeErr := db.WriteEvent(processCtx.Context(), &oldCopy, nil, nil, nil, nil, false, gomatrixserverlib.HistoryVisibilityShared)
+			require.NoError(t, writeErr)
+			require.NoError(t, fts.Index(fulltext.IndexElement{
+				EventID: oldCopy.EventID(), RoomID: room.ID, Content: string(oldCopy.Content()), ContentType: oldCopy.Type(), StreamPosition: int64(sp),
+			}))
+			db.SetRetentionConfig(&config.Retention{Enabled: true, DefaultPolicy: config.RetentionPolicy{MaxLifetime: time.Hour}})
+			defer db.SetRetentionConfig(nil)
+
+			search := func(term string) RoomEventsResponse {
+				body, encodeErr := json.Marshal(SearchRequest{SearchCategories: SearchCategories{RoomEvents: RoomEvents{SearchTerm: term}}})
+				require.NoError(t, encodeErr)
+				res := Search(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), &aliceDevice, db, fts, nil, &FakeSyncRoomserverAPI{})
+				require.Equal(t, http.StatusOK, res.Code)
+				resp, ok := res.JSON.(SearchResponse)
+				require.True(t, ok)
+				return resp.SearchCategories.RoomEvents
+			}
+			ancient := search("ancient")
+			assert.Equal(t, 0, ancient.Count)
+			assert.Empty(t, ancient.Results)
+			assert.NotContains(t, ancient.Highlights, "ancient")
+			require.NotNil(t, ancient.NextBatch)
+			assert.Empty(t, *ancient.NextBatch, "the next page must not repeat this one")
+
+			hello := search("hello")
+			assert.Equal(t, 1, hello.Count)
+			require.Len(t, hello.Results, 1)
+			assert.Equal(t, "hello world3!", gjson.GetBytes(hello.Results[0].Result.Content, "body").Str)
 		})
 	})
 }

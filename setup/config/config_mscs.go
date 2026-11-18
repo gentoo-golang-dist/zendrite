@@ -13,6 +13,7 @@ type MSCs struct {
 	Matrix *Global `yaml:"-"`
 
 	// The MSCs to enable. Supported MSCs include:
+	// 'msc1763': The retention policy configuration endpoint, with global.retention enabled - https://github.com/matrix-org/matrix-spec-proposals/pull/1763
 	// 'msc2444': Peeking over federation - https://github.com/matrix-org/matrix-doc/pull/2444
 	// 'msc2753': Peeking via /sync - https://github.com/matrix-org/matrix-doc/pull/2753
 	// 'msc2836': Threading - https://github.com/matrix-org/matrix-doc/pull/2836

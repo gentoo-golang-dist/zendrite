@@ -15,6 +15,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
+	"codefloe.com/pat-s/zendrite/syncapi/internal"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
@@ -158,6 +159,11 @@ func (p *StickyEventsStreamProvider) addStickyEvents(
 	}
 	events, err := snapshot.Events(ctx, eventIDs)
 	if err != nil {
+		return err
+	}
+	// MSC1763: an event past its room's retention policy is not served,
+	// sticky or not.
+	if events, err = internal.DropExpiredEvents(ctx, snapshot, events); err != nil {
 		return err
 	}
 	eventsByID := make(map[string]*rstypes.HeaderedEvent, len(events))

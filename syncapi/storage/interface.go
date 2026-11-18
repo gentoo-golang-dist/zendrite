@@ -17,6 +17,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
+	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/shared"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/tables"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
@@ -172,6 +173,9 @@ type Database interface {
 	SlidingSync
 
 	NewDatabaseSnapshot(ctx context.Context) (*shared.DatabaseTransaction, error)
+	// SetRetentionConfig sets the retention configuration (MSC1763) that
+	// the history visibility filters apply.
+	SetRetentionConfig(cfg *config.Retention)
 	NewDatabaseTransaction(ctx context.Context) (*shared.DatabaseTransaction, error)
 
 	// Events lookups a list of event by their event ID.

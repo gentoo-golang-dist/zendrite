@@ -109,6 +109,9 @@ type Global struct {
 
 	// Configuration for the caches.
 	Cache Cache `yaml:"cache"`
+
+	// Message retention policies (MSC1763).
+	Retention Retention `yaml:"retention"`
 }
 
 func (c *Global) Defaults(opts DefaultOpts) {
@@ -150,6 +153,8 @@ func (c *Global) Verify(configErrs *ConfigErrors) {
 	for _, v := range c.VirtualHosts {
 		v.Verify(configErrs)
 	}
+
+	c.Retention.Verify(configErrs)
 
 	for i, focus := range c.RTCFoci {
 		if focus.Type == "" {

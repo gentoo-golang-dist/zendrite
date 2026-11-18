@@ -55,6 +55,8 @@ func AddPublicRoutes(
 		logrus.WithError(err).Panicf("failed to connect to sync db")
 	}
 
+	syncDB.SetRetentionConfig(&zendriteCfg.Global.Retention)
+
 	// Start the sliding sync metadata worker for Phase 12 optimization
 	metadataWorker := internal.NewSlidingSyncMetadataWorker(processContext, syncDB)
 	if err = metadataWorker.Start(); err != nil {

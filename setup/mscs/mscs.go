@@ -52,6 +52,7 @@ func EnableMSC(
 		return msc2836.Enable(processCtx, cfg, cm, js, routers, monolith.RoomserverAPI, monolith.FederationAPI, monolith.UserAPI, monolith.KeyRing)
 	case "msc3814":
 		return msc3814.Enable(cfg, cm, routers, monolith.UserAPI)
+	case "msc1763": // enabled inside clientapi routing
 	case "msc2444": // enabled inside federationapi
 	case "msc2753": // enabled inside clientapi
 	case "msc3664": // enabled inside the user API push rules and clientapi capabilities

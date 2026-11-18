@@ -153,6 +153,21 @@ global:
     enabled: false
     endpoint: https://panopticon.matrix.org/push
 
+  # Message retention policies (MSC1763). Once enabled, the non-state events of
+  # a room are no longer served to clients after the max_lifetime of the room's
+  # m.room.retention event, or of the default policy for rooms without one.
+  # Lifetimes are Go durations, such as 24h or 8760h.
+  retention:
+    enabled: false
+    # Applies to rooms without an m.room.retention event, or whose event sets
+    # no max_lifetime. min_lifetime is only reported to clients.
+    # default_policy:
+    #   min_lifetime: 24h
+    #   max_lifetime: 8760h
+    # Bring the max_lifetime of every room into this range.
+    # allowed_lifetime_min: 24h
+    # allowed_lifetime_max: 8760h
+
   # Server notices allows server admins to send messages to all users on the server.
   server_notices:
     enabled: false
@@ -546,6 +561,7 @@ media_api:
 # Configuration for enabling experimental MSCs on this homeserver.
 mscs:
   mscs:
+  #  - msc1763  # (Retention policy configuration endpoint, needs global.retention.enabled, see https://github.com/matrix-org/matrix-spec-proposals/pull/1763)
   #  - msc2836  # (Threading, see https://github.com/matrix-org/matrix-doc/pull/2836)
   #  - msc3664  # (Push rules for related events, such as replies, see https://github.com/matrix-org/matrix-spec-proposals/pull/3664)
   #  - msc3814  # (Dehydrated devices v2, see https://github.com/matrix-org/matrix-spec-proposals/pull/3814)

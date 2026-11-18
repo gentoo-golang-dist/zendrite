@@ -23,6 +23,7 @@ import (
 
 	appserviceAPI "codefloe.com/pat-s/zendrite/appservice/api"
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
+	"codefloe.com/pat-s/zendrite/internal/retention"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	roomserverVersion "codefloe.com/pat-s/zendrite/roomserver/version"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -87,6 +88,22 @@ func (r createRoomRequest) Validate() *util.JSONResponse {
 		return &util.JSONResponse{
 			Code: http.StatusRequestEntityTooLarge,
 			JSON: spec.TooLarge("uk.timedout.msc4491.invite_reason is too long"),
+		}
+	}
+	for _, ev := range r.InitialState {
+		if ev.Type != retention.EventType {
+			continue
+		}
+		content, err := json.Marshal(ev.Content)
+		if err != nil {
+			return &util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.BadJSON("malformed initial_state"),
+			}
+		}
+		stateKey := ev.StateKey
+		if res := validateRetentionEvent(ev.Type, &stateKey, content); res != nil {
+			return res
 		}
 	}
 	switch r.Preset {

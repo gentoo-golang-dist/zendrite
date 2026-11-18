@@ -336,7 +336,39 @@ Read receipts (`m.read`, `m.read.private`) still replace the previous receipt ev
 | [MSC2666](https://github.com/matrix-org/matrix-spec-proposals/pull/2666) | Mutual rooms | 1.19 | Implemented: `GET /_matrix/client/v1/mutual_rooms` lists the rooms the caller shares with a user, with signed pagination tokens. Also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable` |
 | [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
 | [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
+| [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): expired events are no longer served; they are not purged yet. See [message retention policies](#message-retention-policies) |
 | [MSC4242](https://github.com/matrix-org/matrix-spec-proposals/pull/4242) | State DAGs (room version `org.matrix.msc4242.12`) | N/A | Not supported: the room version is not listed in `/capabilities`, `createRoom` and room upgrades refuse it with `M_UNSUPPORTED_ROOM_VERSION`, and joins and federation invites into such rooms fail with `M_INCOMPATIBLE_ROOM_VERSION` |
+
+### Message retention policies
+
+[MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) lets a room set how long servers keep its messages with an `m.room.retention` state event, and lets the server set a default and bounds.
+Zendrite follows Synapse's `retention` configuration, under `global.retention`, with Go durations:
+
+```yaml
+global:
+  retention:
+    enabled: true
+    default_policy:
+      min_lifetime: 24h
+      max_lifetime: 8760h
+    allowed_lifetime_min: 24h
+    allowed_lifetime_max: 8760h
+```
+
+- With `enabled: false`, the default, `m.room.retention` events have no effect.
+- A room's effective `max_lifetime` is that of its current `m.room.retention` event, or of `default_policy` if the room has no such event or the event sets none; without either, the room's events never expire.
+- `allowed_lifetime_min` raises a shorter `max_lifetime` and `allowed_lifetime_max` lowers a longer one.
+  Zendrite applies the bounds when serving events too, where Synapse only applies them when purging.
+- `min_lifetime` is reported but not enforced, as in Synapse.
+- Only the room's latest policy counts, also for events sent before it, as the MSC asks.
+- A non-state event whose `origin_server_ts` is older than the effective `max_lifetime` is no longer served to clients: `/sync`, sliding sync, `/messages`, `/context`, `/event`, `/relations`, threads, bundled aggregations, sticky events, `/search` and `/timestamp_to_event` leave it out, as Synapse does.
+  State events never expire.
+- `/search` leaves expired matches out of its results, highlights and count.
+- Expired events stay in the database for now: the purge job that deletes them is not implemented yet, federation still serves them, and `/notifications` still lists the notifications they caused.
+- Zendrite refuses an `m.room.retention` event sent by a local user, from `/state`, `/send` or `createRoom`'s `initial_state`, unless `min_lifetime` and `max_lifetime` are each absent, `null` or an integer between 0 and 2^53 - 1, and `min_lifetime` is not greater than `max_lifetime`.
+  Like Synapse, it checks this whether or not retention policies are enabled.
+  Rooms use `m.room.retention`, as Synapse and Element do, not the MSC's unstable `org.matrix.msc1763.retention`.
+- With `msc1763` in the [opt-in MSCs](#opt-in-mscs) as well, `GET /_matrix/client/unstable/org.matrix.msc1763/retention/configuration` reports the default policy under `*` and the bounds as `limits.max_lifetime`, as Synapse does with `msc1763_enabled`.
 
 ### Invite blocking
 
@@ -890,6 +922,7 @@ The following MSCs are not enabled by default and must be activated in the `mscs
 ```yaml
 mscs:
   mscs:
+    - msc1763
     - msc2836
     - msc3983
     - msc3984
