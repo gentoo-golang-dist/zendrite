@@ -237,7 +237,7 @@ func (d *DelayedEvents) schedule(
 	// The event is built again from the room state when it is sent. Building
 	// it now checks that it is well formed and that the user may send it, so
 	// that nothing is stored for a room the user cannot send to.
-	if _, resErr = generateSendEvent(ctx, content, device, roomID, eventType, roomStateKey, sticky, d.rsAPI, d.now()); resErr != nil {
+	if _, resErr = generateSendEvent(ctx, content, device, roomID, eventType, roomStateKey, sticky, d.rsAPI, d.now(), d.cfg.MSCs); resErr != nil {
 		return *resErr
 	}
 

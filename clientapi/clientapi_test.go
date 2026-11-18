@@ -20,6 +20,7 @@ import (
 	"github.com/matrix-org/gomatrix"
 	"github.com/matrix-org/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/crypto"
@@ -1151,6 +1152,95 @@ func TestLiveKitGetToken(t *testing.T) {
 				assert.Equal(t, tc.wantErrCode, gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
 			})
 		}
+	})
+}
+
+// MSC3848: refused sends and membership changes name the reason, through
+// the auth rules in the client API or the roomserver, and only with the MSC.
+func TestMSC3848Errcodes(t *testing.T) {
+	alice, bob, charlie, dave := test.NewUser(t), test.NewUser(t), test.NewUser(t), test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.ClientAPI.RateLimiting.Enabled = false
+		cfg.MSCs.MSCs = []string{"msc3848"}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+		asPI := appservice.NewInternalAPI(processCtx, cfg, natsInstance, userAPI, rsAPI)
+		AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, asPI, transactions.New(processCtx.Context()), nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+		accessTokens := map[*test.User]userDevice{alice: {}, bob: {}, charlie: {}, dave: {}}
+		createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+		do := func(method, path, body string, user *test.User) *httptest.ResponseRecorder {
+			t.Helper()
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+accessTokens[user].accessToken)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			return rec
+		}
+		rec := do(http.MethodPost, "/_matrix/client/v3/createRoom", `{"preset":"public_chat"}`, alice)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		roomID := gjson.GetBytes(rec.Body.Bytes(), "room_id").Str
+		room := "/_matrix/client/v3/rooms/" + roomID
+		for _, u := range []*test.User{bob, dave} {
+			rec = do(http.MethodPost, "/_matrix/client/v3/join/"+roomID, `{}`, u)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}
+		rec = do(http.MethodPost, room+"/ban", `{"user_id":"`+bob.ID+`"}`, alice)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		rec = do(http.MethodPost, "/_matrix/client/v3/join/"+roomID, `{}`, charlie)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		for i, tc := range []struct {
+			name, method, path, body string
+			user                     *test.User
+			want                     string
+		}{
+			{"message from a user outside the room", http.MethodPut, room + "/send/m.room.message/t1", `{"body":"hi"}`, bob, "ORG.MATRIX.MSC3848.NOT_JOINED"},
+			{"state event below state_default", http.MethodPut, room + "/state/m.room.name/", `{"name":"x"}`, dave, "ORG.MATRIX.MSC3848.INSUFFICIENT_POWER"},
+			{"invite of a joined user", http.MethodPost, room + "/invite", `{"user_id":"` + dave.ID + `"}`, alice, "ORG.MATRIX.MSC3848.ALREADY_JOINED"},
+			{"invite of a joined user as a state event", http.MethodPut, room + "/state/m.room.member/" + dave.ID, `{"membership":"invite"}`, alice, "ORG.MATRIX.MSC3848.ALREADY_JOINED"},
+			{"invite by a user outside the room", http.MethodPost, room + "/invite", `{"user_id":"` + charlie.ID + `"}`, bob, "ORG.MATRIX.MSC3848.NOT_JOINED"},
+			{"kick below the kick level", http.MethodPost, room + "/kick", `{"user_id":"` + charlie.ID + `"}`, dave, "ORG.MATRIX.MSC3848.INSUFFICIENT_POWER"},
+			{"leave as a state event by a user outside the room", http.MethodPut, room + "/state/m.room.member/" + bob.ID, `{"membership":"leave"}`, bob, "ORG.MATRIX.MSC3848.NOT_JOINED"},
+			{"kick as a state event", http.MethodPut, room + "/state/m.room.member/" + charlie.ID, `{"membership":"leave"}`, dave, "ORG.MATRIX.MSC3848.INSUFFICIENT_POWER"},
+			{"ban below the ban level", http.MethodPost, room + "/ban", `{"user_id":"` + charlie.ID + `"}`, dave, "ORG.MATRIX.MSC3848.INSUFFICIENT_POWER"},
+			// The client API does not check the power level of an unban; the
+			// roomserver refuses it.
+			{"unban below the ban level", http.MethodPost, room + "/unban", `{"user_id":"` + bob.ID + `"}`, dave, "ORG.MATRIX.MSC3848.INSUFFICIENT_POWER"},
+		} {
+			for _, enabled := range []bool{true, false} {
+				cfg.MSCs.MSCs = nil
+				if enabled {
+					cfg.MSCs.MSCs = []string{"msc3848"}
+				}
+				path := strings.Replace(tc.path, "/t1", fmt.Sprintf("/t%d%v", i, enabled), 1)
+				rec := do(tc.method, path, tc.body, tc.user)
+				assert.Equal(t, http.StatusForbidden, rec.Code, "%s: %s", tc.name, rec.Body.String())
+				assert.Equal(t, "M_FORBIDDEN", gjson.GetBytes(rec.Body.Bytes(), "errcode").Str, "%s: %s", tc.name, rec.Body.String())
+				got := gjson.GetBytes(rec.Body.Bytes(), `org\.matrix\.msc3848\.unstable\.errcode`)
+				if enabled {
+					assert.Equal(t, tc.want, got.Str, "%s: %s", tc.name, rec.Body.String())
+				} else {
+					assert.False(t, got.Exists(), "%s without the MSC: %s", tc.name, rec.Body.String())
+				}
+			}
+		}
+
+		// A knock by a joined user, once the join rule allows knocking.
+		cfg.MSCs.MSCs = []string{"msc3848"}
+		rec = do(http.MethodPut, room+"/state/m.room.join_rules/", `{"join_rule":"knock"}`, alice)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		rec = do(http.MethodPost, "/_matrix/client/v3/knock/"+roomID, `{}`, dave)
+		assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		assert.Equal(t, "ORG.MATRIX.MSC3848.ALREADY_JOINED", gjson.GetBytes(rec.Body.Bytes(), `org\.matrix\.msc3848\.unstable\.errcode`).Str, rec.Body.String())
 	})
 }
 

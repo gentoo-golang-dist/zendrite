@@ -75,7 +75,7 @@ func SendBan(
 
 	errRes := checkMemberInRoom(req.Context(), rsAPI, *deviceUserID, roomID)
 	if errRes != nil {
-		return *errRes
+		return withMSC3848(cfg.MSCs, *errRes, msc3848NotJoined)
 	}
 
 	pl, errRes := getPowerlevels(req, rsAPI, roomID)
@@ -85,10 +85,10 @@ func SendBan(
 	privileged := isPrivilegedCreator(req.Context(), rsAPI, roomID, *senderID)
 	allowedToBan := privileged || pl.UserLevel(*senderID) >= pl.Ban
 	if !allowedToBan {
-		return util.JSONResponse{
+		return withMSC3848(cfg.MSCs, util.JSONResponse{
 			Code: http.StatusForbidden,
 			JSON: spec.Forbidden("You don't have permission to ban this user, power level too low."),
-		}
+		}, msc3848InsufficientPower)
 	}
 
 	return sendMembership(req.Context(), profileAPI, device, roomID, spec.Ban, body.Reason, cfg, body.UserID, evTime, rsAPI, asAPI, redactEventsContent(cfg, body))
@@ -136,10 +136,10 @@ func sendMembership(ctx context.Context, profileAPI userapi.ClientUserAPI, devic
 		}
 		util.GetLogger(ctx).WithError(err).Error("SendEvents failed")
 		if roomserverAPI.IsInputRejected(err) {
-			return util.JSONResponse{
+			return withMSC3848(cfg.MSCs, util.JSONResponse{
 				Code: http.StatusForbidden,
 				JSON: spec.Forbidden(roomserverAPI.InputRejectionReason(err)),
-			}
+			}, msc3848MembershipErrcodeForUsers(ctx, cfg.MSCs, rsAPI, roomID, device.UserID, targetUserID, membership))
 		}
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,
@@ -193,7 +193,7 @@ func SendKick(
 
 	errRes := checkMemberInRoom(req.Context(), rsAPI, *deviceUserID, roomID)
 	if errRes != nil {
-		return *errRes
+		return withMSC3848(cfg.MSCs, *errRes, msc3848NotJoined)
 	}
 
 	bodyUserID, err := spec.NewUserID(body.UserID, true)
@@ -211,10 +211,10 @@ func SendKick(
 	privileged := isPrivilegedCreator(req.Context(), rsAPI, roomID, *senderID)
 	allowedToKick := privileged || pl.UserLevel(*senderID) >= pl.Kick || bodyUserID.String() == deviceUserID.String()
 	if !allowedToKick {
-		return util.JSONResponse{
+		return withMSC3848(cfg.MSCs, util.JSONResponse{
 			Code: http.StatusForbidden,
 			JSON: spec.Forbidden("You don't have permission to kick this user, power level too low."),
-		}
+		}, msc3848InsufficientPower)
 	}
 
 	var queryRes roomserverAPI.QueryMembershipForUserResponse
@@ -263,7 +263,7 @@ func SendUnban(
 
 	errRes := checkMemberInRoom(req.Context(), rsAPI, *deviceUserID, roomID)
 	if errRes != nil {
-		return *errRes
+		return withMSC3848(cfg.MSCs, *errRes, msc3848NotJoined)
 	}
 
 	bodyUserID, err := spec.NewUserID(body.UserID, true)
@@ -314,7 +314,7 @@ func SendInvite(
 		}
 	}
 	if errRes := checkMemberInRoom(req.Context(), rsAPI, *deviceUserID, roomID); errRes != nil {
-		return *errRes
+		return withMSC3848(cfg.MSCs, *errRes, msc3848NotJoined)
 	}
 
 	inviteStored, jsonErrResp := checkAndProcessThreepid(
@@ -431,7 +431,8 @@ func sendInviteWithContent(
 		case errors.As(err, &e):
 			return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.InvalidParam(e.Error())}, e
 		case errors.As(err, &e1):
-			return util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden(e1.Error())}, e1
+			return withMSC3848(cfg.MSCs, util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden(e1.Error())},
+				msc3848MembershipErrcode(ctx, cfg.MSCs, rsAPI, roomID, *inviter, *invitee, spec.Invite)), e1
 		case err == nil:
 		default:
 			util.GetLogger(ctx).WithError(err).Error("PerformInvite failed")

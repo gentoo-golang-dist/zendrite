@@ -169,6 +169,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC3930](https://github.com/matrix-org/matrix-spec-proposals/pull/3930) | Push rules for polls | N/A | Implemented (unstable prefix): see [poll push rules](#poll-push-rules) |
 | [MSC4028](https://github.com/matrix-org/matrix-spec-proposals/pull/4028) | Push all encrypted events except for muted rooms | N/A | Opt-in (`msc4028`): see [MSC4028](#msc4028-push-all-encrypted-events) |
 | [MSC3664](https://github.com/matrix-org/matrix-spec-proposals/pull/3664) | Push rules for relations | N/A | Opt-in (`msc3664`, unstable prefix): see [MSC3664](#msc3664-push-rules-for-related-events) |
+| [MSC3848](https://github.com/matrix-org/matrix-spec-proposals/pull/3848) | Errcodes for specific event sending failures | N/A | Opt-in (`msc3848`, unstable prefix): see [MSC3848](#msc3848-specific-errcodes-for-refused-events) |
 | [MSC3881](https://github.com/matrix-org/matrix-spec-proposals/pull/3881) | Remotely toggle push notifications for another client | N/A | Implemented (unstable prefix): see [remote push notification toggling](#remote-push-notification-toggling) |
 | [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Implemented: relations are stored and served through `/relations`. Sending an annotation that the sender has already made, with the same event type and key on the same event and not redacted, fails with 400 `M_DUPLICATE_ANNOTATION`; retrying the original transaction still returns its event. The spec defines no server-side aggregation for annotations |
 | [MSC3970](https://github.com/matrix-org/matrix-spec-proposals/pull/3970) | Scope transaction IDs to devices | 1.7 | Implemented: `/send`, `/redact`, `/sendToDevice`, delayed events and server notices recognise a retransmission by device, endpoint and transaction ID, so it survives a refreshed access token. Application services share one scope per application service, whichever user they act as |
@@ -886,6 +887,7 @@ mscs:
     - msc2753
     - msc3664
     - msc3814
+    - msc3848
     - msc3861
     - msc4028
     - msc4194
@@ -949,6 +951,18 @@ Zendrite follows Synapse, where it needs `msc3664_enabled`: it uses the unstable
 
 The related event is looked up once per event, whatever the number of users it is evaluated for.
 In rooms with pseudo IDs (MSC4014), the related event's `sender` is a pseudo ID, so the reply rule does not match there.
+
+### MSC3848: Specific errcodes for refused events
+
+With `msc3848`, a request refused because of the user's membership or power level says which, so clients do not have to read the `error` text.
+Zendrite follows Synapse, where it needs `msc3848_enabled`: `errcode` stays `M_FORBIDDEN`, and the specific errcode is added as `org.matrix.msc3848.unstable.errcode`, with Synapse's unstable names:
+
+- `ORG.MATRIX.MSC3848.NOT_JOINED`: the user is not joined to the room.
+- `ORG.MATRIX.MSC3848.ALREADY_JOINED`: the user being invited, or the user knocking, is already joined.
+- `ORG.MATRIX.MSC3848.INSUFFICIENT_POWER`: the user's power level is below the one needed for the event, an invite, a kick, a ban or an unban, or not above the target's for a kick or ban.
+
+These are given by the endpoints the MSC lists: `PUT /rooms/{roomId}/send/{eventType}/{txnId}`, `PUT /rooms/{roomId}/state/{eventType}/{stateKey}`, `POST /rooms/{roomId}/invite`, `/kick`, `/ban` and `/unban`, and `POST /knock/{roomIdOrAlias}`.
+The errcode is worked out from the room's current state with the checks Synapse tags, in the same order; when another rule refuses the request, such as a join rule that does not allow knocking or a change to the power levels above the user's own, no errcode is added.
 
 ### MSC4028: Push all encrypted events
 

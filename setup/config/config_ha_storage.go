@@ -72,6 +72,9 @@ var haQualifiedMSCs = map[string]struct{}{
 	// rule is added to the stored rules when they are read, and related events
 	// are read from the roomserver.
 	"msc3664": {},
+	// Specific errcodes for refused sends and membership changes. It has no
+	// state of its own: each refusal reads the roomserver's current state.
+	"msc3848": {},
 	// Delegated OIDC authentication. Its accounts, devices, external ID
 	// mappings and login tokens live in the user API database. What it holds
 	// in process memory (introspection and discovery caches, legacy SSO

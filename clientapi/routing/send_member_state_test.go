@@ -156,7 +156,7 @@ func TestSendMembershipStateEvent(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(tc.body))
 			device := &uapi.Device{UserID: alice}
 
-			res, handled := SendMembershipStateEvent(req, device, roomID, spec.MRoomMember, tc.stateKey, rs, nil)
+			res, handled := SendMembershipStateEvent(req, device, roomID, spec.MRoomMember, tc.stateKey, rs, nil, nil)
 			if handled != tc.wantHandled {
 				t.Fatalf("handled = %v, want %v (response %+v)", handled, tc.wantHandled, res)
 			}

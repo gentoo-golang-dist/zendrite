@@ -783,7 +783,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return KnockRoomByIDOrAlias(req, device, rsAPI, userAPI, vars["roomIDOrAlias"])
+			return KnockRoomByIDOrAlias(req, device, rsAPI, userAPI, vars["roomIDOrAlias"], mscCfg)
 		}, httputil.WithDenySuspended()),
 	).Methods(http.MethodPost, http.MethodOptions)
 
@@ -998,7 +998,7 @@ func Setup(
 			if delayedEvents.Requested(req) {
 				return delayedEvents.Schedule(req, device, vars["roomID"], vars["eventType"], nil, &stateKey)
 			}
-			if res, handled := SendMembershipStateEvent(req, device, vars["roomID"], vars["eventType"], stateKey, rsAPI, userAPI); handled {
+			if res, handled := SendMembershipStateEvent(req, device, vars["roomID"], vars["eventType"], stateKey, rsAPI, userAPI, mscCfg); handled {
 				if res.Code == http.StatusOK {
 					waitForSyncedRoom(req.Context(), rsAPI, natsClient, syncedEventTopic, vars["roomID"])
 				}

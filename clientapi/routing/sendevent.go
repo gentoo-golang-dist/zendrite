@@ -251,7 +251,7 @@ func sendEventContent(
 		}
 	}
 
-	e, resErr := generateSendEvent(ctx, r, device, roomID, eventType, stateKey, sticky, rsAPI, evTime)
+	e, resErr := generateSendEvent(ctx, r, device, roomID, eventType, stateKey, sticky, rsAPI, evTime, cfg.MSCs)
 	if resErr != nil {
 		return "", resErr
 	}
@@ -461,6 +461,7 @@ func generateSendEvent(
 	sticky *gomatrixserverlib.StickyEventData,
 	rsAPI api.ClientRoomserverAPI,
 	evTime time.Time,
+	mscs *config.MSCs,
 ) (gomatrixserverlib.PDU, *util.JSONResponse) {
 	// parse the incoming http request
 	fullUserID, err := spec.NewUserID(device.UserID, true)
@@ -486,10 +487,11 @@ func generateSendEvent(
 	} else if senderID == nil {
 		// TODO: is it always the case that lack of a sender ID means they're not joined?
 		//       And should this logic be deferred to the roomserver somehow?
-		return nil, &util.JSONResponse{
+		res := withMSC3848(mscs, util.JSONResponse{
 			Code: http.StatusForbidden,
 			JSON: spec.Forbidden("not joined to room"),
-		}
+		}, msc3848NotJoined)
+		return nil, &res
 	}
 
 	if device.Suspended && !suspendedMayEvent(r, device.UserID, *senderID, eventType, stateKey) {
@@ -592,10 +594,15 @@ func generateSendEvent(
 		if errors.As(err, &validationErr) {
 			code = validationErr.Code
 		}
-		return nil, &util.JSONResponse{
+		res := util.JSONResponse{
 			Code: code,
 			JSON: spec.Forbidden(err.Error()), // TODO: Is this error string comprehensible to the client?
 		}
+		if msc3848Enabled(mscs) {
+			membership, _ := r["membership"].(string)
+			res = withMSC3848(mscs, res, msc3848Errcode(provider, *senderID, eventType, stateKey, membership))
+		}
+		return nil, &res
 	}
 
 	// User should not be able to send a tombstone event to the same room.

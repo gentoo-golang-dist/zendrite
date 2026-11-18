@@ -7,10 +7,12 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/gomatrix"
@@ -18,6 +20,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
+	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
 
@@ -28,6 +31,7 @@ func KnockRoomByIDOrAlias(
 	rsAPI roomserverAPI.ClientRoomserverAPI,
 	profileAPI api.ClientUserAPI,
 	roomIDOrAlias string,
+	mscs *config.MSCs,
 ) util.JSONResponse {
 	userID, err := spec.NewUserID(device.UserID, true)
 	if err != nil {
@@ -92,7 +96,11 @@ func KnockRoomByIDOrAlias(
 	case errors.As(err, &errInvalidID):
 		return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.InvalidParam(errInvalidID.Error())}
 	case errors.As(err, &errNotAllowed):
-		return util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden(errNotAllowed.Error())}
+		res := util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden(errNotAllowed.Error())}
+		if msc3848Enabled(mscs) {
+			res = withMSC3848(mscs, res, msc3848MembershipErrcode(req.Context(), mscs, rsAPI, knockRoomID(req.Context(), rsAPI, roomIDOrAlias), *userID, *userID, spec.Knock))
+		}
+		return res
 	case errors.As(err, &errHTTP) && errHTTP.Code >= 400 && json.Valid([]byte(errHTTP.Message)):
 		// Pass the remote server's answer through, e.g. a 403 because the
 		// room does not allow knocking.
@@ -110,4 +118,17 @@ func KnockRoomByIDOrAlias(
 		util.GetLogger(req.Context()).WithError(err).Error("PerformKnock failed")
 		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
 	}
+}
+
+// knockRoomID is the room ID that a knock's room ID or alias names, or ""
+// when a local alias lookup does not find it.
+func knockRoomID(ctx context.Context, rsAPI roomserverAPI.ClientRoomserverAPI, roomIDOrAlias string) string {
+	if !strings.HasPrefix(roomIDOrAlias, "#") {
+		return roomIDOrAlias
+	}
+	var res roomserverAPI.GetRoomIDForAliasResponse
+	if err := rsAPI.GetRoomIDForAlias(ctx, &roomserverAPI.GetRoomIDForAliasRequest{Alias: roomIDOrAlias}, &res); err != nil {
+		return ""
+	}
+	return res.RoomID
 }

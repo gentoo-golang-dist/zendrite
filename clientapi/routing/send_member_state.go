@@ -14,6 +14,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
+	"codefloe.com/pat-s/zendrite/setup/config"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
@@ -45,6 +46,7 @@ func SendMembershipStateEvent(
 	roomID, eventType, stateKey string,
 	rsAPI api.ClientRoomserverAPI,
 	profileAPI userapi.ClientUserAPI,
+	mscs *config.MSCs,
 ) (util.JSONResponse, bool) {
 	if eventType != spec.MRoomMember || stateKey != device.UserID {
 		return util.JSONResponse{}, false
@@ -112,9 +114,15 @@ func SendMembershipStateEvent(
 	case spec.Join:
 		res = joinRoomByIDOrAlias(req, device, rsAPI, profileAPI, roomID, true)
 	case spec.Knock:
-		res = KnockRoomByIDOrAlias(req, device, rsAPI, profileAPI, roomID)
+		res = KnockRoomByIDOrAlias(req, device, rsAPI, profileAPI, roomID, mscs)
 	case spec.Leave:
 		res, leaveRes = leaveRoomByID(req, device, rsAPI, roomID)
+		// Only a user who is joined, invited or knocking can leave.
+		switch before.Membership {
+		case spec.Join, spec.Invite, spec.Knock:
+		default:
+			res = withMSC3848(mscs, res, msc3848NotJoined)
+		}
 	}
 	if res.Code != http.StatusOK {
 		return res, true
