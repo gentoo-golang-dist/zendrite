@@ -41,6 +41,9 @@ type Profile interface {
 	SetDisplayName(ctx context.Context, localpart string, serverName spec.ServerName, displayName string) (*authtypes.Profile, bool, error)
 	SetProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string, value json.RawMessage) error
 	DeleteProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string) error
+	// ReplaceProfile replaces the whole profile (MSC4437) and returns it with
+	// the names of the fields that changed.
+	ReplaceProfile(ctx context.Context, localpart string, serverName spec.ServerName, profile authtypes.Profile) (*authtypes.Profile, []string, error)
 }
 
 // DelayedEvents stores MSC4140 delayed events.

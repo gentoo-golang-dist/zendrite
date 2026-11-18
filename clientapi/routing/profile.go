@@ -12,15 +12,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
+	"github.com/tidwall/gjson"
 
 	appserviceAPI "codefloe.com/pat-s/zendrite/appservice/api"
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
@@ -173,39 +176,14 @@ func SetProfileField(
 		}
 	}
 
-	switch key {
-	case authtypes.ProfileFieldDisplayName, authtypes.ProfileFieldAvatarURL:
-		// A null value clears the field, as it always has.
-		var name *string
-		if err := json.Unmarshal(value, &name); err != nil {
-			return util.JSONResponse{
-				Code: http.StatusBadRequest,
-				JSON: spec.BadJSON(fmt.Sprintf("%s must be a string.", key)),
-			}
-		}
-		var newValue string
-		if name != nil {
-			newValue = *name
-		}
-		return setProfileName(req, profileAPI, device, userID, localpart, domain, key, newValue, rsAPI)
-	case profileFieldTimeZone:
-		var tz string
-		if err := json.Unmarshal(value, &tz); err != nil {
-			return util.JSONResponse{
-				Code: http.StatusBadRequest,
-				JSON: spec.BadJSON(fmt.Sprintf("%s must be a string.", key)),
-			}
-		}
+	name, field, errRes := profileFieldValue(key, value)
+	if errRes != nil {
+		return *errRes
 	}
-
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, value); err != nil {
-		return util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: spec.BadJSON(err.Error()),
-		}
+	if isProfileName(key) {
+		return setProfileName(req, profileAPI, device, userID, localpart, domain, key, name, rsAPI)
 	}
-	err := profileAPI.SetProfileField(req.Context(), localpart, domain, key, compact.Bytes())
+	err := profileAPI.SetProfileField(req.Context(), localpart, domain, key, field)
 	switch {
 	case errors.Is(err, userapi.ErrProfileTooLarge):
 		return profileTooLarge()
@@ -220,6 +198,130 @@ func SetProfileField(
 		Code: http.StatusOK,
 		JSON: struct{}{},
 	}
+}
+
+// isProfileName reports whether key is the display name or avatar URL,
+// which are copied into membership events.
+func isProfileName(key string) bool {
+	return key == authtypes.ProfileFieldDisplayName || key == authtypes.ProfileFieldAvatarURL
+}
+
+// profileFieldValue checks a value for the profile field key. For the
+// display name and avatar URL it returns the name, empty for null, which
+// clears it; for other fields it returns the compacted value.
+func profileFieldValue(key string, value json.RawMessage) (string, json.RawMessage, *util.JSONResponse) {
+	mustBeString := &util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON(fmt.Sprintf("%s must be a string.", key))}
+	if isProfileName(key) {
+		var name *string
+		if err := json.Unmarshal(value, &name); err != nil {
+			return "", nil, mustBeString
+		}
+		if name == nil {
+			return "", nil, nil
+		}
+		return *name, nil, nil
+	}
+	if key == profileFieldTimeZone && gjson.ParseBytes(value).Type != gjson.String {
+		return "", nil, mustBeString
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, value); err != nil {
+		return "", nil, &util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON(err.Error())}
+	}
+	return "", compact.Bytes(), nil
+}
+
+// ReplaceProfile implements PUT /profile/{userID} (MSC4437), which replaces
+// the whole profile: fields missing from the request are removed. Each field
+// is validated as PUT /profile/{userID}/{keyName} would, and the request
+// fails as a whole, changing nothing, if one of them does or if the new
+// membership events would be invalid. A changed display name or avatar URL
+// updates the membership events, with one event per room.
+func ReplaceProfile(
+	req *http.Request, profileAPI userapi.ProfileAPI,
+	device *userapi.Device, userID string, cfg *config.ClientAPI, rsAPI api.ClientRoomserverAPI,
+) util.JSONResponse {
+	localpart, domain, errRes := authorizeProfileChange(req, device, userID, "", cfg)
+	if errRes != nil {
+		return *errRes
+	}
+	var body map[string]json.RawMessage
+	if resErr := httputil.UnmarshalJSONRequest(req, &body); resErr != nil {
+		return *resErr
+	}
+	if body == nil {
+		return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON("The request body must be an object.")}
+	}
+	profile := authtypes.Profile{Fields: map[string]json.RawMessage{}}
+	// Report the same field each time when several are invalid.
+	for _, key := range slices.Sorted(maps.Keys(body)) {
+		if len(key) > maxProfileKeyLength {
+			return keyTooLarge()
+		}
+		if !isValidProfileKey(key) {
+			return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.InvalidParam(fmt.Sprintf("Invalid profile key: %s.", key))}
+		}
+		name, field, errRes := profileFieldValue(key, body[key])
+		switch {
+		case errRes != nil:
+			return *errRes
+		case key == authtypes.ProfileFieldDisplayName:
+			profile.DisplayName = name
+		case key == authtypes.ProfileFieldAvatarURL:
+			profile.AvatarURL = name
+		default:
+			profile.Fields[key] = field
+		}
+	}
+	evTime, err := httputil.ParseTSParam(req, device)
+	if err != nil {
+		return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.InvalidParam(err.Error())}
+	}
+
+	// Check the size and build the membership events first, so that a
+	// profile they cannot carry is refused before anything is stored.
+	size, err := profile.Size()
+	switch {
+	case err != nil:
+		util.GetLogger(req.Context()).WithError(err).Error("profile.Size failed")
+		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+	case size > authtypes.MaxProfileSize:
+		return profileTooLarge()
+	}
+	var events []*types.HeaderedEvent
+	current, err := profileAPI.QueryProfile(req.Context(), userID)
+	if err != nil {
+		util.GetLogger(req.Context()).WithError(err).Error("profileAPI.QueryProfile failed")
+		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+	}
+	if current.DisplayName != profile.DisplayName || current.AvatarURL != profile.AvatarURL {
+		var response util.JSONResponse
+		if events, response, err = profileMembershipEvents(req.Context(), rsAPI, device, &profile, userID, evTime); err != nil {
+			return response
+		}
+	}
+
+	newProfile, namesChanged, err := profileAPI.ReplaceProfile(req.Context(), localpart, domain, profile)
+	switch {
+	case errors.Is(err, userapi.ErrProfileTooLarge):
+		return profileTooLarge()
+	case err != nil:
+		util.GetLogger(req.Context()).WithError(err).Error("profileAPI.ReplaceProfile failed")
+		return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+	}
+	if namesChanged {
+		var response util.JSONResponse
+		if events != nil {
+			response, err = sendProfileMembershipEvents(req.Context(), rsAPI, device, userID, events)
+		} else {
+			// The names changed in the meantime.
+			response, err = updateProfile(req.Context(), rsAPI, device, newProfile, userID, evTime)
+		}
+		if err != nil {
+			return response
+		}
+	}
+	return util.JSONResponse{Code: http.StatusOK, JSON: struct{}{}}
 }
 
 // DeleteProfileField implements DELETE /profile/{userID}/{keyName}.
@@ -382,9 +484,23 @@ func updateProfile(
 	profile *authtypes.Profile,
 	userID string, evTime time.Time,
 ) (util.JSONResponse, error) {
+	events, response, err := profileMembershipEvents(ctx, rsAPI, device, profile, userID, evTime)
+	if err != nil {
+		return response, err
+	}
+	return sendProfileMembershipEvents(ctx, rsAPI, device, userID, events)
+}
+
+// profileMembershipEvents builds the membership events that copy the
+// profile's display name and avatar URL into the rooms the user is joined to.
+func profileMembershipEvents(
+	ctx context.Context, rsAPI api.ClientRoomserverAPI, device *userapi.Device,
+	profile *authtypes.Profile,
+	userID string, evTime time.Time,
+) ([]*types.HeaderedEvent, util.JSONResponse, error) {
 	deviceUserID, err := spec.NewUserID(device.UserID, true)
 	if err != nil {
-		return util.JSONResponse{
+		return nil, util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
 		}, err
@@ -393,7 +509,7 @@ func updateProfile(
 	rooms, err := rsAPI.QueryRoomsForUser(ctx, *deviceUserID, "join")
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("QueryRoomsForUser failed")
-		return util.JSONResponse{
+		return nil, util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
 		}, err
@@ -404,6 +520,34 @@ func updateProfile(
 		roomIDStrs[i] = room.String()
 	}
 
+	events, err := buildMembershipEvents(
+		ctx, roomIDStrs, *profile, userID, evTime, rsAPI,
+	)
+	var e gomatrixserverlib.BadJSONError
+	var validationErr gomatrixserverlib.EventValidationError
+	switch {
+	case err == nil:
+		return events, util.JSONResponse{}, nil
+	case errors.As(err, &e):
+		return nil, util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON(e.Error())}, e
+	case errors.As(err, &validationErr):
+		// As when sending an event: a name too long for a membership event.
+		code := http.StatusBadRequest
+		if validationErr.Code == gomatrixserverlib.EventValidationTooLarge {
+			code = http.StatusRequestEntityTooLarge
+		}
+		return nil, util.JSONResponse{Code: code, JSON: spec.BadJSON(validationErr.Error())}, err
+	default:
+		util.GetLogger(ctx).WithError(err).Error("buildMembershipEvents failed")
+		return nil, util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}, err
+	}
+}
+
+// sendProfileMembershipEvents sends the events of profileMembershipEvents.
+func sendProfileMembershipEvents(
+	ctx context.Context, rsAPI api.ClientRoomserverAPI, device *userapi.Device,
+	userID string, events []*types.HeaderedEvent,
+) (util.JSONResponse, error) {
 	_, domain, err := gomatrixserverlib.SplitID('@', userID)
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("gomatrixserverlib.SplitID failed")
@@ -412,22 +556,6 @@ func updateProfile(
 			JSON: spec.InternalServerError{},
 		}, err
 	}
-
-	events, err := buildMembershipEvents(
-		ctx, roomIDStrs, *profile, userID, evTime, rsAPI,
-	)
-	{
-		var e gomatrixserverlib.BadJSONError
-		switch {
-		case err == nil:
-		case errors.As(err, &e):
-			return util.JSONResponse{Code: http.StatusBadRequest, JSON: spec.BadJSON(e.Error())}, e
-		default:
-			util.GetLogger(ctx).WithError(err).Error("buildMembershipEvents failed")
-			return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}, e
-		}
-	}
-
 	if err := api.SendEvents(ctx, rsAPI, api.KindNew, events, device.UserDomain(), domain, domain, nil, false); err != nil {
 		if res, ok := api.PolicyServerRejection(err); ok {
 			return res, err

@@ -537,6 +537,71 @@ func Test_ProfileFields(t *testing.T) {
 	})
 }
 
+// MSC4437: replacing the whole profile sets every field given and removes
+// the others, and reports which ones changed.
+func Test_ReplaceProfile(t *testing.T) {
+	alice := test.NewUser(t)
+	localpart, domain, err := gomatrixserverlib.SplitID('@', alice.ID)
+	assert.NoError(t, err)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateUserDatabase(t, dbType)
+		defer close()
+		_, err := db.CreateAccount(ctx, localpart, domain, "testing", "", api.AccountTypeUser)
+		assert.NoError(t, err, "failed to create account")
+		_, _, err = db.SetAvatarURL(ctx, localpart, domain, "mxc://example.com/old")
+		assert.NoError(t, err)
+		assert.NoError(t, db.SetProfileField(ctx, localpart, domain, "m.tz", json.RawMessage(`"Europe/Berlin"`)))
+		assert.NoError(t, db.SetProfileField(ctx, localpart, domain, "org.example.job", json.RawMessage(`{"title":"Engineer"}`)))
+
+		profile, changed, err := db.ReplaceProfile(ctx, localpart, domain, authtypes.Profile{
+			DisplayName: "Alice",
+			Fields: map[string]json.RawMessage{
+				"m.tz":            json.RawMessage(`"Europe/Berlin"`),
+				"org.example.pet": json.RawMessage(`"cat"`),
+			},
+		})
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{"displayname", "avatar_url", "org.example.job", "org.example.pet"}, changed)
+		assert.Equal(t, "Alice", profile.DisplayName)
+
+		stored, err := db.GetProfileByLocalpart(ctx, localpart, domain)
+		assert.NoError(t, err)
+		assert.Equal(t, "Alice", stored.DisplayName)
+		assert.Empty(t, stored.AvatarURL)
+		assert.Equal(t, map[string]json.RawMessage{
+			"m.tz":            json.RawMessage(`"Europe/Berlin"`),
+			"org.example.pet": json.RawMessage(`"cat"`),
+		}, stored.Fields)
+
+		// The same profile again changes nothing, even with its keys in
+		// another order.
+		_, changed, err = db.ReplaceProfile(ctx, localpart, domain, *stored)
+		assert.NoError(t, err)
+		assert.Empty(t, changed)
+		assert.NoError(t, db.SetProfileField(ctx, localpart, domain, "org.example.pet", json.RawMessage(`{"name":"Tom","kind":"cat"}`)))
+		stored.Fields["org.example.pet"] = json.RawMessage(`{"kind":"cat","name":"Tom"}`)
+		_, changed, err = db.ReplaceProfile(ctx, localpart, domain, *stored)
+		assert.NoError(t, err)
+		assert.Empty(t, changed)
+		stored, err = db.GetProfileByLocalpart(ctx, localpart, domain)
+		assert.NoError(t, err)
+
+		// The display name and avatar URL are not custom fields.
+		_, _, err = db.ReplaceProfile(ctx, localpart, domain, authtypes.Profile{Fields: map[string]json.RawMessage{"avatar_url": json.RawMessage(`"mxc://x/y"`)}})
+		assert.Error(t, err)
+
+		// A profile over the limit is refused, and the old one kept.
+		_, _, err = db.ReplaceProfile(ctx, localpart, domain, authtypes.Profile{
+			Fields: map[string]json.RawMessage{"org.example.big": json.RawMessage(`"` + strings.Repeat("a", authtypes.MaxProfileSize) + `"`)},
+		})
+		assert.ErrorIs(t, err, api.ErrProfileTooLarge)
+		after, err := db.GetProfileByLocalpart(ctx, localpart, domain)
+		assert.NoError(t, err)
+		assert.Equal(t, stored, after)
+	})
+}
+
 func Test_DelayedEvents(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		db, close := mustCreateUserDatabase(t, dbType)

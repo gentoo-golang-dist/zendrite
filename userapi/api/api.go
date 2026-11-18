@@ -158,6 +158,10 @@ type ProfileAPI interface {
 	SetProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string, value json.RawMessage) error
 	// DeleteProfileField removes a custom profile field (MSC4133).
 	DeleteProfileField(ctx context.Context, localpart string, serverName spec.ServerName, fieldName string) error
+	// ReplaceProfile replaces the whole profile (MSC4437). It returns the
+	// new profile and whether the display name or avatar URL changed, and
+	// fails with ErrProfileTooLarge as SetProfileField does.
+	ReplaceProfile(ctx context.Context, localpart string, serverName spec.ServerName, profile authtypes.Profile) (*authtypes.Profile, bool, error)
 }
 
 // ErrProfileTooLarge is returned when a change would make a profile larger

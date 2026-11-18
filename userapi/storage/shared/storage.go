@@ -7,6 +7,7 @@
 package shared
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -201,6 +202,80 @@ func (d *Database) DeleteProfileField(
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		return d.ProfileFields.DeleteProfileField(ctx, txn, localpart, serverName, fieldName)
 	})
+}
+
+// ReplaceProfile replaces the display name, avatar URL and custom fields of
+// the given localpart's profile with those of profile, in one transaction
+// (MSC4437). It returns the new profile and the names of the fields that
+// changed, and fails with api.ErrProfileTooLarge when the profile would
+// exceed authtypes.MaxProfileSize.
+func (d *Database) ReplaceProfile(
+	ctx context.Context,
+	localpart string, serverName spec.ServerName,
+	profile authtypes.Profile,
+) (result *authtypes.Profile, changed []string, err error) {
+	for _, reserved := range []string{authtypes.ProfileFieldDisplayName, authtypes.ProfileFieldAvatarURL} {
+		if _, ok := profile.Fields[reserved]; ok {
+			return nil, nil, fmt.Errorf("%s is not a custom profile field", reserved)
+		}
+	}
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		changed = nil
+		var old authtypes.Profile
+		if err = d.checkProfileSize(ctx, txn, localpart, serverName, func(p *authtypes.Profile) {
+			old = *p
+			p.DisplayName, p.AvatarURL, p.Fields = profile.DisplayName, profile.AvatarURL, profile.Fields
+		}); err != nil {
+			return err
+		}
+		if old.DisplayName != profile.DisplayName {
+			if _, _, err = d.Profiles.SetDisplayName(ctx, txn, localpart, serverName, profile.DisplayName); err != nil {
+				return err
+			}
+			changed = append(changed, authtypes.ProfileFieldDisplayName)
+		}
+		if old.AvatarURL != profile.AvatarURL {
+			if _, _, err = d.Profiles.SetAvatarURL(ctx, txn, localpart, serverName, profile.AvatarURL); err != nil {
+				return err
+			}
+			changed = append(changed, authtypes.ProfileFieldAvatarURL)
+		}
+		for name := range old.Fields {
+			if _, kept := profile.Fields[name]; kept {
+				continue
+			}
+			if err = d.ProfileFields.DeleteProfileField(ctx, txn, localpart, serverName, name); err != nil {
+				return err
+			}
+			changed = append(changed, name)
+		}
+		for name, value := range profile.Fields {
+			if previous, ok := old.Fields[name]; ok && sameJSON(previous, value) {
+				continue
+			}
+			if err = d.ProfileFields.UpsertProfileField(ctx, txn, localpart, serverName, name, value); err != nil {
+				return err
+			}
+			changed = append(changed, name)
+		}
+		result = &authtypes.Profile{
+			Localpart: localpart, ServerName: string(serverName),
+			DisplayName: profile.DisplayName, AvatarURL: profile.AvatarURL, Fields: profile.Fields,
+		}
+		return nil
+	})
+	return result, changed, err
+}
+
+// sameJSON reports whether two JSON values are equal, whatever the order of
+// their keys.
+func sameJSON(a, b json.RawMessage) bool {
+	canonicalA, errA := gomatrixserverlib.CanonicalJSON(a)
+	canonicalB, errB := gomatrixserverlib.CanonicalJSON(b)
+	if errA != nil || errB != nil {
+		return bytes.Equal(a, b)
+	}
+	return bytes.Equal(canonicalA, canonicalB)
 }
 
 // SetAvatarURL updates the avatar URL of the profile associated with the given

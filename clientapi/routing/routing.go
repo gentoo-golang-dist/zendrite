@@ -108,6 +108,7 @@ func Setup(
 		"org.matrix.msc4222":            true, // MSC4222: state_after in /sync
 		"uk.tcpip.msc4133":              true, // MSC4133: custom profile fields, unstable path
 		"uk.tcpip.msc4133.stable":       true, // MSC4133: custom profile fields, v3 path
+		"com.beeper.msc4437":            true, // MSC4437: replacing the whole profile, unstable path
 		"org.matrix.msc4536":            true, // MSC4536: querying several profiles at once
 		"com.beeper.msc4169":            true, // MSC4169: redactions through /send in every room version
 		"org.matrix.msc4155":            true, // MSC4155: invite filtering
@@ -1487,6 +1488,19 @@ func Setup(
 		}
 		return SetProfileField(req, userAPI, device, vars["userID"], vars["keyName"], cfg, rsAPI)
 	}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests(), httputil.WithDenySuspended())
+	// Replacing the whole profile (MSC4437). Guests may only set their
+	// display name, so they have no use for it.
+	replaceProfile := httputil.MakeAuthAPI("profile_replace", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+		if r := rateLimits.Limit(req, device); r != nil {
+			return *r
+		}
+		vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+		if err != nil {
+			return util.ErrorResponse(err)
+		}
+		return ReplaceProfile(req, userAPI, device, vars["userID"], cfg, rsAPI)
+	}, httputil.WithDenySuspended())
+	unstableMux.Handle("/com.beeper.msc4437/profile/{userID}", replaceProfile).Methods(http.MethodPut, http.MethodOptions)
 	v3mux.Handle("/profile/{userID}/{keyName}", getProfileField).Methods(http.MethodGet, http.MethodOptions)
 	v3mux.Handle("/profile/{userID}/{keyName}", changeProfileField).Methods(http.MethodPut, http.MethodDelete, http.MethodOptions)
 	unstableMux.Handle("/uk.tcpip.msc4133/profile/{userID}/{keyName}", getProfileField).Methods(http.MethodGet, http.MethodOptions)

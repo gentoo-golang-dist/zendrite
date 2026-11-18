@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -1242,6 +1243,17 @@ func (a *UserInternalAPI) DeleteProfileField(ctx context.Context, localpart stri
 	}
 	a.sendProfileUpdate(ctx, localpart, serverName, fieldName)
 	return nil
+}
+
+func (a *UserInternalAPI) ReplaceProfile(ctx context.Context, localpart string, serverName spec.ServerName, profile authtypes.Profile) (*authtypes.Profile, bool, error) {
+	result, changed, err := a.DB.ReplaceProfile(ctx, localpart, serverName, profile)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(changed) > 0 {
+		a.sendProfileUpdate(ctx, localpart, serverName, changed...)
+	}
+	return result, slices.Contains(changed, authtypes.ProfileFieldDisplayName) || slices.Contains(changed, authtypes.ProfileFieldAvatarURL), nil
 }
 
 func (a *UserInternalAPI) QueryLocalpartForThreePID(ctx context.Context, req *api.QueryLocalpartForThreePIDRequest, res *api.QueryLocalpartForThreePIDResponse) error {
