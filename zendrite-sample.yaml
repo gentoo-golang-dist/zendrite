@@ -155,7 +155,8 @@ global:
 
   # Message retention policies (MSC1763). Once enabled, the non-state events of
   # a room are no longer served to clients after the max_lifetime of the room's
-  # m.room.retention event, or of the default policy for rooms without one.
+  # m.room.retention event, or of the default policy for rooms without one, and
+  # purge jobs delete them.
   # Lifetimes are Go durations, such as 24h or 8760h.
   retention:
     enabled: false
@@ -167,6 +168,14 @@ global:
     # Bring the max_lifetime of every room into this range.
     # allowed_lifetime_min: 24h
     # allowed_lifetime_max: 8760h
+    # Jobs that delete expired events. Each one handles the rooms whose
+    # effective max_lifetime is greater than shortest_max_lifetime and at most
+    # longest_max_lifetime. Without any, one job handles every room daily.
+    # purge_jobs:
+    #   - longest_max_lifetime: 72h
+    #     interval: 12h
+    #   - shortest_max_lifetime: 72h
+    #     interval: 24h
 
   # Server notices allows server admins to send messages to all users on the server.
   server_notices:

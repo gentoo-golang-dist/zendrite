@@ -196,6 +196,13 @@ const selectRoomsWithEventsSinceSQL = "" +
 	"SELECT DISTINCT room_id FROM syncapi_output_room_events" +
 	" WHERE room_id = ANY($1) AND id > $2"
 
+// deleteEventWithoutStateDeltaSQL deletes an event unless incremental syncs
+// need its row for the state changes it records (MSC1763).
+const deleteEventWithoutStateDeltaSQL = "" +
+	"DELETE FROM syncapi_output_room_events WHERE event_id = $1" +
+	" AND (add_state_ids IS NULL OR cardinality(add_state_ids) = 0)" +
+	" AND (remove_state_ids IS NULL OR cardinality(remove_state_ids) = 0)"
+
 const deleteEventSQL = "" +
 	"DELETE FROM syncapi_output_room_events WHERE event_id = $1"
 
@@ -244,6 +251,7 @@ type outputRoomEventsStatements struct {
 	selectRoomsWithEventsSinceStmt       *sql.Stmt
 	purgeEventsStmt                      *sql.Stmt
 	deleteEventStmt                      *sql.Stmt
+	deleteEventWithoutStateDeltaStmt     *sql.Stmt
 	selectSearchStmt                     *sql.Stmt
 	selectMaxStreamPositionsForRoomsStmt *sql.Stmt
 }
@@ -321,6 +329,7 @@ func NewPostgresEventsTable(ctx context.Context, db *sql.DB) (tables.Events, err
 		{&s.selectRoomsWithEventsSinceStmt, selectRoomsWithEventsSinceSQL},
 		{&s.purgeEventsStmt, purgeEventsSQL},
 		{&s.deleteEventStmt, deleteEventSQL},
+		{&s.deleteEventWithoutStateDeltaStmt, deleteEventWithoutStateDeltaSQL},
 		{&s.selectSearchStmt, selectSearchSQL},
 		{&s.selectMaxStreamPositionsForRoomsStmt, selectMaxStreamPositionsForRoomsSQL},
 	}.Prepare(db)
@@ -806,6 +815,17 @@ func rowsToStreamEvents(rows *sql.Rows) ([]types.StreamEvent, error) {
 		})
 	}
 	return result, rows.Err()
+}
+
+// DeleteEventWithoutStateDelta removes an event unless its row records
+// changes to the room's current state, and reports whether it did.
+func (s *outputRoomEventsStatements) DeleteEventWithoutStateDelta(ctx context.Context, txn *sql.Tx, eventID string) (bool, error) {
+	res, err := sqlutil.TxStmt(txn, s.deleteEventWithoutStateDeltaStmt).ExecContext(ctx, eventID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // DeleteEvent removes an event, such as one rejected after it was served.

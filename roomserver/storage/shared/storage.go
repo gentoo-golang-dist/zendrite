@@ -51,6 +51,7 @@ type Database struct {
 	MembershipTable    tables.Membership
 	PublishedTable     tables.Published
 	Purge              tables.Purge
+	RetentionPurge     tables.RetentionPurge
 	// SenderEvents searches for a sender's events (MSC4194).
 	SenderEvents      tables.SenderEvents
 	UserRoomKeyTable  tables.UserRoomKeys
@@ -2080,6 +2081,91 @@ func (d *Database) ForgetRoom(ctx context.Context, senderID, roomID string, forg
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		return d.MembershipTable.UpdateForgetMembership(ctx, nil, roomNIDs[0], stateKeyNID, forget)
 	})
+}
+
+// RetentionRoomIDs returns the IDs of every room the roomserver holds
+// events for (MSC1763).
+func (d *Database) RetentionRoomIDs(ctx context.Context) ([]string, error) {
+	roomNIDs, err := d.EventsTable.SelectRoomsWithEventTypeNID(ctx, nil, types.MRoomCreateNID)
+	if err != nil {
+		return nil, fmt.Errorf("d.EventsTable.SelectRoomsWithEventTypeNID: %w", err)
+	}
+	return d.RoomsTable.BulkSelectRoomIDs(ctx, nil, roomNIDs)
+}
+
+// PurgeExpiredEvents deletes a batch of expired non-state events of a room
+// (MSC1763). The candidates are read before the room is locked, since
+// finding them may read many events, and the transaction that deletes them
+// holds the room's lock only for the deletes.
+func (d *Database) PurgeExpiredEvents(
+	ctx context.Context, roomID string, beforeTS int64, afterNID types.EventNID, limit int,
+) (purged []string, next types.EventNID, done bool, err error) {
+	roomInfo, err := d.roomInfo(ctx, nil, roomID)
+	if err != nil {
+		return nil, afterNID, false, fmt.Errorf("d.roomInfo: %w", err)
+	}
+	if roomInfo == nil {
+		return nil, afterNID, true, nil
+	}
+	candidates, err := d.RetentionPurge.SelectExpiredEventCandidates(ctx, nil, roomInfo.RoomNID, afterNID, beforeTS, limit)
+	if err != nil {
+		return nil, afterNID, false, fmt.Errorf("d.RetentionPurge.SelectExpiredEventCandidates: %w", err)
+	}
+	done = len(candidates) < limit
+	next = afterNID
+	if len(candidates) > 0 {
+		next = candidates[len(candidates)-1].EventNID
+	}
+	var purgedNIDs []types.EventNID
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		// Locking the room serializes the purge with the processing of new
+		// events, so a forward extremity is never deleted.
+		roomNID, err := d.RoomsTable.SelectRoomNIDForUpdate(ctx, txn, roomID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				done = true
+				return nil
+			}
+			return fmt.Errorf("d.RoomsTable.SelectRoomNIDForUpdate: %w", err)
+		}
+		partial, err := d.PartialStateTable.SelectPartialStateRoom(ctx, txn, roomNID)
+		if err != nil {
+			return fmt.Errorf("d.PartialStateTable.SelectPartialStateRoom: %w", err)
+		}
+		if partial {
+			done = true
+			return nil
+		}
+		// The room updater looks up the last event sent to the output log,
+		// which need not be a forward extremity, so neither is purged.
+		keep, lastSent, _, err := d.RoomsTable.SelectLatestEventsNIDsForUpdate(ctx, txn, roomNID)
+		if err != nil {
+			return fmt.Errorf("d.RoomsTable.SelectLatestEventsNIDsForUpdate: %w", err)
+		}
+		keep = append(keep, lastSent)
+		for _, c := range candidates {
+			if slices.Contains(keep, c.EventNID) {
+				continue
+			}
+			ts := gjson.GetBytes(c.EventJSON, "origin_server_ts")
+			if ts.Type != gjson.Number || ts.Int() >= beforeTS {
+				continue
+			}
+			if err = d.RetentionPurge.PurgeEvent(ctx, txn, roomNID, roomID, c.EventNID, c.EventID); err != nil {
+				return fmt.Errorf("d.RetentionPurge.PurgeEvent: %w", err)
+			}
+			purged = append(purged, c.EventID)
+			purgedNIDs = append(purgedNIDs, c.EventNID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, afterNID, false, err
+	}
+	for _, nid := range purgedNIDs {
+		d.Cache.InvalidateRoomServerEvent(nid)
+	}
+	return purged, next, done, nil
 }
 
 // PurgeRoom removes all information about a given room from the roomserver.

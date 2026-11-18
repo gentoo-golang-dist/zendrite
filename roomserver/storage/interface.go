@@ -211,6 +211,16 @@ type Database interface {
 	// knocking in a room this server knows the membership of.
 	GetUsersInRooms(ctx context.Context, userIDs []string) ([]string, error)
 	PurgeRoom(ctx context.Context, roomID string) error
+	// RetentionRoomIDs returns the IDs of every room the roomserver holds
+	// events for, which a retention purge job looks at (MSC1763).
+	RetentionRoomIDs(ctx context.Context) ([]string, error)
+	// PurgeExpiredEvents deletes up to limit non-state events of the room
+	// sent before beforeTS, in event NID order after afterNID, except the
+	// room's forward extremities and the last event sent to the output log
+	// (MSC1763). It returns the purged event IDs,
+	// the NID to continue after, and whether the room has no more
+	// candidates. Rooms with partial state are left alone.
+	PurgeExpiredEvents(ctx context.Context, roomID string, beforeTS int64, afterNID types.EventNID, limit int) (purged []string, next types.EventNID, done bool, err error)
 	UpgradeRoom(ctx context.Context, oldRoomID, newRoomID, eventSender string) error
 
 	// GetMembershipForHistoryVisibility queries the membership events for the given eventIDs.
@@ -412,6 +422,10 @@ type RoomDatabase interface {
 	// ExpireRedactedContent forgets the content of events redacted longer
 	// ago than the retention period (MSC2815).
 	ExpireRedactedContent(ctx context.Context) (int64, error)
+	// RetentionRoomIDs and PurgeExpiredEvents run retention purge jobs
+	// (MSC1763); see Database.
+	RetentionRoomIDs(ctx context.Context) ([]string, error)
+	PurgeExpiredEvents(ctx context.Context, roomID string, beforeTS int64, afterNID types.EventNID, limit int) (purged []string, next types.EventNID, done bool, err error)
 	// StoreAnnotation records the event if it is an annotation (MSC2677) that
 	// has not been redacted.
 	StoreAnnotation(ctx context.Context, roomInfo *types.RoomInfo, event gomatrixserverlib.PDU) error

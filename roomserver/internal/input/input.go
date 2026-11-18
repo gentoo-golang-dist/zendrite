@@ -24,6 +24,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	fedapi "codefloe.com/pat-s/zendrite/federationapi/api"
+	"codefloe.com/pat-s/zendrite/internal/retention"
 	"codefloe.com/pat-s/zendrite/roomserver/acls"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/internal/query"
@@ -390,6 +391,7 @@ func (r *Inputer) Start() error {
 
 	r.ProcessContext.Go(r.expireClientTransactions)
 	r.ProcessContext.Go(r.expireRedactedContent)
+	retention.RunPurgeJobs(r.ProcessContext.Context(), &r.Cfg.Matrix.Retention, func(f func()) { r.ProcessContext.Go(f) }, r.retentionPass().Run)
 
 	// Make sure that the room consumers have the right config.
 	stream := r.Cfg.Matrix.JetStream.Prefixed(jetstream.InputRoomEvent)

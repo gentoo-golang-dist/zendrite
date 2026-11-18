@@ -83,6 +83,10 @@ const selectCurrentStateSQL = "" +
 
 // WHEN, ORDER BY and LIMIT will be added by prepareWithFilter.
 
+// selectRoomIDsSQL lists every room the sync API holds the state of.
+const selectRoomIDsSQL = "" +
+	"SELECT room_id FROM syncapi_current_room_state WHERE type = 'm.room.create' AND state_key = ''"
+
 const selectJoinedUsersSQL = "" +
 	"SELECT room_id, state_key FROM syncapi_current_room_state WHERE type = 'm.room.member' AND membership = 'join'"
 
@@ -120,6 +124,7 @@ type currentRoomStateStatements struct {
 	selectKickedRoomIDsStmt            *sql.Stmt
 	selectRoomIDsWithAnyMembershipStmt *sql.Stmt
 	selectJoinedUsersStmt              *sql.Stmt
+	selectRoomIDsStmt                  *sql.Stmt
 	// selectJoinedUsersInRoomStmt      *sql.Stmt - prepared at runtime due to variadic
 	selectStateEventStmt *sql.Stmt
 	// selectSharedUsersSQL             *sql.Stmt - prepared at runtime due to variadic
@@ -156,6 +161,7 @@ func NewSqliteCurrentRoomStateTable(db *sql.DB, streamID *StreamIDStatements) (t
 		{&s.selectKickedRoomIDsStmt, selectKickedRoomIDsSQL},
 		{&s.selectRoomIDsWithAnyMembershipStmt, selectRoomIDsWithAnyMembershipSQL},
 		{&s.selectJoinedUsersStmt, selectJoinedUsersSQL},
+		{&s.selectRoomIDsStmt, selectRoomIDsSQL},
 		{&s.selectStateEventStmt, selectStateEventSQL},
 		{&s.selectMembershipCountStmt, selectMembershipCount},
 	}.Prepare(db)
@@ -638,4 +644,23 @@ func (s *currentRoomStateStatements) SelectMembershipCount(ctx context.Context, 
 		return 0, err
 	}
 	return count, nil
+}
+
+// SelectRoomIDs returns the ID of every room the sync API holds the state
+// of.
+func (s *currentRoomStateStatements) SelectRoomIDs(ctx context.Context, txn *sql.Tx) ([]string, error) {
+	rows, err := sqlutil.TxStmt(txn, s.selectRoomIDsStmt).QueryContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectRoomIDs: rows.close() failed")
+	var roomIDs []string
+	for rows.Next() {
+		var roomID string
+		if err = rows.Scan(&roomID); err != nil {
+			return nil, err
+		}
+		roomIDs = append(roomIDs, roomID)
+	}
+	return roomIDs, rows.Err()
 }

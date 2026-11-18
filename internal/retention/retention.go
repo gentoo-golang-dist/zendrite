@@ -99,11 +99,24 @@ func RoomPolicy(cfg *config.Retention, ev gomatrixserverlib.PDU) Policy {
 // Enforced reports whether any event of the room can expire.
 func (p Policy) Enforced() bool { return p.enforced }
 
+// MaxLifetime is the room's effective max_lifetime, if Enforced.
+func (p Policy) MaxLifetime() time.Duration { return p.maxLifetime }
+
+// Cutoff returns the origin_server_ts before which the room's non-state
+// events have expired at now, or false if none expire.
+func (p Policy) Cutoff(now time.Time) (int64, bool) {
+	if !p.enforced {
+		return 0, false
+	}
+	return now.UnixMilli() - p.maxLifetime.Milliseconds(), true
+}
+
 // Expired reports whether ev is past the room's max_lifetime at now and
 // must no longer be served. State events never expire.
 func (p Policy) Expired(ev gomatrixserverlib.PDU, now time.Time) bool {
 	if !p.enforced || ev.StateKey() != nil {
 		return false
 	}
-	return int64(ev.OriginServerTS()) < now.UnixMilli()-p.maxLifetime.Milliseconds()
+	cutoff, _ := p.Cutoff(now)
+	return int64(ev.OriginServerTS()) < cutoff
 }

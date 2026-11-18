@@ -372,6 +372,25 @@ type Purge interface {
 	) error
 }
 
+// ExpiredEventCandidate is a non-state event that may be past its room's
+// retention policy (MSC1763).
+type ExpiredEventCandidate struct {
+	EventNID  types.EventNID
+	EventID   string
+	EventJSON []byte
+}
+
+// RetentionPurge deletes events past their room's retention policy.
+type RetentionPurge interface {
+	// SelectExpiredEventCandidates returns up to limit non-state events of
+	// the room with an event NID above afterNID, in NID order, that may
+	// have an origin_server_ts before beforeTS. It may return newer events,
+	// so the caller checks the timestamp.
+	SelectExpiredEventCandidates(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, afterNID types.EventNID, beforeTS int64, limit int) ([]ExpiredEventCandidate, error)
+	// PurgeEvent deletes a non-state event and the rows that refer to it.
+	PurgeEvent(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, roomID string, eventNID types.EventNID, eventID string) error
+}
+
 // PartialState tracks rooms with partial state from MSC3706 faster joins.
 type PartialState interface {
 	// InsertPartialStateRoom inserts a new partial state room entry

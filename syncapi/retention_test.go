@@ -23,8 +23,12 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/roomserver"
 	rsapi "codefloe.com/pat-s/zendrite/roomserver/api"
+	rsstorage "codefloe.com/pat-s/zendrite/roomserver/storage"
+	rstypes "codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/setup/jetstream"
+	"codefloe.com/pat-s/zendrite/syncapi/storage"
+	syncshared "codefloe.com/pat-s/zendrite/syncapi/storage/shared"
 	"codefloe.com/pat-s/zendrite/test"
 	"codefloe.com/pat-s/zendrite/test/testrig"
 	"codefloe.com/pat-s/zendrite/userapi/api"
@@ -140,5 +144,138 @@ func TestRetentionPolicies(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		assert.False(t, gjson.Get(w.Body.String(), fmt.Sprintf(`events_before.#(event_id=="%s")`, hourExpired)).Exists(), w.Body.String())
 		assert.True(t, gjson.Get(w.Body.String(), fmt.Sprintf(`events_before.#(event_id=="%s")`, hourTopic)).Exists(), w.Body.String())
+	})
+}
+
+// TestRetentionPurge checks the MSC1763 purge jobs: the roomserver and the
+// sync API each delete expired non-state events, but keep state events, the
+// room's forward extremity and its latest event.
+func TestRetentionPurge(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		alice := test.NewUser(t)
+		aliceDev := api.Device{ID: "ALICEID", UserID: alice.ID, AccessToken: "ALICE_MSC1763_PURGE_TOKEN", AccountType: api.AccountTypeUser}
+
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.Global.Retention = config.Retention{
+			Enabled:         true,
+			DefaultPolicy:   config.RetentionPolicy{MaxLifetime: time.Hour},
+			PurgeJobs:       []config.RetentionPurgeJob{{Interval: 100 * time.Millisecond}},
+			FirstPurgeDelay: 100 * time.Millisecond,
+		}
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		natsInstance := jetstream.NATSInstance{}
+		jsctx, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
+		defer jetstream.DeleteAllStreams(jsctx, &cfg.Global.JetStream)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		AddPublicRoutes(processCtx, routers, cfg, cm, &natsInstance, &syncUserAPI{accounts: []api.Device{aliceDev}}, rsAPI, caches, caching.DisableMetrics, nil, nil)
+
+		now := time.Now()
+		room := test.NewRoom(t, alice)
+		expired := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"msgtype": "m.text", "body": "expired"}, test.WithTimestamp(now.Add(-2*time.Hour))).EventID()
+		oldState := room.CreateAndInsert(t, alice, spec.MRoomTopic, map[string]any{"topic": "old"}, test.WithStateKey(""), test.WithTimestamp(now.Add(-2*time.Hour))).EventID()
+		recent := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"msgtype": "m.text", "body": "recent"}).EventID()
+		last := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"msgtype": "m.text", "body": "expired but latest"}, test.WithTimestamp(now.Add(-2*time.Hour))).EventID()
+		require.NoError(t, rsapi.SendEvents(context.Background(), rsAPI, rsapi.KindNew, room.Events(), "test", "test", "test", nil, false))
+		syncUntil(t, routers, aliceDev.AccessToken, false, func(syncBody string) bool {
+			return gjson.Get(syncBody, fmt.Sprintf(`rooms.join.%s.timeline.events.#(event_id=="%s")`, room.ID, recent)).Exists()
+		})
+
+		syncDB, err := storage.NewSyncServerDatasource(processCtx.Context(), cm, &cfg.SyncAPI.Database)
+		require.NoError(t, err)
+		inRoomserver := func(eventID string) bool {
+			var res rsapi.QueryEventsByIDResponse
+			require.NoError(t, rsAPI.QueryEventsByID(context.Background(), &rsapi.QueryEventsByIDRequest{RoomID: room.ID, EventIDs: []string{eventID}}, &res))
+			return len(res.Events) == 1
+		}
+		inSyncAPI := func(eventID string) bool {
+			events, err := syncDB.Events(context.Background(), []string{eventID})
+			require.NoError(t, err)
+			return len(events) == 1
+		}
+		require.Eventually(t, func() bool {
+			return !inRoomserver(expired) && !inSyncAPI(expired)
+		}, 20*time.Second, 50*time.Millisecond, "the expired event was not purged")
+		for _, eventID := range []string{oldState, recent, last} {
+			assert.True(t, inRoomserver(eventID), "the roomserver purged %s", eventID)
+			assert.True(t, inSyncAPI(eventID), "the sync API purged %s", eventID)
+		}
+	})
+}
+
+// TestRetentionPurgeBatches drives both purges one event at a time, so that
+// batches made of kept events (state events, the latest events) must not
+// stop them before older expired events.
+func TestRetentionPurgeBatches(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		alice := test.NewUser(t)
+		aliceDev := api.Device{ID: "ALICEID", UserID: alice.ID, AccessToken: "ALICE_MSC1763_BATCH_TOKEN", AccountType: api.AccountTypeUser}
+
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		natsInstance := jetstream.NATSInstance{}
+		jsctx, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
+		defer jetstream.DeleteAllStreams(jsctx, &cfg.Global.JetStream)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		AddPublicRoutes(processCtx, routers, cfg, cm, &natsInstance, &syncUserAPI{accounts: []api.Device{aliceDev}}, rsAPI, caches, caching.DisableMetrics, nil, nil)
+
+		now := time.Now()
+		room := test.NewRoom(t, alice)
+		var expired, kept []string
+		for i := range 3 {
+			old := now.Add(-time.Duration(10-i) * time.Hour)
+			expired = append(expired, room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": fmt.Sprint("old ", i)}, test.WithTimestamp(old)).EventID())
+			kept = append(kept, room.CreateAndInsert(t, alice, spec.MRoomTopic, map[string]any{"topic": fmt.Sprint(i)}, test.WithStateKey(""), test.WithTimestamp(old)).EventID())
+		}
+		kept = append(kept, room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "latest"}, test.WithTimestamp(now.Add(-2*time.Hour))).EventID())
+		require.NoError(t, rsapi.SendEvents(context.Background(), rsAPI, rsapi.KindNew, room.Events(), "test", "test", "test", nil, false))
+		syncUntil(t, routers, aliceDev.AccessToken, false, func(syncBody string) bool {
+			return gjson.Get(syncBody, fmt.Sprintf(`rooms.join.%s.timeline.events.#(event_id=="%s")`, room.ID, kept[len(kept)-1])).Exists()
+		})
+		cutoff := now.Add(-time.Hour).UnixMilli()
+
+		rsDB, err := rsstorage.Open(processCtx.Context(), cm, &cfg.RoomServer.Database, caches)
+		require.NoError(t, err)
+		var rsPurged []string
+		var after rstypes.EventNID
+		for {
+			purged, next, done, err := rsDB.PurgeExpiredEvents(context.Background(), room.ID, cutoff, after, 1)
+			require.NoError(t, err)
+			rsPurged = append(rsPurged, purged...)
+			if done {
+				break
+			}
+			after = next
+		}
+		assert.ElementsMatch(t, expired, rsPurged)
+
+		syncDB, err := storage.NewSyncServerDatasource(processCtx.Context(), cm, &cfg.SyncAPI.Database)
+		require.NoError(t, err)
+		var syncPurged []string
+		cursor := syncshared.RetentionCursor{TS: cutoff - 1}
+		for {
+			purged, next, done, err := syncDB.PurgeExpiredEvents(context.Background(), room.ID, cursor, 1)
+			require.NoError(t, err)
+			syncPurged = append(syncPurged, purged...)
+			if done {
+				break
+			}
+			cursor = next
+		}
+		assert.ElementsMatch(t, expired, syncPurged)
+
+		events, err := syncDB.Events(context.Background(), kept)
+		require.NoError(t, err)
+		assert.Len(t, events, len(kept))
+		var res rsapi.QueryEventsByIDResponse
+		require.NoError(t, rsAPI.QueryEventsByID(context.Background(), &rsapi.QueryEventsByIDRequest{RoomID: room.ID, EventIDs: append(kept, expired...)}, &res))
+		assert.Len(t, res.Events, len(kept))
 	})
 }

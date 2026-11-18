@@ -433,6 +433,13 @@ func Owned(js natsclient.JetStreamContext) error {
 	return owner.Valid()
 }
 
+// OwnsHomeserver reports whether this process may write through js right
+// now: always without HA, and while ownership is confirmed with it.
+func OwnsHomeserver(js natsclient.JetStreamContext) bool {
+	owner := OwnershipOf(js)
+	return owner == nil || owner.Valid() == nil
+}
+
 // AwaitOwnership blocks until this activation may act again, ownership is
 // retired, or ctx is done.
 //

@@ -336,7 +336,7 @@ Read receipts (`m.read`, `m.read.private`) still replace the previous receipt ev
 | [MSC2666](https://github.com/matrix-org/matrix-spec-proposals/pull/2666) | Mutual rooms | 1.19 | Implemented: `GET /_matrix/client/v1/mutual_rooms` lists the rooms the caller shares with a user, with signed pagination tokens. Also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable` |
 | [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
 | [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
-| [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): expired events are no longer served; they are not purged yet. See [message retention policies](#message-retention-policies) |
+| [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): expired events are no longer served, and purge jobs delete them. See [message retention policies](#message-retention-policies) |
 | [MSC4242](https://github.com/matrix-org/matrix-spec-proposals/pull/4242) | State DAGs (room version `org.matrix.msc4242.12`) | N/A | Not supported: the room version is not listed in `/capabilities`, `createRoom` and room upgrades refuse it with `M_UNSUPPORTED_ROOM_VERSION`, and joins and federation invites into such rooms fail with `M_INCOMPATIBLE_ROOM_VERSION` |
 
 ### Message retention policies
@@ -353,6 +353,11 @@ global:
       max_lifetime: 8760h
     allowed_lifetime_min: 24h
     allowed_lifetime_max: 8760h
+    purge_jobs:
+      - longest_max_lifetime: 72h
+        interval: 12h
+      - shortest_max_lifetime: 72h
+        interval: 24h
 ```
 
 - With `enabled: false`, the default, `m.room.retention` events have no effect.
@@ -364,7 +369,23 @@ global:
 - A non-state event whose `origin_server_ts` is older than the effective `max_lifetime` is no longer served to clients: `/sync`, sliding sync, `/messages`, `/context`, `/event`, `/relations`, threads, bundled aggregations, sticky events, `/search` and `/timestamp_to_event` leave it out, as Synapse does.
   State events never expire.
 - `/search` leaves expired matches out of its results, highlights and count.
-- Expired events stay in the database for now: the purge job that deletes them is not implemented yet, federation still serves them, and `/notifications` still lists the notifications they caused.
+- Purge jobs delete expired events from the database.
+  Each job handles, every `interval`, the rooms whose effective `max_lifetime` is greater than `shortest_max_lifetime` and at most `longest_max_lifetime`, either of which may be left out.
+  Without `purge_jobs`, one job handles every room once a day, as in Synapse.
+  Unlike Synapse, a job picks rooms by their effective `max_lifetime`, within the allowed bounds, so jobs whose ranges cover every lifetime never miss a room.
+- Between passes, expired events stay in the database but are not served, as the MSC allows.
+  Each job first runs a minute after startup rather than an interval later.
+- The roomserver deletes an expired non-state event with its JSON, its redaction and annotation records, its moderator copy of redacted content (MSC2815) and its client transaction record.
+  It keeps the record that the event was referenced by later events, so the event does not become a forward extremity if a server sends it again.
+  It never deletes a forward extremity of the room, so new events can still reference it, as the MSC asks, nor the last event it sent to the other components, and leaves rooms with partial state alone until their state is complete.
+  It reads each batch of up to 500 candidates before locking the room, and deletes them in a transaction that holds the room's lock, so new events are not held up for long.
+- The sync API deletes the event from its timeline, topology, relation, label and sticky event tables and from the search index.
+  It keeps the room's latest event of the kinds that order rooms by activity in sliding sync, so the room keeps its place in room lists.
+  An expired event whose stream entry also records a change to the room's state, which happens when state resolution changes the state at a message, keeps its entry with its content redacted, so incremental syncs across it still get the state change.
+- Media that expired events refer to is kept, as in Synapse; configure media retention separately.
+- Federation still serves expired events until they are purged, and `/notifications` keeps listing the notifications they caused.
+- With [high availability](/installation/manual/high-availability/), the jobs only run in the activation that owns the homeserver, and stop at the next batch once ownership is lost.
+  The roomserver and the sync API each purge their own tables, without waiting on a message from the other, and every batch only deletes what has expired, so a pass cut short by a takeover leaves consistent storage and the successor's first pass carries on.
 - Zendrite refuses an `m.room.retention` event sent by a local user, from `/state`, `/send` or `createRoom`'s `initial_state`, unless `min_lifetime` and `max_lifetime` are each absent, `null` or an integer between 0 and 2^53 - 1, and `min_lifetime` is not greater than `max_lifetime`.
   Like Synapse, it checks this whether or not retention policies are enabled.
   Rooms use `m.room.retention`, as Synapse and Element do, not the MSC's unstable `org.matrix.msc1763.retention`.

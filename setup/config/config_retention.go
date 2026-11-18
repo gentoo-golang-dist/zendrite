@@ -6,6 +6,7 @@
 package config
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -27,6 +28,49 @@ type Retention struct {
 	// one lowered to AllowedLifetimeMax. Zero leaves that side unbounded.
 	AllowedLifetimeMin time.Duration `yaml:"allowed_lifetime_min"`
 	AllowedLifetimeMax time.Duration `yaml:"allowed_lifetime_max"`
+
+	// PurgeJobs delete expired events. Each job handles the rooms whose
+	// effective max_lifetime falls in its range. Without any, one job
+	// handles every room once a day, as in Synapse.
+	PurgeJobs []RetentionPurgeJob `yaml:"purge_jobs"`
+
+	// FirstPurgeDelay overrides how long after start the purge jobs first
+	// run, for tests. It cannot be configured.
+	FirstPurgeDelay time.Duration `yaml:"-"`
+}
+
+// RetentionPurgeJob deletes, every Interval, the expired events of the rooms
+// whose effective max_lifetime is greater than ShortestMaxLifetime and at
+// most LongestMaxLifetime. A zero bound leaves that side open.
+type RetentionPurgeJob struct {
+	ShortestMaxLifetime time.Duration `yaml:"shortest_max_lifetime"`
+	LongestMaxLifetime  time.Duration `yaml:"longest_max_lifetime"`
+	Interval            time.Duration `yaml:"interval"`
+}
+
+// DefaultRetentionPurgeInterval is the interval of the purge job used when
+// none is configured.
+const DefaultRetentionPurgeInterval = 24 * time.Hour
+
+// Jobs returns the configured purge jobs, or the default daily job for
+// every room.
+func (c *Retention) Jobs() []RetentionPurgeJob {
+	if len(c.PurgeJobs) == 0 {
+		return []RetentionPurgeJob{{Interval: DefaultRetentionPurgeInterval}}
+	}
+	return c.PurgeJobs
+}
+
+// Covers reports whether the job handles rooms with the given effective
+// max_lifetime.
+func (j RetentionPurgeJob) Covers(maxLifetime time.Duration) bool {
+	if j.ShortestMaxLifetime > 0 && maxLifetime <= j.ShortestMaxLifetime {
+		return false
+	}
+	if j.LongestMaxLifetime > 0 && maxLifetime > j.LongestMaxLifetime {
+		return false
+	}
+	return true
 }
 
 // RetentionPolicy is a server-side retention policy. A zero lifetime is not
@@ -55,6 +99,17 @@ func (c *Retention) Verify(configErrs *ConfigErrors) {
 	}
 	if c.AllowedLifetimeMin > 0 && c.AllowedLifetimeMax > 0 && c.AllowedLifetimeMin > c.AllowedLifetimeMax {
 		configErrs.Add("global.retention.allowed_lifetime_min must not be greater than allowed_lifetime_max")
+	}
+	for i, job := range c.PurgeJobs {
+		key := fmt.Sprintf("purge_jobs[%d].", i)
+		if job.Interval <= 0 {
+			configErrs.Add("global.retention." + key + "interval must be positive")
+		}
+		checkNonNegativeDuration(key+"shortest_max_lifetime", job.ShortestMaxLifetime)
+		checkNonNegativeDuration(key+"longest_max_lifetime", job.LongestMaxLifetime)
+		if job.ShortestMaxLifetime > 0 && job.LongestMaxLifetime > 0 && job.ShortestMaxLifetime >= job.LongestMaxLifetime {
+			configErrs.Add("global.retention." + key + "shortest_max_lifetime must be less than its longest_max_lifetime")
+		}
 	}
 }
 

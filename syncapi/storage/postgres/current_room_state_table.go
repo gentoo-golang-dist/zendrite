@@ -119,6 +119,10 @@ const selectCurrentStateSQL = "" +
 	" AND ( $6::bool IS NULL   OR     contains_url = $6  )" +
 	" AND (event_id = ANY($7)) IS NOT TRUE"
 
+// selectRoomIDsSQL lists every room the sync API holds the state of.
+const selectRoomIDsSQL = "" +
+	"SELECT room_id FROM syncapi_current_room_state WHERE type = 'm.room.create' AND state_key = ''"
+
 const selectJoinedUsersSQL = "" +
 	"SELECT room_id, state_key FROM syncapi_current_room_state WHERE type = 'm.room.member' AND membership = 'join'"
 
@@ -161,6 +165,7 @@ type currentRoomStateStatements struct {
 	selectRoomIDsWithAnyMembershipStmt *sql.Stmt
 	selectCurrentStateStmt             *sql.Stmt
 	selectJoinedUsersStmt              *sql.Stmt
+	selectRoomIDsStmt                  *sql.Stmt
 	selectJoinedUsersInRoomStmt        *sql.Stmt
 	selectEventsWithEventIDsStmt       *sql.Stmt
 	selectStateEventStmt               *sql.Stmt
@@ -199,6 +204,7 @@ func NewPostgresCurrentRoomStateTable(db *sql.DB) (tables.CurrentRoomState, erro
 		{&s.selectRoomIDsWithAnyMembershipStmt, selectRoomIDsWithAnyMembershipSQL},
 		{&s.selectCurrentStateStmt, selectCurrentStateSQL},
 		{&s.selectJoinedUsersStmt, selectJoinedUsersSQL},
+		{&s.selectRoomIDsStmt, selectRoomIDsSQL},
 		{&s.selectJoinedUsersInRoomStmt, selectJoinedUsersInRoomSQL},
 		{&s.selectEventsWithEventIDsStmt, selectEventsWithEventIDsSQL},
 		{&s.selectStateEventStmt, selectStateEventSQL},
@@ -673,4 +679,23 @@ func (s *currentRoomStateStatements) SelectMembershipCount(ctx context.Context, 
 		return 0, err
 	}
 	return count, nil
+}
+
+// SelectRoomIDs returns the ID of every room the sync API holds the state
+// of.
+func (s *currentRoomStateStatements) SelectRoomIDs(ctx context.Context, txn *sql.Tx) ([]string, error) {
+	rows, err := sqlutil.TxStmt(txn, s.selectRoomIDsStmt).QueryContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectRoomIDs: rows.close() failed")
+	var roomIDs []string
+	for rows.Next() {
+		var roomID string
+		if err = rows.Scan(&roomID); err != nil {
+			return nil, err
+		}
+		roomIDs = append(roomIDs, roomID)
+	}
+	return roomIDs, rows.Err()
 }

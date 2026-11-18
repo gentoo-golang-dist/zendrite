@@ -115,6 +115,11 @@ const selectContextAfterEventSQL = "" +
 
 const selectSearchSQL = "SELECT id, event_id, headered_event_json FROM syncapi_output_room_events WHERE id > $1 AND type IN ($2)"
 
+// deleteEventWithoutStateDeltaSQL deletes an event unless incremental syncs
+// need its row for the state changes it records (MSC1763).
+const deleteEventWithoutStateDeltaSQL = "" +
+	"DELETE FROM syncapi_output_room_events WHERE event_id = $1 AND (add_state_ids IS NULL OR add_state_ids = '') AND (remove_state_ids IS NULL OR remove_state_ids = '')"
+
 const deleteEventSQL = "" +
 	"DELETE FROM syncapi_output_room_events WHERE event_id = $1"
 
@@ -134,20 +139,21 @@ AND ($3 = 0 OR CAST(json_extract(headered_event_json, '$.origin_server_ts') AS B
 ORDER BY CAST(json_extract(headered_event_json, '$.origin_server_ts') AS BIGINT) DESC, id DESC LIMIT $4`
 
 type outputRoomEventsStatements struct {
-	selectTimestampForwardStmt     *sql.Stmt
-	selectTimestampBackwardStmt    *sql.Stmt
-	db                             *sql.DB
-	streamIDStatements             *StreamIDStatements
-	insertEventStmt                *sql.Stmt
-	selectMaxEventIDStmt           *sql.Stmt
-	selectLatestSyncEventAfterStmt *sql.Stmt
-	updateEventJSONStmt            *sql.Stmt
-	deleteEventsForRoomStmt        *sql.Stmt
-	selectContextEventStmt         *sql.Stmt
-	selectContextBeforeEventStmt   *sql.Stmt
-	selectContextAfterEventStmt    *sql.Stmt
-	purgeEventsStmt                *sql.Stmt
-	deleteEventStmt                *sql.Stmt
+	selectTimestampForwardStmt       *sql.Stmt
+	selectTimestampBackwardStmt      *sql.Stmt
+	db                               *sql.DB
+	streamIDStatements               *StreamIDStatements
+	insertEventStmt                  *sql.Stmt
+	selectMaxEventIDStmt             *sql.Stmt
+	selectLatestSyncEventAfterStmt   *sql.Stmt
+	updateEventJSONStmt              *sql.Stmt
+	deleteEventsForRoomStmt          *sql.Stmt
+	selectContextEventStmt           *sql.Stmt
+	selectContextBeforeEventStmt     *sql.Stmt
+	selectContextAfterEventStmt      *sql.Stmt
+	purgeEventsStmt                  *sql.Stmt
+	deleteEventStmt                  *sql.Stmt
+	deleteEventWithoutStateDeltaStmt *sql.Stmt
 	// selectSearchStmt             *sql.Stmt - prepared at runtime
 }
 
@@ -190,6 +196,7 @@ func NewSqliteEventsTable(db *sql.DB, streamID *StreamIDStatements) (tables.Even
 		{&s.selectContextAfterEventStmt, selectContextAfterEventSQL},
 		{&s.purgeEventsStmt, purgeEventsSQL},
 		{&s.deleteEventStmt, deleteEventSQL},
+		{&s.deleteEventWithoutStateDeltaStmt, deleteEventWithoutStateDeltaSQL},
 		// {&s.selectSearchStmt, selectSearchSQL}, - prepared at runtime
 	}.Prepare(db)
 }
@@ -761,6 +768,17 @@ func unmarshalStateIDs(addIDsJSON, delIDsJSON string) (addIDs []string, delIDs [
 		}
 	}
 	return
+}
+
+// DeleteEventWithoutStateDelta removes an event unless its row records
+// changes to the room's current state, and reports whether it did.
+func (s *outputRoomEventsStatements) DeleteEventWithoutStateDelta(ctx context.Context, txn *sql.Tx, eventID string) (bool, error) {
+	res, err := sqlutil.TxStmt(txn, s.deleteEventWithoutStateDeltaStmt).ExecContext(ctx, eventID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // DeleteEvent removes an event, such as one rejected after it was served.

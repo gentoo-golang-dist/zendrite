@@ -84,6 +84,9 @@ type Events interface {
 	PurgeEvents(ctx context.Context, txn *sql.Tx, roomID string) error
 	// DeleteEvent removes an event, such as one rejected after it was served.
 	DeleteEvent(ctx context.Context, txn *sql.Tx, eventID string) error
+	// DeleteEventWithoutStateDelta removes an event unless its row records
+	// changes to the room's current state, and reports whether it did.
+	DeleteEventWithoutStateDelta(ctx context.Context, txn *sql.Tx, eventID string) (bool, error)
 	ReIndex(ctx context.Context, txn *sql.Tx, limit, offset int64, types []string) (map[int64]rstypes.HeaderedEvent, error)
 	// SelectMaxStreamPositionsForRooms returns the maximum stream position (latest event) for each room.
 	// This is used by sliding sync to sort rooms by activity (bump_stamp).
@@ -149,6 +152,8 @@ type CurrentRoomState interface {
 	SelectRoomIDsWithAnyMembership(ctx context.Context, txn *sql.Tx, userID string) (map[string]string, error)
 	// SelectJoinedUsers returns a map of room ID to a list of joined user IDs.
 	SelectJoinedUsers(ctx context.Context, txn *sql.Tx) (map[string][]string, error)
+	// SelectRoomIDs returns the ID of every room the sync API holds the state of.
+	SelectRoomIDs(ctx context.Context, txn *sql.Tx) ([]string, error)
 	// SelectJoinedUsersInRoom returns a map of room ID to a list of joined user IDs for a given room.
 	SelectJoinedUsersInRoom(ctx context.Context, txn *sql.Tx, roomIDs []string) (map[string][]string, error)
 	// SelectSharedUsers returns a subset of otherUserIDs that share a room with userID.

@@ -7,6 +7,7 @@
 package shared
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -1161,6 +1162,94 @@ func (d *Database) PopulateRoomStateAfterResync(ctx context.Context, stateEvents
 	})
 
 	return pduPosition, err
+}
+
+// RetentionRoomIDs returns the ID of every room the sync API holds the
+// state of, which a retention purge job looks at (MSC1763).
+func (d *Database) RetentionRoomIDs(ctx context.Context) ([]string, error) {
+	return d.CurrentRoomState.SelectRoomIDs(ctx, nil)
+}
+
+// RetentionCursor is where a retention purge of a room carries on: the
+// events sent at TS with a stream position below ID, then older ones.
+type RetentionCursor struct {
+	TS int64
+	ID types.StreamPosition
+}
+
+// PurgeExpiredEvents deletes up to limit non-state events of the room sent
+// before the cursor, newest first, except the room's latest event of the
+// kinds that order rooms by activity (bump_stamp in sliding sync), which
+// the sync API keeps so that the room keeps its place (MSC1763). Start with
+// RetentionCursor{TS: cutoff - 1}. It returns the purged event IDs, the
+// cursor to carry on from, and whether no older events remain.
+func (d *Database) PurgeExpiredEvents(
+	ctx context.Context, roomID string, cursor RetentionCursor, limit int,
+) (purged []string, next RetentionCursor, done bool, err error) {
+	next = cursor
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		candidates, err := d.OutputEvents.SelectEventsByTimestamp(ctx, txn, roomID, cursor.TS, cursor.ID, true, limit)
+		if err != nil {
+			return fmt.Errorf("d.OutputEvents.SelectEventsByTimestamp: %w", err)
+		}
+		done = len(candidates) < limit
+		if len(candidates) == 0 {
+			return nil
+		}
+		latest, err := d.OutputEvents.SelectMaxStreamPositionsForRooms(ctx, txn, []string{roomID})
+		if err != nil {
+			return fmt.Errorf("d.OutputEvents.SelectMaxStreamPositionsForRooms: %w", err)
+		}
+		for _, ev := range candidates {
+			next = RetentionCursor{TS: int64(ev.OriginServerTS()), ID: ev.StreamPosition}
+			if ev.StateKey() != nil || ev.StreamPosition == latest[roomID] {
+				continue
+			}
+			eventID := ev.EventID()
+			deleted, err := d.OutputEvents.DeleteEventWithoutStateDelta(ctx, txn, eventID)
+			if err != nil {
+				return fmt.Errorf("d.OutputEvents.DeleteEventWithoutStateDelta: %w", err)
+			}
+			if deleted {
+				if err = d.Topology.DeleteEventTopology(ctx, txn, eventID); err != nil {
+					return fmt.Errorf("d.Topology.DeleteEventTopology: %w", err)
+				}
+			} else {
+				// The row records state changes that incremental syncs
+				// spanning it still need, as when state resolution changed
+				// the state at a message, so it keeps its place with the
+				// event's content redacted. A row redacted by an earlier
+				// pass is left as it is.
+				redacted, err := rstypes.RedactedCopy(ev.HeaderedEvent)
+				if err != nil {
+					return fmt.Errorf("rstypes.RedactedCopy: %w", err)
+				}
+				if bytes.Equal(redacted.JSON(), ev.JSON()) {
+					continue
+				}
+				copied := *ev.HeaderedEvent
+				copied.PDU = redacted
+				if err = d.OutputEvents.UpdateEventJSON(ctx, txn, &copied); err != nil {
+					return fmt.Errorf("d.OutputEvents.UpdateEventJSON: %w", err)
+				}
+			}
+			if err = d.Relations.DeleteRelation(ctx, txn, roomID, eventID); err != nil {
+				return fmt.Errorf("d.Relations.DeleteRelation: %w", err)
+			}
+			if err = d.EventLabels.DeleteEventLabels(ctx, txn, eventID); err != nil {
+				return fmt.Errorf("d.EventLabels.DeleteEventLabels: %w", err)
+			}
+			if err = d.StickyEvents.DeleteStickyEvent(ctx, txn, eventID); err != nil {
+				return fmt.Errorf("d.StickyEvents.DeleteStickyEvent: %w", err)
+			}
+			purged = append(purged, eventID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, cursor, false, err
+	}
+	return purged, next, done, nil
 }
 
 // DeleteRejectedEvent removes an event that the roomserver rejected after the

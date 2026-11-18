@@ -142,6 +142,12 @@ Normal shutdown removes the activation's temporary index after closing it; a kil
 Provision space for a complete rebuilt index and possible crash leftovers.
 Rebuild time grows with the searchable history and delays only search; `HACHAOS_SEARCH_HISTORY` makes the [HA qualification](/development/ha-qualification/) harness seed a history of a chosen size to measure it.
 
+## Retention purge jobs
+
+With `global.retention.enabled`, the [retention purge jobs](/mscs/#message-retention-policies) only run in the activation, and stop at the next batch once ownership is lost.
+The roomserver and the sync API each purge their own tables in batches that only delete expired events, so a pass cut short by a takeover leaves consistent storage.
+Each activation runs its jobs a minute after startup, so takeovers more frequent than a job's interval do not stop purging.
+
 ## Media fencing boundary and qualification
 
 Media originals use content-hash keys and PostgreSQL metadata controls their publication.

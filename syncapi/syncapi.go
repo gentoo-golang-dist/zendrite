@@ -17,6 +17,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/fulltext"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
+	"codefloe.com/pat-s/zendrite/internal/retention"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -102,6 +103,11 @@ func AddPublicRoutes(
 			processContext.Go(func() { consumers.RebuildSearch(processContext.Context(), syncDB, recovering) })
 		}
 	}
+
+	// MSC1763: purge expired events from the sync API's tables and the
+	// search index.
+	purge := internal.RetentionPass(syncDB, index, func() bool { return jetstream.OwnsHomeserver(js) })
+	retention.RunPurgeJobs(processContext.Context(), &zendriteCfg.Global.Retention, func(f func()) { processContext.Go(f) }, purge.Run)
 
 	federationPresenceProducer := &producers.FederationAPIPresenceProducer{
 		Topic:     zendriteCfg.Global.JetStream.Prefixed(jetstream.OutputPresenceEvent),

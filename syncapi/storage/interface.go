@@ -176,6 +176,10 @@ type Database interface {
 	// SetRetentionConfig sets the retention configuration (MSC1763) that
 	// the history visibility filters apply.
 	SetRetentionConfig(cfg *config.Retention)
+	// RetentionRoomIDs and PurgeExpiredEvents run retention purge jobs
+	// (MSC1763).
+	RetentionRoomIDs(ctx context.Context) ([]string, error)
+	PurgeExpiredEvents(ctx context.Context, roomID string, cursor shared.RetentionCursor, limit int) (purged []string, next shared.RetentionCursor, done bool, err error)
 	NewDatabaseTransaction(ctx context.Context) (*shared.DatabaseTransaction, error)
 
 	// Events lookups a list of event by their event ID.
