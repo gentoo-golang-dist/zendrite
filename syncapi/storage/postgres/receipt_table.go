@@ -68,22 +68,32 @@ const selectLatestUserReceiptsSQL = "" +
 	"ORDER BY room_id, receipt_type, user_id, thread_id, id DESC"
 
 const selectConnectionReceiptsSQL = "" +
-	"SELECT room_id, receipt_type, user_id, last_delivered_event_id, thread_id, last_delivered_ts " +
+	"SELECT room_id, receipt_type, user_id, last_delivered_event_id, thread_id " +
 	"FROM syncapi_sliding_sync_connection_receipts " +
 	"WHERE connection_key = $1"
 
 const upsertConnectionReceiptSQL = "" +
 	"INSERT INTO syncapi_sliding_sync_connection_receipts " +
-	"(connection_key, room_id, receipt_type, user_id, last_delivered_event_id, thread_id, last_delivered_ts) " +
-	"VALUES ($1, $2, $3, $4, $5, $6, $7) " +
+	"(connection_key, room_id, receipt_type, user_id, last_delivered_event_id, thread_id, last_delivered_ts, connection_position) " +
+	"VALUES ($1, $2, $3, $4, $5, $6, $7, $8) " +
 	"ON CONFLICT (connection_key, room_id, receipt_type, user_id, thread_id) " +
-	"DO UPDATE SET last_delivered_event_id = $5, last_delivered_ts = $7"
+	"DO UPDATE SET last_delivered_event_id = $5, last_delivered_ts = $7, connection_position = $8"
 
 const deleteConnectionReceiptsSQL = "" +
 	"DELETE FROM syncapi_sliding_sync_connection_receipts WHERE connection_key = $1"
 
 const deleteConnectionReceiptsForRoomSQL = "" +
 	"DELETE FROM syncapi_sliding_sync_connection_receipts WHERE connection_key = $1 AND room_id = $2"
+
+// Receipts recorded for a response stay pending, under the response's
+// position, until a request carries that position: they are then
+// acknowledged (position 0), and the pending receipts of every other
+// response, which the client never saw, are forgotten (MSC4551).
+const acknowledgeConnectionReceiptsSQL = "" +
+	"UPDATE syncapi_sliding_sync_connection_receipts SET connection_position = 0 WHERE connection_key = $1 AND connection_position = $2"
+
+const forgetPendingConnectionReceiptsSQL = "" +
+	"DELETE FROM syncapi_sliding_sync_connection_receipts WHERE connection_key = $1 AND connection_position <> 0"
 
 type receiptStatements struct {
 	db                 *sql.DB
@@ -97,6 +107,8 @@ type receiptStatements struct {
 	upsertConnectionReceipt         *sql.Stmt
 	deleteConnectionReceipts        *sql.Stmt
 	deleteConnectionReceiptsForRoom *sql.Stmt
+	acknowledgeConnectionReceipts   *sql.Stmt
+	forgetPendingConnectionReceipts *sql.Stmt
 }
 
 func NewPostgresReceiptsTable(db *sql.DB) (tables.Receipts, error) {
@@ -119,6 +131,7 @@ func NewPostgresReceiptsTable(db *sql.DB) (tables.Receipts, error) {
 			Up:      deltas.UpAddConnectionReceipts,
 		},
 		sqlutil.Migration{Version: "syncapi: threaded receipts", Up: deltas.UpThreadedReceipts},
+		sqlutil.Migration{Version: "syncapi: connection receipt positions", Up: deltas.UpConnectionReceiptPositions},
 	)
 	err = m.Up(context.Background())
 	if err != nil {
@@ -137,6 +150,8 @@ func NewPostgresReceiptsTable(db *sql.DB) (tables.Receipts, error) {
 		{&r.upsertConnectionReceipt, upsertConnectionReceiptSQL},
 		{&r.deleteConnectionReceipts, deleteConnectionReceiptsSQL},
 		{&r.deleteConnectionReceiptsForRoom, deleteConnectionReceiptsForRoomSQL},
+		{&r.acknowledgeConnectionReceipts, acknowledgeConnectionReceiptsSQL},
+		{&r.forgetPendingConnectionReceipts, forgetPendingConnectionReceiptsSQL},
 	}.Prepare(db)
 }
 
@@ -190,106 +205,97 @@ func (s *receiptStatements) PurgeReceipts(
 	return err
 }
 
-// SelectLatestUserReceiptsForConnection returns receipts that have changed since last delivered
-// to this connection. Uses event-ID based comparison instead of position tracking.
-//
-// IMPORTANT: This query is designed to solve the concurrent connection receipt repetition problem
-// by tracking what was delivered to EACH connection separately.
-//
-// Returns receipts for ALL users in the room (not just the requesting user) to support:
-// - Read receipts UI (showing where other users have read to)
-// - Client-side notification badge logic
+// SelectConnectionReceiptState returns the current receipts of the rooms,
+// what the connection was last given of each receipt, and which rooms have
+// been in the receipts extension's scope on it (MSC4551). A room in scope
+// has a row with an empty receipt type.
 //
 // Private receipts are filtered in v4_extensions.go, not here.
-//
-// Algorithm:
-// 1. Get latest receipt for ALL users in each room (from syncapi_receipts)
-// 2. Get last delivered receipts for this connection (from syncapi_sliding_sync_connection_receipts)
-// 3. Compare event_ids - only return receipts where event_id has changed
-// 4. Update connection state after delivery (caller's responsibility).
-func (s *receiptStatements) SelectLatestUserReceiptsForConnection(
+func (s *receiptStatements) SelectConnectionReceiptState(
 	ctx context.Context,
 	txn *sql.Tx,
 	connectionKey int64,
 	roomIDs []string,
-	userID string,
-) ([]types.OutputReceiptEvent, error) {
-	if len(roomIDs) == 0 {
-		return []types.OutputReceiptEvent{}, nil
+) (*types.ConnectionReceiptState, error) {
+	state := &types.ConnectionReceiptState{
+		Delivered: make(map[types.ReceiptKey]string),
+		InScope:   make(map[string]bool),
 	}
-
-	// Step 1: Get latest receipts for ALL users in these rooms
-	// Note: Private receipt filtering happens in v4_extensions.go, not here
+	if len(roomIDs) == 0 {
+		return state, nil
+	}
 	selectLatestUserReceipts := sqlutil.TxStmt(txn, s.selectLatestUserReceipts)
 	latestRows, err := selectLatestUserReceipts.QueryContext(ctx, roomIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest receipts: %w", err)
 	}
-	defer internal.CloseAndLogIfError(ctx, latestRows, "SelectLatestUserReceiptsForConnection: latestRows.close() failed")
-
-	latestReceipts := make(map[[4]string]types.OutputReceiptEvent) // key: room, receipt type, user, thread
+	defer internal.CloseAndLogIfError(ctx, latestRows, "SelectConnectionReceiptState: latestRows.close() failed")
 	for latestRows.Next() {
 		var r types.OutputReceiptEvent
 		var id types.StreamPosition
-		err = latestRows.Scan(&id, &r.RoomID, &r.Type, &r.UserID, &r.EventID, &r.ThreadID, &r.Timestamp)
-		if err != nil {
+		if err = latestRows.Scan(&id, &r.RoomID, &r.Type, &r.UserID, &r.EventID, &r.ThreadID, &r.Timestamp); err != nil {
 			return nil, fmt.Errorf("failed to scan latest receipt: %w", err)
 		}
-		key := [4]string{r.RoomID, r.Type, r.UserID, r.ThreadID}
-		latestReceipts[key] = r
+		state.Latest = append(state.Latest, r)
 	}
 	if err = latestRows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate latest receipts: %w", err)
 	}
 
-	// Step 2: Get what we last delivered to this connection
 	selectConnectionReceipts := sqlutil.TxStmt(txn, s.selectConnectionReceipts)
 	deliveredRows, err := selectConnectionReceipts.QueryContext(ctx, connectionKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query connection receipts: %w", err)
 	}
-	defer internal.CloseAndLogIfError(ctx, deliveredRows, "SelectLatestUserReceiptsForConnection: deliveredRows.close() failed")
-
-	lastDelivered := make(map[[4]string]string) // key: room, receipt type, user, thread -> event_id
+	defer internal.CloseAndLogIfError(ctx, deliveredRows, "SelectConnectionReceiptState: deliveredRows.close() failed")
 	for deliveredRows.Next() {
-		var roomID, receiptType, userID, eventID, threadID string
-		var ts spec.Timestamp
-		err = deliveredRows.Scan(&roomID, &receiptType, &userID, &eventID, &threadID, &ts)
-		if err != nil {
+		var key types.ReceiptKey
+		var eventID string
+		if err = deliveredRows.Scan(&key.RoomID, &key.Type, &key.UserID, &eventID, &key.ThreadID); err != nil {
 			return nil, fmt.Errorf("failed to scan connection receipt: %w", err)
 		}
-		key := [4]string{roomID, receiptType, userID, threadID}
-		lastDelivered[key] = eventID
+		if key.Type == "" {
+			state.InScope[key.RoomID] = true
+		} else {
+			state.Delivered[key] = eventID
+		}
 	}
 	if err = deliveredRows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate connection receipts: %w", err)
 	}
-
-	// Step 3: Compare and return only changed receipts
-	var result []types.OutputReceiptEvent
-	for key, latest := range latestReceipts {
-		lastEventID, exists := lastDelivered[key]
-		// Return if: (1) never delivered before, OR (2) event_id has changed
-		if !exists || lastEventID != latest.EventID {
-			result = append(result, latest)
-		}
-	}
-
-	return result, nil
+	return state, nil
 }
 
-// UpsertConnectionReceipt updates the last delivered receipt for a connection.
+// UpsertConnectionReceipt records the receipt that the response at a
+// connection position delivered. An empty receipt type marks the room as in
+// the receipts extension's scope.
 func (s *receiptStatements) UpsertConnectionReceipt(
 	ctx context.Context,
 	txn *sql.Tx,
-	connectionKey int64,
+	connectionKey, connectionPosition int64,
 	roomID, receiptType, userID, eventID, threadID string,
 	timestamp spec.Timestamp,
 ) error {
 	upsertConnectionReceipt := sqlutil.TxStmt(txn, s.upsertConnectionReceipt)
 	_, err := upsertConnectionReceipt.ExecContext(
-		ctx, connectionKey, roomID, receiptType, userID, eventID, threadID, timestamp,
+		ctx, connectionKey, roomID, receiptType, userID, eventID, threadID, timestamp, connectionPosition,
 	)
+	return err
+}
+
+// AcknowledgeConnectionReceipts acknowledges what the response at a
+// connection position delivered of receipts, and forgets what every other
+// response delivered: the client did not see them, so their receipts are
+// sent again (MSC4551).
+func (s *receiptStatements) AcknowledgeConnectionReceipts(
+	ctx context.Context,
+	txn *sql.Tx,
+	connectionKey, connectionPosition int64,
+) error {
+	if _, err := sqlutil.TxStmt(txn, s.acknowledgeConnectionReceipts).ExecContext(ctx, connectionKey, connectionPosition); err != nil {
+		return err
+	}
+	_, err := sqlutil.TxStmt(txn, s.forgetPendingConnectionReceipts).ExecContext(ctx, connectionKey)
 	return err
 }
 
@@ -305,9 +311,8 @@ func (s *receiptStatements) DeleteConnectionReceipts(
 	return err
 }
 
-// DeleteConnectionReceiptsForRoom removes delivered receipt state for a specific room on a connection.
-// This should be called when timeline expansion occurs (initial:true with expanded_timeline:true)
-// to ensure receipts are re-delivered for that room.
+// DeleteConnectionReceiptsForRoom removes delivered receipt state for a specific room on a connection,
+// which then enters the receipts extension's scope for the first time again (MSC4551).
 func (s *receiptStatements) DeleteConnectionReceiptsForRoom(
 	ctx context.Context,
 	txn *sql.Tx,

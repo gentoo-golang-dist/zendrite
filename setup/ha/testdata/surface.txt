@@ -319,6 +319,7 @@ column syncapi_sliding_sync_connection_positions | connection_key | bigint | NO 
 column syncapi_sliding_sync_connection_positions | connection_position | bigint | NO | nextval('syncapi_sliding_sync_connection_positio_connection_position_seq'::regclass)
 column syncapi_sliding_sync_connection_positions | created_ts | bigint | NO |
 column syncapi_sliding_sync_connection_receipts | connection_key | bigint | NO |
+column syncapi_sliding_sync_connection_receipts | connection_position | bigint | NO | 0
 column syncapi_sliding_sync_connection_receipts | last_delivered_event_id | text | NO |
 column syncapi_sliding_sync_connection_receipts | last_delivered_ts | bigint | NO |
 column syncapi_sliding_sync_connection_receipts | receipt_type | text | NO |
@@ -1155,6 +1156,7 @@ constraint syncapi_sliding_sync_connection_positions | syncapi_sliding_sync_conn
 constraint syncapi_sliding_sync_connection_positions | syncapi_sliding_sync_connection_positions_created_ts_not_null | NOT NULL created_ts
 constraint syncapi_sliding_sync_connection_positions | syncapi_sliding_sync_connection_positions_pkey | PRIMARY KEY (connection_position)
 constraint syncapi_sliding_sync_connection_receipts | syncapi_sliding_sync_connectio_last_delivered_event_id_not_null | NOT NULL last_delivered_event_id
+constraint syncapi_sliding_sync_connection_receipts | syncapi_sliding_sync_connection_re_connection_position_not_null | NOT NULL connection_position
 constraint syncapi_sliding_sync_connection_receipts | syncapi_sliding_sync_connection_rece_last_delivered_ts_not_null | NOT NULL last_delivered_ts
 constraint syncapi_sliding_sync_connection_receipts | syncapi_sliding_sync_connection_receipt_connection_key_not_null | NOT NULL connection_key
 constraint syncapi_sliding_sync_connection_receipts | syncapi_sliding_sync_connection_receipts_connection_key_fkey | FOREIGN KEY (connection_key) REFERENCES syncapi_sliding_sync_connections(connection_key) ON DELETE CASCADE
@@ -1443,6 +1445,7 @@ migration roomserver: take memberships from the room's state on other servers
 migration syncapi: add connection receipts table for sliding sync
 migration syncapi: add history visibility column (current_room_state)
 migration syncapi: add history visibility column (output_room_events)
+migration syncapi: connection receipt positions
 migration syncapi: create sliding sync room metadata tables
 migration syncapi: create sliding sync tables
 migration syncapi: drop sent_by_token

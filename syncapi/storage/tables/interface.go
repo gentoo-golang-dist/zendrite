@@ -224,8 +224,9 @@ type Receipts interface {
 	SelectMaxReceiptID(ctx context.Context, txn *sql.Tx) (id int64, err error)
 	PurgeReceipts(ctx context.Context, txn *sql.Tx, roomID string) error
 	// Per-connection receipt tracking for sliding sync (MSC4186)
-	SelectLatestUserReceiptsForConnection(ctx context.Context, txn *sql.Tx, connectionKey int64, roomIDs []string, userID string) ([]types.OutputReceiptEvent, error)
-	UpsertConnectionReceipt(ctx context.Context, txn *sql.Tx, connectionKey int64, roomID, receiptType, userID, eventID, threadID string, timestamp spec.Timestamp) error
+	SelectConnectionReceiptState(ctx context.Context, txn *sql.Tx, connectionKey int64, roomIDs []string) (*types.ConnectionReceiptState, error)
+	UpsertConnectionReceipt(ctx context.Context, txn *sql.Tx, connectionKey, connectionPosition int64, roomID, receiptType, userID, eventID, threadID string, timestamp spec.Timestamp) error
+	AcknowledgeConnectionReceipts(ctx context.Context, txn *sql.Tx, connectionKey, connectionPosition int64) error
 	DeleteConnectionReceipts(ctx context.Context, txn *sql.Tx, connectionKey int64) error
 	DeleteConnectionReceiptsForRoom(ctx context.Context, txn *sql.Tx, connectionKey int64, roomID string) error
 }

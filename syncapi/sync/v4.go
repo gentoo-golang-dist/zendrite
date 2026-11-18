@@ -442,25 +442,25 @@ func abandonV4Sync(ctx context.Context, since *types.SlidingSyncStreamToken, con
 	}
 }
 
-// recordDeliveredReceipts marks receipts as delivered on this connection, in a
-// write transaction separate from the response's read-only snapshot.
+// recordDeliveredReceipts records what the response at the connection
+// position delivers of receipts, in a write transaction separate from the
+// response's read-only snapshot.
 //
-// The connection receipt table is keyed by connection, not by position, so a
-// receipt recorded here is filtered out of every later response, including a
-// retry from an older position. It therefore must not be recorded for a
-// response the client will never see: it returns false, having written
-// nothing, once the request context is done, and the caller abandons the
-// response. Other write failures are logged and leave the receipts to be
-// delivered again.
-func (rp *RequestPool) recordDeliveredReceipts(ctx context.Context, connectionKey int64, receipts []types.OutputReceiptEvent) bool {
-	if len(receipts) == 0 {
+// The receipts stay pending until a request carries the position, and are
+// forgotten if another position is acknowledged instead (MSC4551). A
+// response the client will never see records nothing all the same: it
+// returns false, having written nothing, once the request context is done,
+// and the caller abandons the response. Other write failures are logged and
+// leave the receipts to be delivered again.
+func (rp *RequestPool) recordDeliveredReceipts(ctx context.Context, connectionKey, connectionPosition int64, delivery types.ReceiptDelivery) bool {
+	if delivery.Empty() {
 		return true
 	}
 	if ctx.Err() != nil {
 		return false
 	}
-	logrus.WithField("count", len(receipts)).Debug("[RECEIPTS] Updating connection state for delivered receipts")
-	if err := rp.db.RecordConnectionReceipts(ctx, connectionKey, receipts); err != nil {
+	logrus.WithField("count", len(delivery.Receipts)).Debug("[RECEIPTS] Updating connection state for delivered receipts")
+	if err := rp.db.RecordConnectionReceipts(ctx, connectionKey, connectionPosition, delivery); err != nil {
 		if ctx.Err() != nil {
 			return false
 		}
@@ -618,7 +618,11 @@ func (rp *RequestPool) onIncomingSyncRequestV4(req *http.Request, device *userap
 
 		// Clean up old positions (like Synapse does)
 		// Now that the client has used this position, we can delete all other positions
-		// This prevents old state from accumulating and bleeding into new sessions
+		// This prevents old state from accumulating and bleeding into new sessions.
+		// It also acknowledges the receipts the position's response delivered,
+		// and forgets those of the other responses, which the client never saw
+		// (MSC4551). If it fails, they are acknowledged or forgotten with the
+		// next position the client uses.
 		if cleanupErr := rp.db.DeleteOtherConnectionPositions(req.Context(), connectionKey, since.ConnectionPosition); cleanupErr != nil { //nolint:contextcheck
 			logrus.WithError(cleanupErr).WithFields(logrus.Fields{
 				"connection_key": connectionKey,
@@ -1339,16 +1343,8 @@ func (rp *RequestPool) onIncomingSyncRequestV4(req *http.Request, device *userap
 			// This signals to clients that we're sending historical events due to expansion
 			if timelineExpanded {
 				roomData.ExpandedTimeline = true
-				// Clear receipt delivery state for this room so receipts are re-delivered
-				// This is necessary because the client is resetting its view of the room (initial:true)
-				// and needs to receive current receipt positions to avoid stuck unread badges
-				if deleteErr := rp.db.DeleteConnectionReceiptsForRoom(req.Context(), connectionKey, roomID); deleteErr != nil { //nolint:contextcheck
-					logrus.WithError(deleteErr).WithFields(logrus.Fields{
-						"room_id":        roomID,
-						"connection_key": connectionKey,
-					}).Warn("[V4_SYNC] Failed to clear room receipts on timeline expansion")
-					// Non-fatal - continue with the sync
-				}
+				// The receipts extension sends the receipts on the events of
+				// the expanded timeline (MSC4551).
 			}
 
 			response.Rooms[roomID] = *roomData
@@ -1519,7 +1515,7 @@ func (rp *RequestPool) onIncomingSyncRequestV4(req *http.Request, device *userap
 
 			// Update connection state for delivered receipts in a write transaction
 			// IMPORTANT: This must be done in a separate write transaction, NOT in the read-only snapshot
-			if !rp.recordDeliveredReceipts(ctx, connectionKey, deliveredReceipts) { //nolint:contextcheck
+			if !rp.recordDeliveredReceipts(ctx, connectionKey, connState.ConnectionPosition, deliveredReceipts) { //nolint:contextcheck
 				return abandonV4Sync(ctx, since, connState) //nolint:contextcheck
 			}
 		}

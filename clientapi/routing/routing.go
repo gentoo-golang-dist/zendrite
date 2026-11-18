@@ -128,10 +128,9 @@ func Setup(
 		// rather than spec v1.19.
 		"uk.half-shot.msc2666.query_mutual_rooms.stable": true,
 		// Sliding sync extensions as /v4/sync serves them: typing (MSC4508),
-		// to_device (MSC4538), e2ee (MSC4543) and account_data (MSC4548),
-		// under their prefixed and, as the MSCs are accepted, unprefixed
-		// keys. Receipts (MSC4551) are served in its format but not
-		// advertised, since their delivery rules differ from the MSC.
+		// to_device (MSC4538), e2ee (MSC4543), account_data (MSC4548) and
+		// receipts (MSC4551), under their prefixed and, as the MSCs are
+		// accepted, unprefixed keys.
 		"org.matrix.msc4508":        true,
 		"org.matrix.msc4508.stable": true,
 		"org.matrix.msc4538":        true,
@@ -140,6 +139,8 @@ func Setup(
 		"org.matrix.msc4543.stable": true,
 		"org.matrix.msc4548":        true,
 		"org.matrix.msc4548.stable": true,
+		"org.matrix.msc4551":        true,
+		"org.matrix.msc4551.stable": true,
 	}
 	// Configuration entries alone do not establish implementation support.
 	// Keep this list aligned with setup/mscs.EnableMSC and the discovery audit.

@@ -65,6 +65,8 @@ func TestVersions(t *testing.T) {
 		"org.matrix.msc4543.stable":                      true,
 		"org.matrix.msc4548":                             true,
 		"org.matrix.msc4548.stable":                      true,
+		"org.matrix.msc4551":                             true,
+		"org.matrix.msc4551.stable":                      true,
 		// MSC4445: initial sync timelines in topological order.
 		"org.matrix.msc4445.initial_sync_timeline_topological_ordering": true,
 	}

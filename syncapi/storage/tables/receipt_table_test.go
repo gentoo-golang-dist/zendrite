@@ -12,6 +12,7 @@ import (
 	"codefloe.com/pat-s/zendrite/syncapi/storage/postgres"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/sqlite3"
 	"codefloe.com/pat-s/zendrite/syncapi/storage/tables"
+	"codefloe.com/pat-s/zendrite/syncapi/types"
 	"codefloe.com/pat-s/zendrite/test"
 )
 
@@ -64,11 +65,11 @@ func TestThreadedReceiptPersistence(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.ExecContext(ctx, `INSERT INTO syncapi_sliding_sync_connections (connection_key,user_id,device_id,conn_id,created_ts) VALUES (1,'@alice:test','device','conn',1)`)
 		require.NoError(t, err)
-		pending, err := tab.SelectLatestUserReceiptsForConnection(ctx, nil, 1, []string{"!room:test"}, "@alice:test")
+		pending, err := pendingConnectionReceipts(ctx, tab, nil)
 		require.NoError(t, err)
 		require.Len(t, pending, 5)
 		for _, receipt := range pending {
-			require.NoError(t, tab.UpsertConnectionReceipt(ctx, nil, 1, receipt.RoomID, receipt.Type, receipt.UserID, receipt.EventID, receipt.ThreadID, receipt.Timestamp))
+			require.NoError(t, tab.UpsertConnectionReceipt(ctx, nil, 1, 1, receipt.RoomID, receipt.Type, receipt.UserID, receipt.EventID, receipt.ThreadID, receipt.Timestamp))
 		}
 		require.NoError(t, db.Close())
 		db, tab = open()
@@ -76,11 +77,11 @@ func TestThreadedReceiptPersistence(t *testing.T) {
 		db.SetMaxOpenConns(1)
 		txn, err := db.BeginTx(ctx, nil)
 		require.NoError(t, err)
-		pending, err = tab.SelectLatestUserReceiptsForConnection(ctx, txn, 1, []string{"!room:test"}, "@alice:test")
+		pending, err = pendingConnectionReceipts(ctx, tab, txn)
 		require.NoError(t, err)
 		require.Empty(t, pending)
 		require.NoError(t, txn.Rollback())
-		pending, err = tab.SelectLatestUserReceiptsForConnection(ctx, nil, 1, []string{"!room:test"}, "@alice:test")
+		pending, err = pendingConnectionReceipts(ctx, tab, nil)
 		require.NoError(t, err)
 		require.Empty(t, pending)
 		before, _, err := tab.SelectRoomReceiptsAfter(ctx, nil, []string{"!room:test"}, 0)
@@ -91,11 +92,27 @@ func TestThreadedReceiptPersistence(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.Equal(t, "$a", got[0].ThreadID)
-		pending, err = tab.SelectLatestUserReceiptsForConnection(ctx, nil, 1, []string{"!room:test"}, "@alice:test")
+		pending, err = pendingConnectionReceipts(ctx, tab, nil)
 		require.NoError(t, err)
 		require.Equal(t, got, pending)
 		_, all, err := tab.SelectRoomReceiptsAfter(ctx, nil, []string{"!room:test"}, 0)
 		require.NoError(t, err)
 		require.Len(t, all, 5)
 	})
+}
+
+// pendingConnectionReceipts returns the receipts of !room:test that
+// connection 1 has not been given.
+func pendingConnectionReceipts(ctx context.Context, tab tables.Receipts, txn *sql.Tx) ([]types.OutputReceiptEvent, error) {
+	state, err := tab.SelectConnectionReceiptState(ctx, txn, 1, []string{"!room:test"})
+	if err != nil {
+		return nil, err
+	}
+	var pending []types.OutputReceiptEvent
+	for _, receipt := range state.Latest {
+		if eventID, ok := state.Delivered[receipt.Key()]; !ok || eventID != receipt.EventID {
+			pending = append(pending, receipt)
+		}
+	}
+	return pending, nil
 }

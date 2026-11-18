@@ -20,7 +20,7 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | [MSC4538](https://github.com/matrix-org/matrix-spec-proposals/pull/4538) | Sliding sync extension: to-device messages | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
 | [MSC4543](https://github.com/matrix-org/matrix-spec-proposals/pull/4543) | Sliding sync extension: end-to-end encryption | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
 | [MSC4548](https://github.com/matrix-org/matrix-spec-proposals/pull/4548) | Sliding sync extension: account data | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
-| [MSC4551](https://github.com/matrix-org/matrix-spec-proposals/pull/4551) | Sliding sync extension: receipts | N/A (accepted) | Partial: the format, not all delivery rules; see [sliding sync extensions](#sliding-sync-extensions) |
+| [MSC4551](https://github.com/matrix-org/matrix-spec-proposals/pull/4551) | Sliding sync extension: receipts | N/A (accepted) | Implemented: see [sliding sync extensions](#sliding-sync-extensions) |
 | [MSC3575](https://github.com/matrix-org/matrix-spec-proposals/pull/3575) | Sliding Sync (v1) | N/A | Not supported: closed, superseded by MSC4186. Lists return only `count`, without MSC3575 `ops`, and `/.well-known/matrix/client` no longer advertises a sliding sync proxy |
 | [MSC4354](https://github.com/matrix-org/matrix-spec-proposals/pull/4354) | Sticky events | N/A | Implemented (unstable prefix): see [sticky events](#sticky-events) |
 | [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480) | Sliding sync extension: sticky events | N/A | Implemented: the `org.matrix.msc4354.sticky_events` extension |
@@ -52,11 +52,17 @@ On both paths:
   Messages are deleted once a request acknowledges them with `since`, or without it with `pos`; a `since` beyond the latest message deletes nothing.
 - `/keys/changes` accepts a sliding sync `pos` as `from` and `to` (MSC4543), also after the connection has expired, since the `pos` carries its stream position.
 
-`/versions` advertises `org.matrix.msc4508`, `org.matrix.msc4538`, `org.matrix.msc4543` and `org.matrix.msc4548`, each with its `.stable` flag.
-The receipts extension is served in the format of MSC4551 but not advertised, since its delivery rules differ from the MSC:
+`/versions` advertises `org.matrix.msc4508`, `org.matrix.msc4538`, `org.matrix.msc4543`, `org.matrix.msc4548` and `org.matrix.msc4551`, each with its `.stable` flag.
 
-- Delivered receipts are recorded per connection rather than per `pos`, so a request retried after a lost response does not receive that response's receipts again.
-- When a room is sent with `initial` or `expanded_timeline`, other users' receipts outside its timeline that changed since `pos` are left out rather than sent with the timeline's receipts.
+The receipts extension follows the delivery rules of MSC4551 on both paths:
+
+- A room entering the extension's scope for the first time on a connection gets its initial receipts: the user's own receipts, and every user's receipts on the events of its timeline in the response.
+  This includes the first request of a connection, enabling the extension partway through, and rejoining a room.
+- Any other room in scope gets the receipts that changed since they were last sent, which covers the changes made while it was out of scope.
+- A room sent with `initial` or `expanded_timeline` also gets every user's receipts on the events of its timeline, and the user's own receipts, even those already sent.
+- What a response sends stays pending until a request carries its `pos`, which acknowledges it and forgets what every other response sent, so a retry after a lost response gets those receipts again.
+- A room the user is not joined to gets nothing, and the connection forgets its receipts, so a rejoined room enters scope for the first time.
+  Forgetting is not undone by a retry, so in the rare case of a lost response that forgot a room the user then rejoins, other users' receipts that changed meanwhile are only sent when they next change.
 
 ### Sticky events
 

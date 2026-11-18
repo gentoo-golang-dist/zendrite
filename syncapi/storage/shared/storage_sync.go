@@ -206,9 +206,10 @@ func (d *DatabaseTransaction) RoomReceiptsAfter(ctx context.Context, roomIDs []s
 	return d.Receipts.SelectRoomReceiptsAfter(ctx, d.txn, roomIDs, streamPos)
 }
 
-// Per-connection receipt tracking for sliding sync (MSC4186).
-func (d *DatabaseTransaction) SelectLatestUserReceiptsForConnection(ctx context.Context, connectionKey int64, roomIDs []string, userID string) ([]types.OutputReceiptEvent, error) {
-	return d.Receipts.SelectLatestUserReceiptsForConnection(ctx, d.txn, connectionKey, roomIDs, userID)
+// SelectConnectionReceiptState returns the current receipts of the rooms and
+// what a sliding sync connection holds of them (MSC4551).
+func (d *DatabaseTransaction) SelectConnectionReceiptState(ctx context.Context, connectionKey int64, roomIDs []string) (*types.ConnectionReceiptState, error) {
+	return d.Receipts.SelectConnectionReceiptState(ctx, d.txn, connectionKey, roomIDs)
 }
 
 // Events lookups a list of event by their event ID.

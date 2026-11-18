@@ -151,10 +151,10 @@ func (rp *RequestPool) ProcessExtensions(
 	responseLists map[string]types.SlidingList, // Actual lists in the response
 	roomSubscriptions map[string]bool, // Actual room subscriptions from request
 	responseRooms map[string]types.SlidingRoomData, // Rooms in the response, whose timelines sticky events skip
-) (*types.ExtensionResponse, types.StreamingToken, []types.OutputReceiptEvent, error) {
+) (*types.ExtensionResponse, types.StreamingToken, types.ReceiptDelivery, error) {
 	// Return empty response if no extensions requested
 	if req.Extensions == nil {
-		return &types.ExtensionResponse{}, toPos, nil, nil
+		return &types.ExtensionResponse{}, toPos, types.ReceiptDelivery{}, nil
 	}
 
 	resp := &types.ExtensionResponse{Format: req.ExtensionFormat}
@@ -164,7 +164,7 @@ func (rp *RequestPool) ProcessExtensions(
 	updatedPos := toPos
 
 	if err := ctx.Err(); err != nil {
-		return nil, toPos, nil, err
+		return nil, toPos, types.ReceiptDelivery{}, err
 	}
 
 	// Process to_device extension (PreProcess)
@@ -172,7 +172,7 @@ func (rp *RequestPool) ProcessExtensions(
 		toDeviceResp, toDevicePos, err := rp.processToDeviceExtension(ctx, snapshot, userID, deviceID, req.Extensions.ToDevice, fromPos, toPos)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process to_device extension")
 			// Continue anyway - extensions are optional
@@ -189,7 +189,7 @@ func (rp *RequestPool) ProcessExtensions(
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, toPos, nil, err
+		return nil, toPos, types.ReceiptDelivery{}, err
 	}
 
 	// Process e2ee extension (PreProcess, MSC3884)
@@ -197,7 +197,7 @@ func (rp *RequestPool) ProcessExtensions(
 		e2eeResp, err := rp.processE2EEExtension(ctx, snapshot, userID, deviceID, isInitialSync, fromPos, toPos)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process e2ee extension")
 			// Continue anyway - extensions are optional
@@ -207,7 +207,7 @@ func (rp *RequestPool) ProcessExtensions(
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, toPos, nil, err
+		return nil, toPos, types.ReceiptDelivery{}, err
 	}
 
 	// Process account_data extension (PostProcess)
@@ -215,7 +215,7 @@ func (rp *RequestPool) ProcessExtensions(
 		accountDataResp, accountDataLastPos, err := rp.processAccountDataExtension(ctx, snapshot, connState, userID, req.Extensions.AccountData.Lists, req.Extensions.AccountData.Rooms, fromPos, toPos, responseLists, roomSubscriptions)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process account_data extension")
 			// Return empty response on error - clients expect the field to be present with proper structure
@@ -243,10 +243,10 @@ func (rp *RequestPool) ProcessExtensions(
 	}
 
 	// Track delivered receipts for connection state update in write transaction
-	var deliveredReceipts []types.OutputReceiptEvent
+	var deliveredReceipts types.ReceiptDelivery
 
 	if err := ctx.Err(); err != nil {
-		return nil, toPos, nil, err
+		return nil, toPos, types.ReceiptDelivery{}, err
 	}
 
 	// Process receipts extension (PostProcess)
@@ -254,7 +254,7 @@ func (rp *RequestPool) ProcessExtensions(
 		receiptsResp, receiptsLastPos, receiptsDelivered, err := rp.processReceiptsExtension(ctx, snapshot, connectionKey, userID, req.Extensions.Receipts.Lists, req.Extensions.Receipts.Rooms, fromPos, toPos, responseLists, roomSubscriptions, responseRooms)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process receipts extension")
 			// Return empty response on error - clients expect the field to be present
@@ -280,7 +280,7 @@ func (rp *RequestPool) ProcessExtensions(
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, toPos, nil, err
+		return nil, toPos, types.ReceiptDelivery{}, err
 	}
 
 	// Process typing extension (PostProcess)
@@ -288,7 +288,7 @@ func (rp *RequestPool) ProcessExtensions(
 		typingResp, err := rp.processTypingExtension(ctx, snapshot, userID, req.Extensions.Typing.Lists, req.Extensions.Typing.Rooms, fromPos, toPos, responseLists, roomSubscriptions, responseRooms)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process typing extension")
 			// Return empty response on error - clients expect the field to be present
@@ -299,7 +299,7 @@ func (rp *RequestPool) ProcessExtensions(
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, toPos, nil, err
+		return nil, toPos, types.ReceiptDelivery{}, err
 	}
 
 	// Process sticky events extension (MSC4354, MSC4480). Its position lives
@@ -308,7 +308,7 @@ func (rp *RequestPool) ProcessExtensions(
 		stickyResp, err := rp.processStickyEventsExtension(ctx, snapshot, userID, req.Extensions.StickyEvents, toPos, responseLists, roomSubscriptions, responseRooms)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process sticky events extension")
 		} else {
@@ -317,7 +317,7 @@ func (rp *RequestPool) ProcessExtensions(
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, toPos, nil, err
+		return nil, toPos, types.ReceiptDelivery{}, err
 	}
 
 	// Process profile updates extension (MSC4262). A response that could not
@@ -327,7 +327,7 @@ func (rp *RequestPool) ProcessExtensions(
 		profilesResp, profilesPos, err := rp.processProfilesExtension(ctx, snapshot, connState, userID, req.Extensions.Profiles, req, fromPos, toPos, responseLists, roomSubscriptions, responseRooms)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process profiles extension")
 			if fromPos != nil {
@@ -344,7 +344,7 @@ func (rp *RequestPool) ProcessExtensions(
 		threadSubsResp, err := rp.processThreadSubscriptionsExtension(ctx, userID, req.Extensions.ThreadSubscriptions, fromPos, toPos)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, toPos, nil, ctx.Err()
+				return nil, toPos, types.ReceiptDelivery{}, ctx.Err()
 			}
 			logrus.WithError(err).Error("Failed to process thread subscriptions extension")
 		} else {
@@ -942,8 +942,27 @@ func (rp *RequestPool) processAccountDataExtension(
 	return resp, lastPos, nil
 }
 
-// processReceiptsExtension handles read receipts extension
+// processReceiptsExtension handles read receipts extension (MSC4551).
 // IMPORTANT: Response contains a SINGLE event per room, not an array (matrix-js-sdk expects this).
+//
+// The connection records which rooms have been in scope and which receipts
+// it was given, tagged with the position of the response that gave them, so
+// a retried request gets the receipts of a lost response again: v4.go forgets
+// what the responses after the request's pos delivered. For each joined room
+// in scope:
+//   - a room in scope for the first time gets its initial receipts: the
+//     user's own receipts, and every user's receipts on the events in its
+//     timeline in this response. The others count as delivered, so later
+//     responses only carry their changes;
+//   - any other room gets the receipts that changed since they were last
+//     delivered, which covers the changes made while it was out of scope;
+//   - a room sent with initial or expanded_timeline also gets every user's
+//     receipts on the events in its timeline, and the user's own receipts,
+//     delivered or not.
+//
+// A room the user is not joined to gets nothing, and the connection forgets
+// its receipts, so that it is in scope for the first time again when the
+// user rejoins.
 func (rp *RequestPool) processReceiptsExtension(
 	ctx context.Context,
 	_ storage.DatabaseTransaction, // unused - using fresh snapshot for read committed isolation
@@ -955,8 +974,9 @@ func (rp *RequestPool) processReceiptsExtension(
 	_ types.StreamingToken, // unused - using per-connection event-ID tracking
 	actualLists map[string]types.SlidingList, // Actual lists in response
 	actualRoomSubscriptions map[string]bool, // Actual room subscriptions from request
-	responseRooms map[string]types.SlidingRoomData, // Rooms in the response, whose resets limit the receipts sent
-) (*types.ReceiptsResponse, types.StreamPosition, []types.OutputReceiptEvent, error) {
+	responseRooms map[string]types.SlidingRoomData, // Rooms in the response, whose timelines bring receipts
+) (*types.ReceiptsResponse, types.StreamPosition, types.ReceiptDelivery, error) {
+	var delivery types.ReceiptDelivery
 	// Determine which rooms to process using unified helper (MSC3959/MSC3960)
 	relevantRoomIDs := findRelevantRoomIDsForExtension(
 		requestedLists,
@@ -965,85 +985,90 @@ func (rp *RequestPool) processReceiptsExtension(
 		actualRoomSubscriptions,
 	)
 
-	logrus.WithFields(logrus.Fields{
-		"connection_key":  connectionKey,
-		"requested_lists": requestedLists,
-		"requested_rooms": requestedRooms,
-		"relevant_rooms":  len(relevantRoomIDs),
-	}).Debug("[RECEIPTS] Filtered rooms for extension")
-
-	// CRITICAL FIX: Query receipts using a fresh transaction instead of the snapshot
-	// The snapshot uses REPEATABLE READ isolation which may not see recently committed receipts
-	// This caused the stuck badge bug where long-polling connections received stale receipt data
-	// Use a fresh READ COMMITTED transaction to ensure we see the latest receipts
+	// Query receipts using a fresh transaction instead of the snapshot: the
+	// snapshot uses REPEATABLE READ isolation and may not see receipts
+	// committed since it began, which left unread badges stuck on
+	// long-polling connections.
 	freshSnapshot, err := rp.db.NewDatabaseSnapshot(ctx)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("failed to create fresh snapshot for receipts: %w", err)
+		return nil, 0, delivery, fmt.Errorf("failed to create fresh snapshot for receipts: %w", err)
 	}
 	defer func() { _ = freshSnapshot.Rollback() }()
+
+	relevant := make([]string, 0, len(relevantRoomIDs))
+	for roomID := range relevantRoomIDs {
+		relevant = append(relevant, roomID)
+	}
+	state, err := freshSnapshot.SelectConnectionReceiptState(ctx, connectionKey, relevant)
+	if err != nil {
+		return nil, 0, delivery, fmt.Errorf("SelectConnectionReceiptState failed: %w", err)
+	}
 
 	// Lists keep invites and rooms the user was kicked from, whose receipts
 	// the user must not see. Memberships come from the same fresh snapshot
 	// as the receipts, so that a kick is not missed by an older snapshot.
-	roomsToCheck, err := joinedRoomsOnly(ctx, freshSnapshot, userID, relevantRoomIDs)
+	// The rooms the connection holds receipts of are checked too, so that a
+	// room the user left is forgotten even once it is out of every list.
+	candidates := make(map[string]bool, len(relevantRoomIDs)+len(state.InScope))
+	for roomID := range relevantRoomIDs {
+		candidates[roomID] = true
+	}
+	for roomID := range state.InScope {
+		candidates[roomID] = true
+	}
+	joinedRooms, err := joinedRoomsOnly(ctx, freshSnapshot, userID, candidates)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, delivery, err
+	}
+	joined := make(map[string]bool, len(joinedRooms))
+	for _, roomID := range joinedRooms {
+		joined[roomID] = true
+	}
+	// Only changes are recorded: the rooms entering scope, and the rooms
+	// the user left that the connection still holds receipts of.
+	for roomID := range relevantRoomIDs {
+		if joined[roomID] && !state.InScope[roomID] {
+			delivery.InScope = append(delivery.InScope, roomID)
+		}
+	}
+	for roomID := range state.InScope {
+		if !joined[roomID] {
+			delivery.ForgetRooms = append(delivery.ForgetRooms, roomID)
+		}
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"user_id":        userID,
-		"connection_key": connectionKey,
-		"num_rooms":      len(roomsToCheck),
-	}).Info("[RECEIPTS] Querying receipts for connection")
-
-	// NEW APPROACH: Use per-connection event-ID based tracking instead of position-based
-	// This prevents duplicate receipts across concurrent connections (room-list vs encryption)
-	receipts, err := freshSnapshot.SelectLatestUserReceiptsForConnection(ctx, connectionKey, roomsToCheck, userID)
-	if err != nil {
-		return nil, 0, nil, fmt.Errorf("SelectLatestUserReceiptsForConnection failed: %w", err)
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"user_id":        userID,
-		"connection_key": connectionKey,
-		"receipts_count": len(receipts),
-	}).Info("[RECEIPTS] New receipts to deliver")
-
-	// Keep track of all receipts we're delivering for connection state update later
-	var deliveredReceipts []types.OutputReceiptEvent
-
-	// Log each receipt for debugging
-	for _, receipt := range receipts {
-		logrus.WithFields(logrus.Fields{
-			"room_id":  receipt.RoomID,
-			"type":     receipt.Type,
-			"user_id":  receipt.UserID,
-			"event_id": receipt.EventID,
-		}).Debug("[RECEIPTS] Delivering receipt")
-	}
-
-	resetWindows := receiptResetWindows(responseRooms)
-
-	// Group receipts by room (same logic as before)
+	windows := receiptTimelineWindows(responseRooms)
 	receiptsByRoom := make(map[string][]types.OutputReceiptEvent)
 	withheld := 0
-	for _, receipt := range receipts {
+	for _, receipt := range state.Latest {
+		if !joined[receipt.RoomID] {
+			continue
+		}
 		// Don't send private read receipts to other users
 		if receipt.Type == "m.read.private" && userID != receipt.UserID {
 			continue
 		}
-		// A room sent from scratch (initial or expanded timeline) has had its
-		// delivered receipts cleared, so every member's latest receipt is new
-		// here. Send only the user's own receipts, which drive unread badges,
-		// and receipts on events in the returned timeline. The rest are
-		// recorded as delivered without being sent, otherwise the next
-		// response would carry all of them instead.
-		if window, reset := resetWindows[receipt.RoomID]; reset && receipt.UserID != userID {
-			if _, inWindow := window[receipt.EventID]; !inWindow {
-				deliveredReceipts = append(deliveredReceipts, receipt)
+		window, reset := windows[receipt.RoomID]
+		_, inTimeline := window[receipt.EventID]
+		own := receipt.UserID == userID
+		deliveredEventID, delivered := state.Delivered[receipt.Key()]
+		changed := !delivered || deliveredEventID != receipt.EventID
+		var send bool
+		if state.InScope[receipt.RoomID] {
+			// The user's own receipts are sent again with a reset room as
+			// well: they drive its unread state.
+			send = changed || inTimeline || (reset && own)
+		} else {
+			send = own || inTimeline
+		}
+		if !send {
+			if changed {
+				// Part of the room's receipts the client is not sent when
+				// the room enters scope; later responses carry its changes.
+				delivery.Receipts = append(delivery.Receipts, receipt)
 				withheld++
-				continue
 			}
+			continue
 		}
 		receiptsByRoom[receipt.RoomID] = append(receiptsByRoom[receipt.RoomID], receipt)
 	}
@@ -1081,7 +1106,7 @@ func (rp *RequestPool) processReceiptsExtension(
 			typeContent[receipt.UserID] = ReceiptTS{TS: receipt.Timestamp, ThreadID: receipt.ThreadID}
 
 			// Collect this receipt for connection state update (will be done in write transaction later)
-			deliveredReceipts = append(deliveredReceipts, receipt)
+			delivery.Receipts = append(delivery.Receipts, receipt)
 		}
 		ev.Content, err = json.Marshal(content)
 		if err != nil {
@@ -1095,21 +1120,20 @@ func (rp *RequestPool) processReceiptsExtension(
 	logrus.WithFields(logrus.Fields{
 		"connection_key":  connectionKey,
 		"num_rooms":       len(resp.Rooms),
-		"delivered_count": len(deliveredReceipts) - withheld,
+		"delivered_count": len(delivery.Receipts) - withheld,
 		"withheld_count":  withheld,
 		"user_id":         userID,
-	}).Info("[RECEIPTS] Returning receipts response")
+	}).Debug("[RECEIPTS] Returning receipts response")
 
-	// Return 0 for lastPos since we no longer track position for receipts
-	// Receipts are tracked per-connection via event IDs in separate table
-	// Return deliveredReceipts so caller can update connection state in write transaction
-	return resp, 0, deliveredReceipts, nil
+	// Receipts are tracked per connection and position in their own table,
+	// not by the stream position in the token.
+	return resp, 0, delivery, nil
 }
 
-// receiptResetWindows returns, for each response room sent from scratch on
-// this connection (initial, or with an expanded timeline), the IDs of the
-// events in its returned timeline.
-func receiptResetWindows(responseRooms map[string]types.SlidingRoomData) map[string]map[string]struct{} {
+// receiptTimelineWindows returns, for each response room sent with initial
+// or expanded_timeline, the IDs of the events in its returned timeline, whose
+// receipts the response carries (MSC4551).
+func receiptTimelineWindows(responseRooms map[string]types.SlidingRoomData) map[string]map[string]struct{} {
 	windows := make(map[string]map[string]struct{})
 	for roomID, room := range responseRooms {
 		if !room.Initial && !room.ExpandedTimeline {

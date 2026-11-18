@@ -900,22 +900,40 @@ func (d *Database) GetConnectionStreamsByPosition(ctx context.Context, connectio
 
 // DeleteOtherConnectionPositions removes all positions for a connection except the specified one
 // This is called when a client uses a position token, to clean up old state (like Synapse does).
+// In the same transaction, it acknowledges the receipts that the response at
+// that position delivered, and forgets those of the other responses, which
+// the client never saw (MSC4551).
 func (d *Database) DeleteOtherConnectionPositions(ctx context.Context, connectionKey int64, keepPosition int64) error {
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-		return d.SlidingSync.DeleteOtherConnectionPositions(ctx, txn, connectionKey, keepPosition)
+		if err := d.SlidingSync.DeleteOtherConnectionPositions(ctx, txn, connectionKey, keepPosition); err != nil {
+			return err
+		}
+		return d.Receipts.AcknowledgeConnectionReceipts(ctx, txn, connectionKey, keepPosition)
 	})
 }
 
-// RecordConnectionReceipts records the receipts a response delivers on a
-// connection, in one transaction through the writer. On SQLite a write
+// RecordConnectionReceipts records what the response at a connection
+// position delivers of receipts, in one transaction through the writer: the
+// receipts, the rooms in scope (as a row with an empty receipt type), and
+// the rooms whose receipts are forgotten (MSC4551). On SQLite a write
 // outside the writer can take the database lock while a writer transaction
 // is open, which then fails at once with "database is locked". It records
 // nothing once the context is done.
-func (d *Database) RecordConnectionReceipts(ctx context.Context, connectionKey int64, receipts []types.OutputReceiptEvent) error {
+func (d *Database) RecordConnectionReceipts(ctx context.Context, connectionKey, connectionPosition int64, delivery types.ReceiptDelivery) error {
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-		for _, receipt := range receipts {
+		for _, roomID := range delivery.ForgetRooms {
+			if err := d.Receipts.DeleteConnectionReceiptsForRoom(ctx, txn, connectionKey, roomID); err != nil {
+				return fmt.Errorf("d.Receipts.DeleteConnectionReceiptsForRoom: %w", err)
+			}
+		}
+		for _, roomID := range delivery.InScope {
+			if err := d.Receipts.UpsertConnectionReceipt(ctx, txn, connectionKey, connectionPosition, roomID, "", "", "", "", 0); err != nil {
+				return fmt.Errorf("d.Receipts.UpsertConnectionReceipt: %w", err)
+			}
+		}
+		for _, receipt := range delivery.Receipts {
 			if err := d.Receipts.UpsertConnectionReceipt(
-				ctx, txn, connectionKey,
+				ctx, txn, connectionKey, connectionPosition,
 				receipt.RoomID, receipt.Type, receipt.UserID,
 				receipt.EventID, receipt.ThreadID, receipt.Timestamp,
 			); err != nil {
@@ -932,14 +950,6 @@ func (d *Database) RecordConnectionReceipts(ctx context.Context, connectionKey i
 func (d *Database) DeleteConnectionReceipts(ctx context.Context, connectionKey int64) error {
 	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
 		return d.Receipts.DeleteConnectionReceipts(ctx, txn, connectionKey)
-	})
-}
-
-// DeleteConnectionReceiptsForRoom removes delivered receipt state for a specific room.
-// This should be called when timeline expansion occurs to ensure receipts are re-delivered.
-func (d *Database) DeleteConnectionReceiptsForRoom(ctx context.Context, connectionKey int64, roomID string) error {
-	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-		return d.Receipts.DeleteConnectionReceiptsForRoom(ctx, txn, connectionKey, roomID)
 	})
 }
 

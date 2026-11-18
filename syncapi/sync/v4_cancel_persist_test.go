@@ -193,16 +193,15 @@ func (panicTransactionDB) NewDatabaseTransaction(context.Context) (*shared.Datab
 	panic("a canceled request must not record receipts as delivered")
 }
 
-// Delivered receipts are recorded per connection, not per position, so a
-// receipt recorded for a response the client never saw would be filtered out
-// of the retry as well and never reach the client.
+// A canceled request records no receipts as delivered: its response never
+// reaches the client.
 func TestRecordDeliveredReceiptsSkipsCanceledRequest(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(t.Context())
 	cancel(nil)
 	rp := &RequestPool{db: panicTransactionDB{}}
 
-	assert.False(t, rp.recordDeliveredReceipts(ctx, 1, []types.OutputReceiptEvent{{RoomID: "!room:localhost", Type: "m.read"}}))
-	assert.True(t, rp.recordDeliveredReceipts(t.Context(), 1, nil), "nothing to record is not a cancellation")
+	assert.False(t, rp.recordDeliveredReceipts(ctx, 1, 2, types.ReceiptDelivery{Receipts: []types.OutputReceiptEvent{{RoomID: "!room:localhost", Type: "m.read"}}}))
+	assert.True(t, rp.recordDeliveredReceipts(t.Context(), 1, 2, types.ReceiptDelivery{}), "nothing to record is not a cancellation")
 }
 
 // Once the request is canceled, ProcessExtensions stops instead of failing
