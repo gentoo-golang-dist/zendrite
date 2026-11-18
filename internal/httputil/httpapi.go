@@ -171,6 +171,26 @@ func MakeAuthAPI(
 	return MakeExternalAPI(metricsName, h)
 }
 
+// VerifyDevice authenticates the request and applies the account checks of
+// MakeAuthAPI, for handlers that write their own response, such as a proxy
+// that streams it.
+func VerifyDevice(
+	req *http.Request, userAPI userapi.QueryAcccessTokenAPI, checks ...AuthAPIOption,
+) (*userapi.Device, *util.JSONResponse) {
+	device, err := auth.VerifyUserFromRequest(req, userAPI)
+	if err != nil {
+		return nil, err
+	}
+	opts := AuthAPIOpts{}
+	for _, opt := range checks {
+		opt(&opts)
+	}
+	if resErr := accountAccessForbidden(device, &opts); resErr != nil {
+		return nil, resErr
+	}
+	return device, nil
+}
+
 // MakeAdminAPI is a wrapper around MakeAuthAPI which enforces that the request can only be
 // completed by a user that is a server administrator.
 func MakeAdminAPI(

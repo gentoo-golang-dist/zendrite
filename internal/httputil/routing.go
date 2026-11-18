@@ -76,6 +76,19 @@ func (rt *Route) Name(_ string) *Route {
 type Router struct {
 	mux    chi.Router
 	prefix string
+	// interceptors are shared with the subrouters, as the mux is.
+	interceptors *[]Interceptor
+}
+
+// Interceptor picks the handler for a request ahead of the routes, or returns
+// nil to leave the request to them.
+type Interceptor func(*http.Request) http.Handler
+
+// Intercept lets f handle requests before the routes see them, so that it can
+// take over a whole path prefix, including routes registered for it. It must
+// be called before the router serves requests.
+func (r *Router) Intercept(f Interceptor) {
+	*r.interceptors = append(*r.interceptors, f)
 }
 
 // NewRouter creates a new Router with the given path prefix.
@@ -84,8 +97,9 @@ func NewRouter(prefix string) *Router {
 	mux.NotFound(notFoundHandler)
 	mux.MethodNotAllowed(methodNotAllowedHandler)
 	return &Router{
-		mux:    mux,
-		prefix: strings.TrimSuffix(prefix, "/"),
+		mux:          mux,
+		prefix:       strings.TrimSuffix(prefix, "/"),
+		interceptors: &[]Interceptor{},
 	}
 }
 
@@ -170,8 +184,9 @@ type SubrouterBuilder struct {
 // Subrouter creates a new Router that shares the parent's mux but with added prefix.
 func (sb *SubrouterBuilder) Subrouter() *Router {
 	return &Router{
-		mux:    sb.parent.mux,
-		prefix: sb.parent.prefix + strings.TrimSuffix(sb.prefix, "/"),
+		mux:          sb.parent.mux,
+		prefix:       sb.parent.prefix + strings.TrimSuffix(sb.prefix, "/"),
+		interceptors: sb.parent.interceptors,
 	}
 }
 
@@ -192,6 +207,12 @@ func (sb *SubrouterBuilder) HandlerFunc(f func(http.ResponseWriter, *http.Reques
 
 // ServeHTTP implements http.Handler.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	for _, intercept := range *r.interceptors {
+		if h := intercept(req); h != nil {
+			h.ServeHTTP(w, req)
+			return
+		}
+	}
 	r.mux.ServeHTTP(w, req)
 }
 

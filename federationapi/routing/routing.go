@@ -25,6 +25,7 @@ import (
 	fedInternal "codefloe.com/pat-s/zendrite/federationapi/internal"
 	"codefloe.com/pat-s/zendrite/federationapi/producers"
 	"codefloe.com/pat-s/zendrite/internal"
+	"codefloe.com/pat-s/zendrite/internal/appserviceproxy"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/internal/livekit"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
@@ -76,6 +77,19 @@ func Setup(
 
 	wakeup := &FederationWakeups{
 		FsAPI: fsAPI,
+	}
+
+	// MSC4512: the signed requests under a prefix an application service
+	// claims go to it, ahead of any route Zendrite has for them.
+	if mscCfg.Enabled("msc4512") {
+		claimed := appserviceproxy.RegisterFederation(
+			fedMux, zendriteCfg.Derived.ApplicationServices, cfg.Matrix.ServerName, cfg.Matrix.IsLocalServerName,
+			keys, wakeup.Wakeup, zendriteCfg.AppServiceAPI.LegacyAuth,
+		)
+		for _, as := range claimed {
+			logrus.WithField("appservice_id", as.ID).WithField("prefix", as.ProxyPrefix).
+				Info("Proxying federation requests to the application service (MSC4512)")
+		}
 	}
 
 	localKeys := httputil.MakeExternalAPI("localkeys", func(req *http.Request) util.JSONResponse {

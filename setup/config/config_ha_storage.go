@@ -99,6 +99,11 @@ var haQualifiedMSCs = map[string]struct{}{
 	// The current forward extremities of a room over federation. It has no
 	// state of its own: each request reads the roomserver's latest events.
 	"msc4370": {},
+	// Application services serving a part of the APIs. It keeps no state of
+	// its own: each request is forwarded to the application service or, for
+	// fed_proxy, sent over federation. Its per-origin rate limits live in
+	// process memory, like every other rate limit.
+	"msc4512": {},
 }
 
 func sortedKeys(m map[string]struct{}) []string {

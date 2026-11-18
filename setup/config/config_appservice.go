@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -94,9 +95,21 @@ type ApplicationService struct {
 	// UnstableReceiveEphemeral is the unstable name of ReceiveEphemeral that
 	// older bridges set; it delivers de.sorunome.msc2409.ephemeral instead.
 	UnstableReceiveEphemeral bool `yaml:"de.sorunome.msc2409.push_ephemeral"`
-	HTTPClient               *http.Client
-	isUnixSocket             bool
-	unixSocket               string
+	// ProxyPrefix is the path the application service serves on the
+	// client-server and federation APIs, after the version segment, such as
+	// "rtc/livekit" (MSC4512). It must be set together with ProxyURL and be
+	// one of AppServiceProxyPrefixes.
+	ProxyPrefix string `yaml:"io.element.msc4512.proxy_prefix"`
+	// ProxyURL is the base URL that requests under ProxyPrefix are forwarded
+	// to (MSC4512).
+	ProxyURL string `yaml:"io.element.msc4512.proxy_url"`
+	// ProxyHTTPClient forwards requests to ProxyURL. It does not follow
+	// redirects, so they reach the requester as the application service sent
+	// them.
+	ProxyHTTPClient *http.Client `yaml:"-"`
+	HTTPClient      *http.Client
+	isUnixSocket    bool
+	unixSocket      string
 }
 
 // ScopeQueryRoomMembership is the unstable scope token that grants access to
@@ -106,6 +119,43 @@ const ScopeQueryRoomMembership = "urn:matrix:client:io.element.msc4502:rooms:is_
 // KnownAppServiceScopes are the scopes an application service registration
 // may list under io.element.msc4502.scopes.
 var KnownAppServiceScopes = []string{ScopeQueryRoomMembership}
+
+// AppServiceProxyPrefix is a path an application service may serve on the
+// client-server and federation APIs (MSC4512).
+type AppServiceProxyPrefix struct {
+	// Path is the prefix after the version segment, without slashes at
+	// either end.
+	Path string
+	// AllowGuests lets guests and call guests use the client-server
+	// endpoints under the prefix.
+	AllowGuests bool
+}
+
+// AppServiceProxyPrefixes are the prefixes an application service may claim
+// with io.element.msc4512.proxy_prefix. Like Synapse, only the MatrixRTC
+// LiveKit endpoints (MSC4195) may be delegated, so an application service
+// cannot take over the endpoints Zendrite serves itself by accident.
+var AppServiceProxyPrefixes = []AppServiceProxyPrefix{
+	{Path: "rtc/livekit", AllowGuests: true},
+}
+
+// appServiceProxyTimeout is how long the application service may take to
+// answer a proxied request, as in Synapse.
+const appServiceProxyTimeout = 30 * time.Second
+
+// ProxyRules returns the claimed proxy prefix of the application service, or
+// nil when it serves no part of the APIs (MSC4512).
+func (a *ApplicationService) ProxyRules() *AppServiceProxyPrefix {
+	if a.ProxyPrefix == "" {
+		return nil
+	}
+	for i := range AppServiceProxyPrefixes {
+		if AppServiceProxyPrefixes[i].Path == a.ProxyPrefix {
+			return &AppServiceProxyPrefixes[i]
+		}
+	}
+	return nil
+}
 
 // HasScope reports whether the application service registration grants the
 // given scope (MSC4502).
@@ -419,7 +469,73 @@ func checkErrors(config *AppServiceAPI, derived *Derived) (err error) {
 		}
 	}
 
+	if err = checkProxyConfig(config, derived); err != nil {
+		return err
+	}
+
 	return setupRegexps(config, derived)
+}
+
+// checkProxyConfig validates the MSC4512 proxy settings of the application
+// services, normalises them and creates the clients that forward requests.
+func checkProxyConfig(config *AppServiceAPI, derived *Derived) error {
+	claimedBy := make(map[string]string)
+	for i := range derived.ApplicationServices {
+		appservice := &derived.ApplicationServices[i]
+		if (appservice.ProxyPrefix == "") != (appservice.ProxyURL == "") {
+			return ConfigErrors([]string{fmt.Sprintf(
+				"Application service %s must set io.element.msc4512.proxy_prefix and io.element.msc4512.proxy_url together", appservice.ID,
+			)})
+		}
+		if appservice.ProxyPrefix == "" {
+			continue
+		}
+		appservice.ProxyPrefix = strings.Trim(appservice.ProxyPrefix, "/")
+		if appservice.ProxyRules() == nil {
+			allowed := make([]string, 0, len(AppServiceProxyPrefixes))
+			for _, prefix := range AppServiceProxyPrefixes {
+				allowed = append(allowed, prefix.Path)
+			}
+			return ConfigErrors([]string{fmt.Sprintf(
+				"Application service %s cannot claim io.element.msc4512.proxy_prefix %q; allowed prefixes are %s",
+				appservice.ID, appservice.ProxyPrefix, strings.Join(allowed, ", "),
+			)})
+		}
+		if other, ok := claimedBy[appservice.ProxyPrefix]; ok {
+			return ConfigErrors([]string{fmt.Sprintf(
+				"Application services %s and %s claim the same io.element.msc4512.proxy_prefix %q",
+				other, appservice.ID, appservice.ProxyPrefix,
+			)})
+		}
+		claimedBy[appservice.ProxyPrefix] = appservice.ID
+
+		proxyURL, err := url.Parse(appservice.ProxyURL)
+		if err != nil || (proxyURL.Scheme != "http" && proxyURL.Scheme != "https") || proxyURL.Host == "" ||
+			proxyURL.RawQuery != "" || proxyURL.Fragment != "" {
+			return ConfigErrors([]string{fmt.Sprintf(
+				"Application service %s has an invalid io.element.msc4512.proxy_url %q: it must be an http or https URL without query or fragment",
+				appservice.ID, appservice.ProxyURL,
+			)})
+		}
+		appservice.ProxyURL = strings.TrimRight(appservice.ProxyURL, "/")
+		// The timeout covers connecting and the response headers only, as
+		// in Synapse, so a response may stream for longer.
+		appservice.ProxyHTTPClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: config.DisableTLSValidation,
+				},
+				Proxy:                 http.ProxyFromEnvironment,
+				DialContext:           (&net.Dialer{Timeout: appServiceProxyTimeout}).DialContext,
+				TLSHandshakeTimeout:   appServiceProxyTimeout,
+				ResponseHeaderTimeout: appServiceProxyTimeout,
+			},
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	}
+	return nil
 }
 
 // validateNamespace returns nil or an error based on whether a given

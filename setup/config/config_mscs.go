@@ -27,6 +27,7 @@ type MSCs struct {
 	// 'msc4293': Redact a user's events with a kick or ban - https://github.com/matrix-org/matrix-spec-proposals/pull/4293
 	// 'msc4370': Federation endpoint for the current forward extremities of a room - https://github.com/matrix-org/matrix-spec-proposals/pull/4370
 	// 'msc4502': Targeted and unrestricted room member queries - https://github.com/matrix-org/matrix-spec-proposals/pull/4502
+	// 'msc4512': Delegating parts of the client-server and federation APIs to application services - https://github.com/matrix-org/matrix-spec-proposals/pull/4512
 	MSCs []string `yaml:"mscs"`
 
 	Database DatabaseOptions `yaml:"database,omitempty"`

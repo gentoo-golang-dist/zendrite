@@ -652,6 +652,7 @@ It also drops the device list of a remote user who no longer shares a room with 
 | [MSC4190](https://github.com/matrix-org/matrix-spec-proposals/pull/4190) | Device management for application services | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
 | [MSC3983](https://github.com/matrix-org/matrix-spec-proposals/pull/3983), [MSC3984](https://github.com/matrix-org/matrix-spec-proposals/pull/3984) | Sending one-time key claims and key queries to application services | N/A | Opt-in (`msc3983`, `msc3984`, unstable prefix): see [keys of application service users](#keys-of-application-service-users) |
 | [MSC4502](https://github.com/matrix-org/matrix-spec-proposals/pull/4502) | Targeted and unrestricted room member queries | N/A | Opt-in (`msc4502`, unstable prefix): see [MSC4502](#msc4502-room-member-queries) |
+| [MSC4512](https://github.com/matrix-org/matrix-spec-proposals/pull/4512) | Delegating parts of the client-server and federation APIs to application services | N/A | Opt-in (`msc4512`, unstable prefix): see [MSC4512](#msc4512-application-services-serving-parts-of-the-apis) |
 
 ### Ephemeral data for application services
 
@@ -883,6 +884,7 @@ mscs:
     - msc4293
     - msc4370
     - msc4502
+    - msc4512
 ```
 
 ### MSC2836: Threading
@@ -1078,3 +1080,47 @@ Zendrite follows Synapse, where it needs `msc4502_enabled`: it uses the unstable
 
 Zendrite only knows the membership of rooms it is in.
 In rooms with pseudo IDs (MSC4014), a `server_name` query does not find remote servers, as memberships there are keyed by pseudo ID rather than user ID.
+
+### MSC4512: Application services serving parts of the APIs
+
+MSC4512 lets an application service serve a part of the client-server and federation APIs behind the homeserver, such as [lk-jwt-service](https://github.com/element-hq/lk-jwt-service) serving the LiveKit token endpoints of [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195).
+Zendrite follows Synapse, where it needs `msc4512_enabled`: it uses the unstable names and is off by default.
+
+An application service claims a prefix in its registration file:
+
+```yaml
+io.element.msc4512.proxy_prefix: "rtc/livekit"
+io.element.msc4512.proxy_url: "http://127.0.0.1:1234"
+```
+
+Both properties must be set together, and the URL must be an `http` or `https` URL without a query or fragment.
+Like Synapse, only `rtc/livekit` may be claimed, and only by one application service, so that an application service cannot take over the endpoints Zendrite serves itself.
+A registration claiming any other prefix fails to load, whether or not the MSC is enabled.
+
+**What changes when MSC4512 is enabled:**
+
+- Requests to `/_matrix/client/{version}/rtc/livekit` and below, where `{version}` is `v1`, `v3` and so on or `unstable/{namespace}`, go to the application service once the access token is checked and the request is rate limited.
+  Users, guests and call guests may use them, as they may use Zendrite's own LiveKit endpoints.
+- Federation requests to `/_matrix/federation/{version}/rtc/livekit` and below go to the application service once their signature is checked, at most 10 requests a second per server with bursts of 50.
+- The proxied request keeps its method, path, query string and body, and only the `Content-Type`, `Accept` and `Accept-Language` headers.
+  Zendrite authenticates it with the application service's `hs_token`, and adds `X-Matrix-User-Identifier` with the requesting user's ID, or `X-Matrix-Origin` with the requesting server's name.
+  An `access_token` in the query string is removed; with `app_service_api.legacy_auth`, the `hs_token` is added as `access_token`, as for the other requests to application services.
+- The response is streamed back with its status and headers, without the hop-by-hop headers of RFC 2616 and those named in `Connection`, and redirects are passed on rather than followed.
+  An application service that does not start answering within 30 seconds gives 502 `M_UNKNOWN`; the response itself may stream for longer.
+- A path with a `.` or `..` segment, also percent-encoded, is refused with 400 `M_INVALID_PARAM`, and `GET`, `POST`, `PUT` and `DELETE` are the only methods forwarded.
+  Client request bodies are limited to 10 MiB (413 `M_TOO_LARGE`).
+- The application service takes over Zendrite's own `rtc/livekit` endpoints, `get_token` and `delegate_delayed_leave`, so they are answered by it even when `rtc_foci` holds a LiveKit API key, and Zendrite logs a warning at startup.
+  `/versions` advertises `org.matrix.msc4195.stable` while an application service serves `rtc/livekit`.
+- `POST /_matrix/client/unstable/io.element.msc4512/appservice/fed_proxy` signs and sends a federation request for an application service and answers `{"status": ..., "content": ...}` with the destination's status and JSON body.
+  A successful answer is relayed as status 200, and a body that is not JSON is left out of `content`.
+  - Only application services may call it; anyone else gets 403 `M_FORBIDDEN`.
+  - `destination`, `method` and `path` are required (400 `M_MISSING_PARAM`).
+    `method` must be `GET`, `POST`, `PUT` or `DELETE`, the `query` values strings, and `body` an object that `GET` and `DELETE` do not take (400 `M_INVALID_PARAM`).
+  - This server, also with an explicit port, or any server when federation is disabled, is refused with 403 `IO.ELEMENT.MSC4512.M_FEDPROXY_DESTINATION_DENIED`.
+  - A path that is not under `/_matrix/federation/{version}/` and the application service's own prefix, or has a query string, fragment or `.` or `..` segment, is refused with 403 `IO.ELEMENT.MSC4512.M_FEDPROXY_PATH_NOT_ALLOWED`.
+  - A destination that cannot be reached within 30 seconds gives 502 `IO.ELEMENT.MSC4512.M_FEDPROXY_CONNECTION_FAILED`.
+
+The error codes are spelled as in Synapse, while the MSC's unstable prefix table writes them as `IO.ELEMENT.MSC4512_FEDPROXY_*`.
+The MSC does not cover an application service without a prefix calling `fed_proxy`: Zendrite refuses it with `M_FEDPROXY_PATH_NOT_ALLOWED`, where Synapse answers 400 `M_FEDPROXY_NO_PROXY_PREFIX`.
+Requests to servers that `federation_api.deny_networks` refuses fail with `M_FEDPROXY_CONNECTION_FAILED`, as Zendrite has no list of server names it refuses to federate with.
+The stable `/_matrix/client/v1/appservice/fed_proxy` path is not served yet, as in Synapse.

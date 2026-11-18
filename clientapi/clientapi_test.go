@@ -977,6 +977,90 @@ func TestKickBanRedactEvents(t *testing.T) {
 	})
 }
 
+// MSC4512: with the MSC enabled, an application service claiming rtc/livekit
+// serves those endpoints in place of Zendrite's own, and fed_proxy is only
+// open to application services.
+func TestAppserviceProxy(t *testing.T) {
+	alice := test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		var seenUser, seenAuth string
+		var seenMu sync.Mutex
+		lk := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seenMu.Lock()
+			seenUser, seenAuth = r.Header.Get("X-Matrix-User-Identifier"), r.Header.Get("Authorization")
+			seenMu.Unlock()
+			_, _ = w.Write([]byte(`{"jwt":"from-appservice"}`))
+		}))
+		defer lk.Close()
+
+		for _, tc := range []struct{ enabled, issuer bool }{{true, true}, {true, false}, {false, true}} {
+			enabled := tc.enabled
+			t.Run(fmt.Sprintf("enabled=%v,issuer=%v", tc.enabled, tc.issuer), func(t *testing.T) {
+				cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+				defer closeDB()
+				cfg.ClientAPI.RateLimiting.Enabled = false
+				if enabled {
+					cfg.MSCs.MSCs = []string{"msc4512"}
+				}
+				focus := config.RTCFocus{Type: "livekit", URL: "wss://sfu.example.com"}
+				if tc.issuer {
+					focus.LiveKitAPIKey, focus.LiveKitAPISecret, focus.LiveKitAPIURL = "key", "secret", "http://127.0.0.1:1"
+				}
+				cfg.Global.RTCFoci = []config.RTCFocus{focus}
+				cfg.Derived.ApplicationServices = []config.ApplicationService{{
+					ID: "lk", ASToken: "lk_as_token", HSToken: "lk_hs_token", SenderLocalpart: "_lk",
+					ProxyPrefix: "rtc/livekit", ProxyURL: lk.URL, ProxyHTTPClient: lk.Client(),
+				}}
+				caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+				routers := httputil.NewRouters()
+				cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+				natsInstance := &jetstream.NATSInstance{}
+				rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+				rsAPI.SetFederationAPI(nil, nil)
+				userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+				asPI := appservice.NewInternalAPI(processCtx, cfg, natsInstance, userAPI, rsAPI)
+				AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, asPI, nil, nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+				accessTokens := map[*test.User]userDevice{alice: {}}
+				createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+				do := func(path, body string) *httptest.ResponseRecorder {
+					t.Helper()
+					method := http.MethodPost
+					if body == "" {
+						method = http.MethodGet
+					}
+					req := httptest.NewRequest(method, path, strings.NewReader(body))
+					req.Header.Set("Authorization", "Bearer "+accessTokens[alice].accessToken)
+					rec := httptest.NewRecorder()
+					routers.Client.ServeHTTP(rec, req)
+					return rec
+				}
+
+				versions := do("/_matrix/client/versions", "")
+				assert.Equal(t, enabled || tc.issuer, gjson.GetBytes(versions.Body.Bytes(), `unstable_features.org\.matrix\.msc4195\.stable`).Bool())
+
+				rec := do("/_matrix/client/v1/rtc/livekit/get_token", `{}`)
+				fedProxy := do("/_matrix/client/unstable/io.element.msc4512/appservice/fed_proxy",
+					`{"destination":"remote.example","method":"GET","path":"/_matrix/federation/v1/rtc/livekit/x"}`)
+				if !enabled {
+					assert.NotEqual(t, "from-appservice", gjson.GetBytes(rec.Body.Bytes(), "jwt").Str, "Zendrite's own endpoint answers")
+					assert.Equal(t, http.StatusNotFound, fedProxy.Code)
+					return
+				}
+				assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				assert.Equal(t, "from-appservice", gjson.GetBytes(rec.Body.Bytes(), "jwt").Str)
+				seenMu.Lock()
+				assert.Equal(t, alice.ID, seenUser)
+				assert.Equal(t, "Bearer lk_hs_token", seenAuth)
+				seenMu.Unlock()
+				assert.Equal(t, http.StatusForbidden, fedProxy.Code, fedProxy.Body.String())
+				assert.Equal(t, "M_FORBIDDEN", gjson.GetBytes(fedProxy.Body.Bytes(), "errcode").Str)
+			})
+		}
+	})
+}
+
 // MSC4195: POST /rtc/livekit/get_token issues tokens for the server's own
 // SFUs to users joined to the room.
 func TestLiveKitGetToken(t *testing.T) {

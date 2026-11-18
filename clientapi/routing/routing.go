@@ -26,6 +26,7 @@ import (
 	clientutil "codefloe.com/pat-s/zendrite/clientapi/httputil"
 	"codefloe.com/pat-s/zendrite/clientapi/producers"
 	federationAPI "codefloe.com/pat-s/zendrite/federationapi/api"
+	"codefloe.com/pat-s/zendrite/internal/appserviceproxy"
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/internal/livekit"
@@ -104,8 +105,9 @@ func Setup(
 		"org.matrix.msc4143":            len(cfg.Matrix.RTCFoci) > 0,
 		"org.matrix.msc4143.stable":     true, // MSC4143: GET /v1/rtc/transports, always served
 		// MSC4195: LiveKit tokens issued by the homeserver, when it holds the
-		// API key of an SFU.
-		"org.matrix.msc4195.stable": livekit.For(cfg.Matrix).Enabled(),
+		// API key of an SFU or an application service serves them (MSC4512).
+		"org.matrix.msc4195.stable": livekit.For(cfg.Matrix).Enabled() ||
+			(mscCfg.Enabled("msc4512") && appserviceproxy.Claims(zendriteCfg.Derived.ApplicationServices, "rtc/livekit")),
 		"org.matrix.msc4262":        true, // MSC4262: sliding sync profile updates
 		"org.matrix.msc4429":        true, // MSC4429: profile updates in /sync
 		"org.matrix.msc4354":        true, // MSC4354: sticky events
@@ -426,6 +428,22 @@ func Setup(
 		setupMASAdminRoutes(synapseAdminRouter, mscCfg, cfg, userAPI, rateLimits)
 	}
 
+	// MSC4512: the requests under a prefix an application service claims go
+	// to it, ahead of any route Zendrite has for them.
+	if mscCfg.Enabled("msc4512") {
+		claimed := appserviceproxy.RegisterClient(
+			publicAPIMux, zendriteCfg.Derived.ApplicationServices, userAPI, rateLimits, zendriteCfg.AppServiceAPI.LegacyAuth,
+		)
+		for _, as := range claimed {
+			logrus.WithField("appservice_id", as.ID).WithField("prefix", as.ProxyPrefix).
+				Info("Proxying client-server requests to the application service (MSC4512)")
+			if as.ProxyPrefix == "rtc/livekit" && livekit.For(cfg.Matrix).Enabled() {
+				logrus.WithField("appservice_id", as.ID).
+					Warn("The application service serves rtc/livekit, so Zendrite's own LiveKit endpoints are not reachable")
+			}
+		}
+	}
+
 	// You can't just do PathPrefix("/(r0|v3)") because regexps only apply when inside named path variables.
 	// So make a named path variable called 'apiversion' (which we will never read in handlers) and then do
 	// (r0|v3) - BUT this is a captured group, which makes no sense because you cannot extract this group
@@ -680,6 +698,17 @@ func Setup(
 				return GetRoomIsJoined(req, device, vars["roomID"], cfg, rsAPI)
 			}),
 		).Methods(http.MethodGet, http.MethodOptions)
+	}
+
+	// MSC4512: application services serving a part of the client-server and
+	// federation APIs, and sending federation requests under it. Like
+	// Synapse, only registered when the MSC is enabled.
+	if mscCfg.Enabled("msc4512") {
+		unstableMux.Handle("/io.element.msc4512/appservice/fed_proxy",
+			httputil.MakeAuthAPI("msc4512_fed_proxy", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+				return AppserviceFederationProxy(req, device, cfg, zendriteCfg.Derived.ApplicationServices, federation)
+			}),
+		).Methods(http.MethodPost, http.MethodOptions)
 	}
 
 	// MSC4194: redacting a user's events in a room, only registered when

@@ -106,6 +106,22 @@ webhook:
 The URL may also be an address on the internal network, since only the SFU calls it.
 Without webhooks, delegated leave events still work through the checks every 15 seconds, but a participant removed from a self-hosted SFU can rejoin with their token unnoticed.
 
+### lk-jwt-service as an application service
+
+lk-jwt-service can also serve the `rtc/livekit` endpoints behind Zendrite as an application service, with [MSC4512](/mscs/#msc4512-application-services-serving-parts-of-the-apis) and [MSC4502](/mscs/#msc4502-room-member-queries), which it uses to check room membership.
+Enable both:
+
+```yaml
+mscs:
+  mscs:
+    - msc4502
+    - msc4512
+```
+
+Then register lk-jwt-service with the registration file from its README, which claims `rtc/livekit` with `io.element.msc4512.proxy_prefix` and points `io.element.msc4512.proxy_url` at the service.
+Zendrite forwards the client and federation `rtc/livekit` requests to it, and the service reaches other servers through Zendrite's `fed_proxy` endpoint.
+Leave the LiveKit API key out of `rtc_foci` then: the application service takes over `get_token` and `delegate_delayed_leave` either way.
+
 ## What clients see
 
 With at least one focus configured, Zendrite exposes it in three places:
