@@ -601,8 +601,14 @@ type RoomHierarchyWalker struct {
 	Caller        types.DeviceOrServerName
 	SuggestedOnly bool
 	MaxDepth      int
-	Processed     RoomSet
-	Unvisited     []RoomHierarchyWalkerQueuedRoom
+	// RootVias are the servers to ask for the root room when this server
+	// is not in it (MSC4235).
+	RootVias []string
+	// RootRemote is set once the root was fetched from RootVias and the
+	// caller was found to be allowed to see it.
+	RootRemote bool
+	Processed  RoomSet
+	Unvisited  []RoomHierarchyWalkerQueuedRoom
 }
 
 type RoomHierarchyWalkerQueuedRoom struct {
@@ -613,18 +619,22 @@ type RoomHierarchyWalkerQueuedRoom struct {
 }
 
 // Create a new room hierarchy walker, starting from the provided root room ID.
+// The vias name servers to ask for the root room over federation when this
+// server is not in it; they may be empty.
 //
 // Use the resulting struct with QueryNextRoomHierarchyPage on the roomserver API to traverse the room hierarchy.
-func NewRoomHierarchyWalker(caller types.DeviceOrServerName, roomID spec.RoomID, suggestedOnly bool, maxDepth int) RoomHierarchyWalker {
+func NewRoomHierarchyWalker(caller types.DeviceOrServerName, roomID spec.RoomID, suggestedOnly bool, maxDepth int, vias []string) RoomHierarchyWalker {
 	walker := RoomHierarchyWalker{
 		RootRoomID:    roomID,
 		Caller:        caller,
 		SuggestedOnly: suggestedOnly,
 		MaxDepth:      maxDepth,
+		RootVias:      vias,
 		Unvisited: []RoomHierarchyWalkerQueuedRoom{{
 			RoomID:       roomID,
 			ParentRoomID: nil,
 			Depth:        0,
+			Vias:         vias,
 		}},
 		Processed: NewRoomSet(),
 	}

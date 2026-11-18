@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
@@ -42,8 +43,16 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 	*roomserver.RoomHierarchyWalker,
 	error,
 ) {
-	if authorised, _, _ := authorised(ctx, querier, walker.Caller, walker.RootRoomID, nil); !authorised { //nolint:misspell
-		return nil, []string{walker.RootRoomID.String()}, nil, roomserver.ErrRoomUnknownOrNotAllowed{Err: fmt.Errorf("room is unknown/forbidden")}
+	// A root that the client's vias provided was checked on the first page.
+	var remoteRoot *fclient.RoomHierarchyResponse
+	if !walker.RootRemote {
+		if authorised, _, _ := authorised(ctx, querier, walker.Caller, walker.RootRoomID, nil); !authorised { //nolint:misspell
+			remoteRoot = remoteRootAccessible(ctx, querier, walker)
+			if remoteRoot == nil {
+				return nil, []string{walker.RootRoomID.String()}, nil, roomserver.ErrRoomUnknownOrNotAllowed{Err: fmt.Errorf("room is unknown/forbidden")}
+			}
+			walker.RootRemote = true
+		}
 	}
 
 	discoveredRooms := []fclient.RoomHierarchyRoom{}
@@ -101,7 +110,12 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 		if !roomExists {
 			// attempt to query this room over federation, as either we've never heard of it before
 			// or we've left it and hence are not authorized (but info may be exposed regardless)
-			fedRes := federatedRoomInfo(ctx, querier, walker.Caller, walker.SuggestedOnly, queuedRoom.RoomID, queuedRoom.ParentRoomID, queuedRoom.Vias)
+			fedRes := remoteRoot
+			if fedRes == nil || queuedRoom.RoomID != walker.RootRoomID {
+				// Answers from servers that the client chose must not reach the
+				// caches that other walks read.
+				fedRes = federatedRoomInfo(ctx, querier, walker.Caller, walker.SuggestedOnly, queuedRoom.RoomID, queuedRoom.ParentRoomID, queuedRoom.Vias, !walker.RootRemote)
+			}
 			if fedRes != nil {
 				discoveredChildEvents = fedRes.Room.ChildrenState
 				discoveredRooms = append(discoveredRooms, fedRes.Room)
@@ -214,12 +228,78 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 			Caller:        walker.Caller,
 			SuggestedOnly: walker.SuggestedOnly,
 			MaxDepth:      walker.MaxDepth,
+			RootVias:      walker.RootVias,
+			RootRemote:    walker.RootRemote,
 			Unvisited:     unvisited,
 			Processed:     processed,
 		}
 
 		return deduplicatedRooms, inaccessible, &newWalker, nil
 	}
+}
+
+// clientViaTimeout bounds the time spent asking the servers that a client
+// named for a root room.
+const clientViaTimeout = 30 * time.Second
+
+// remoteRootAccessible returns the summary of a root room that this server
+// is not in, from the servers the client named (MSC4235), if the user may see
+// it. Those servers only check that this server may see the room, so the
+// user's access is checked here. Nothing they return is cached, since the
+// client chose them.
+func remoteRootAccessible(ctx context.Context, querier *Queryer, walker roomserver.RoomHierarchyWalker) *fclient.RoomHierarchyResponse {
+	device := walker.Caller.Device()
+	if device == nil || len(walker.RootVias) == 0 || roomExists(ctx, querier, walker.RootRoomID) {
+		return nil
+	}
+	userID, err := spec.NewUserID(device.UserID, true)
+	if err != nil {
+		return nil
+	}
+	res := federatedRoomInfo(ctx, querier, walker.Caller, walker.SuggestedOnly, walker.RootRoomID, nil, walker.RootVias, false)
+	if res == nil {
+		return nil
+	}
+	accessible := remoteRoomAccessible(res.Room, func(roomID string) string {
+		var membership roomserver.QueryMembershipForUserResponse
+		if err := querier.QueryMembershipForUser(ctx, &roomserver.QueryMembershipForUserRequest{
+			RoomID: roomID, UserID: *userID,
+		}, &membership); err != nil || !membership.HasBeenInRoom {
+			return ""
+		}
+		return membership.Membership
+	})
+	if !accessible {
+		return nil
+	}
+	return res
+}
+
+// remoteRoomAccessible reports whether a user may see the summary of a room
+// that a remote server returned: the room is world readable, anyone may join
+// or knock, the user is invited, or the user is joined to one of the rooms
+// that allow joining. The membership function returns the user's membership
+// in a room, or "" if there is none.
+func remoteRoomAccessible(room fclient.RoomHierarchyRoom, membership func(roomID string) string) bool {
+	if room.WorldReadable {
+		return true
+	}
+	switch room.JoinRule {
+	case spec.Public, spec.Knock, spec.KnockRestricted:
+		return true
+	}
+	if m := membership(room.RoomID); m == spec.Join || m == spec.Invite {
+		return true
+	}
+	if room.JoinRule != spec.Restricted {
+		return false
+	}
+	for _, allowed := range room.AllowedRoomIDs {
+		if membership(allowed) == spec.Join {
+			return true
+		}
+	}
+	return false
 }
 
 // authorized returns true iff the user is joined this room or the room is world_readable. //nolint:misspell,godot.
@@ -444,8 +524,13 @@ func roomExists(ctx context.Context, querier *Queryer, roomID spec.RoomID) bool 
 
 // federatedRoomInfo returns more of the spaces graph from another server. Returns nil if this was
 // unsuccessful.
+//
+// The vias are trusted when they come from room state. Otherwise a client
+// chose them (MSC4235): the servers are then asked within the request's
+// lifetime, bounded by clientViaTimeout, and neither their answers nor their
+// failures are cached, so that one user cannot change what others see.
 func federatedRoomInfo(
-	ctx context.Context, querier *Queryer, caller types.DeviceOrServerName, suggestedOnly bool, roomID spec.RoomID, parentRoomID *spec.RoomID, vias []string,
+	ctx context.Context, querier *Queryer, caller types.DeviceOrServerName, suggestedOnly bool, roomID spec.RoomID, parentRoomID *spec.RoomID, vias []string, trusted bool,
 ) *fclient.RoomHierarchyResponse {
 	// only do federated requests for client requests
 	if caller.Device() == nil {
@@ -458,20 +543,32 @@ func federatedRoomInfo(
 		return &resp
 	}
 	// Check negative cache - if we recently failed to fetch this room, skip federation
-	refusalKey := roomHierarchyRefusalKey(ctx, querier, roomID, parentRoomID, vias)
-	if querier.Cache.GetRoomHierarchyFailure(roomIDStr) || querier.Cache.GetRoomHierarchyFailure(refusalKey) {
-		util.GetLogger(ctx).Debugf("Skipping federation for %s (recently failed)", roomID)
-		return nil
+	var refusalKey string
+	// Answers from trusted servers are cached for everyone, so a client
+	// canceling its request must not stop them.
+	innerCtx := context.Background() //nolint:contextcheck
+	if trusted {
+		refusalKey = roomHierarchyRefusalKey(ctx, querier, roomID, parentRoomID, vias)
+		if querier.Cache.GetRoomHierarchyFailure(roomIDStr) || querier.Cache.GetRoomHierarchyFailure(refusalKey) {
+			util.GetLogger(ctx).Debugf("Skipping federation for %s (recently failed)", roomID)
+			return nil
+		}
+	} else {
+		var cancel context.CancelFunc
+		innerCtx, cancel = context.WithTimeout(ctx, clientViaTimeout)
+		defer cancel()
 	}
 	util.GetLogger(ctx).Debugf("Querying %s via %+v", roomID, vias)
-	innerCtx := context.Background()
 	refused, unreachable := false, false
 	// query more of the spaces graph using these servers
 	for _, serverName := range vias {
 		if serverName == string(querier.Cfg.Global.ServerName) {
 			continue
 		}
-		res, err := querier.FSAPI.RoomHierarchies(innerCtx, querier.Cfg.Global.ServerName, spec.ServerName(serverName), roomIDStr, suggestedOnly) //nolint:contextcheck
+		if innerCtx.Err() != nil {
+			break
+		}
+		res, err := querier.FSAPI.RoomHierarchies(innerCtx, querier.Cfg.Global.ServerName, spec.ServerName(serverName), roomIDStr, suggestedOnly)
 		if err != nil {
 			var fedErr *fs.FederationClientError
 			if errors.As(err, &fedErr) && fedErr.Code == http.StatusNotFound {
@@ -481,6 +578,11 @@ func federatedRoomInfo(
 				util.GetLogger(ctx).WithError(err).Warnf("failed to call RoomHierarchies on server %s", serverName)
 				unreachable = true
 			}
+			continue
+		}
+		if res.Room.RoomID != roomIDStr {
+			util.GetLogger(ctx).Warnf("server %s answered for room %q instead of %s", serverName, res.Room.RoomID, roomIDStr)
+			unreachable = true
 			continue
 		}
 		// ensure nil slices are empty as we send this to the client sometimes
@@ -494,9 +596,14 @@ func federatedRoomInfo(
 			}
 			res.Children[i] = child
 		}
-		querier.Cache.StoreRoomHierarchy(roomIDStr, res)
+		if trusted {
+			querier.Cache.StoreRoomHierarchy(roomIDStr, res)
+		}
 
 		return &res
+	}
+	if !trusted {
+		return nil
 	}
 	if refused && !unreachable {
 		util.GetLogger(ctx).Debugf("The servers refused %s, caching negative result until one joins the parent", roomID)

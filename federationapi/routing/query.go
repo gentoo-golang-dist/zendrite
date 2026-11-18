@@ -136,7 +136,7 @@ func QueryRoomHierarchy(httpReq *http.Request, request *fclient.FederationReques
 		}
 	}
 
-	walker := roomserverAPI.NewRoomHierarchyWalker(types.NewServerNameNotDevice(request.Origin()), roomID, suggestedOnly, 1)
+	walker := roomserverAPI.NewRoomHierarchyWalker(types.NewServerNameNotDevice(request.Origin()), roomID, suggestedOnly, 1, nil)
 	discoveredRooms, inaccessibleRooms, _, err := rsAPI.QueryNextRoomHierarchyPage(httpReq.Context(), walker, -1)
 	if err != nil {
 		var errUnknown roomserverAPI.ErrRoomUnknownOrNotAllowed

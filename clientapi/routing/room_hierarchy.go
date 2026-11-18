@@ -9,6 +9,7 @@ package routing
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -148,10 +149,11 @@ func QueryRoomHierarchy(req *http.Request, device *userapi.Device, roomIDStr str
 	}
 
 	from := req.URL.Query().Get("from")
+	vias := hierarchyVias(req.URL.Query())
 
 	var walker roomserverAPI.RoomHierarchyWalker
 	if from == "" { // No pagination token provided, so start new hierarchy walker
-		walker = roomserverAPI.NewRoomHierarchyWalker(types.NewDeviceNotServerName(*device), roomID, suggestedOnly, maxDepth)
+		walker = roomserverAPI.NewRoomHierarchyWalker(types.NewDeviceNotServerName(*device), roomID, suggestedOnly, maxDepth, vias)
 	} else { // Attempt to resume cached walker
 		cachedWalker := paginationCache.Get(from)
 
@@ -193,6 +195,35 @@ func QueryRoomHierarchy(req *http.Request, device *userapi.Device, roomIDStr str
 			NextBatch: nextBatch,
 		},
 	}
+}
+
+// maxHierarchyVias bounds the servers asked for a root room, since each one
+// costs a federation request.
+const maxHierarchyVias = 10
+
+// hierarchyVias returns the servers the client named to ask for a root room
+// that this server is not in, from the `via` parameter of MSC4235 or its
+// unstable `org.matrix.msc4235.via` form. Values that are not server names
+// are skipped.
+func hierarchyVias(query url.Values) []string {
+	vias := make([]string, 0, maxHierarchyVias)
+	seen := make(map[string]struct{}, maxHierarchyVias)
+	for _, key := range []string{"via", "org.matrix.msc4235.via"} {
+		for _, via := range query[key] {
+			if len(vias) == maxHierarchyVias {
+				return vias
+			}
+			if _, ok := seen[via]; ok {
+				continue
+			}
+			if _, _, valid := spec.ParseAndValidateServerName(spec.ServerName(via)); !valid {
+				continue
+			}
+			seen[via] = struct{}{}
+			vias = append(vias, via)
+		}
+	}
+	return vias
 }
 
 // Success response for /_matrix/client/v1/rooms/{roomID}/hierarchy.
