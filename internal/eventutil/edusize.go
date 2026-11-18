@@ -34,11 +34,9 @@ func EDUSize(eduType string, origin spec.ServerName, content any) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	canonical, err := gomatrixserverlib.CanonicalJSON(raw)
-	if err != nil {
-		return 0, err
-	}
-	return len(canonical), nil
+	// Measure leniently: this may be stored JSON from before the MSC4458
+	// checks, and new input has passed them already.
+	return len(gomatrixserverlib.CanonicalJSONAssumeValid(raw)), nil
 }
 
 // EDUTooLarge reports whether an EDU would be larger than MaxEDUSize. Content

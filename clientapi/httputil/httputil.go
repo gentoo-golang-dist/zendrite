@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"unicode/utf8"
 
+	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 
@@ -51,6 +52,16 @@ func UnmarshalJSON(body []byte, iface any) *util.JSONResponse {
 		return &util.JSONResponse{
 			Code: http.StatusBadRequest,
 			JSON: spec.BadJSON("The request body could not be decoded into valid JSON. " + err.Error()),
+		}
+	}
+	// Parts of a request body, such as event content and to-device messages,
+	// are passed on to other servers as they are, and those reject JSON that
+	// they could read differently (MSC4458): duplicate keys, unpaired
+	// surrogates and invalid UTF-8. Reject it here instead.
+	if _, err := gomatrixserverlib.CanonicalJSON(body); err != nil {
+		return &util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("The request body is ambiguous JSON: " + err.Error()),
 		}
 	}
 	return nil

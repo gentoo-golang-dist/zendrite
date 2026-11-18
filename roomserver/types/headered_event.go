@@ -100,9 +100,9 @@ func RedactedCopy(event gomatrixserverlib.PDU) (gomatrixserverlib.PDU, error) {
 	if err != nil {
 		return nil, err
 	}
-	if redactedJSON, err = gomatrixserverlib.EnforcedCanonicalJSON(redactedJSON, event.Version()); err != nil {
-		return nil, err
-	}
+	// The event is stored, so it passed the checks of the version that
+	// accepted it; re-encode it without applying newer ones.
+	redactedJSON = gomatrixserverlib.CanonicalJSONAssumeValid(redactedJSON)
 	// Keep the event ID: Redact would drop it, and an ID computed from the
 	// JSON again is wrong for events whose ID is not the reference hash.
 	return verImpl.NewEventFromTrustedJSONWithEventID(event.EventID(), redactedJSON, true)

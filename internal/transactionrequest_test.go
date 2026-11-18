@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -60,6 +61,7 @@ type FakeRsAPI struct {
 	rsAPI.RoomserverInternalAPI
 	shouldFailQuery bool
 	bannedFromRoom  bool
+	queriedRooms    []string
 }
 
 func (r *FakeRsAPI) QueryUserIDForSender(ctx context.Context, roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
@@ -70,6 +72,7 @@ func (r *FakeRsAPI) QueryRoomVersionForRoom(
 	ctx context.Context,
 	roomID string,
 ) (gomatrixserverlib.RoomVersion, error) {
+	r.queriedRooms = append(r.queriedRooms, roomID)
 	if r.shouldFailQuery {
 		return "", fmt.Errorf("Failure")
 	}
@@ -140,6 +143,39 @@ func TestProcessTransactionRequestBadPDU(t *testing.T) {
 	for _, result := range txnRes.PDUs {
 		assert.Empty(t, result.Error)
 	}
+}
+
+// TestProcessTransactionRequestAmbiguousPDU checks that PDUs whose JSON
+// servers could read differently are dropped (MSC4458): duplicate keys,
+// unpaired surrogates and invalid UTF-8.
+func TestProcessTransactionRequestAmbiguousPDU(t *testing.T) {
+	event := string(testEvent[:len(testEvent)-1])
+	for name, pdu := range map[string]string{
+		"duplicate key":         event + `,"type":"m.room.power_levels"}`,
+		"duplicate content key": strings.Replace(string(testEvent), `{"body":"Test Message"}`, `{"body":"Test Message","body":"Other"}`, 1),
+		"unpaired surrogate":    strings.Replace(string(testEvent), `"Test Message"`, `"Test \ud83d Message"`, 1),
+		"invalid UTF-8":         strings.Replace(string(testEvent), `"Test Message"`, "\"Test \xed\xa0\xbd Message\"", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			keyRing := &test.NopJSONVerifier{}
+			txn := NewTxnReq(&FakeRsAPI{}, nil, "ourserver", keyRing, nil, nil, false, []json.RawMessage{json.RawMessage(pdu)}, []gomatrixserverlib.EDU{}, "", "", "")
+			txnRes, jsonRes := txn.ProcessTransaction(context.Background())
+			assert.Nil(t, jsonRes)
+			assert.Empty(t, txnRes.PDUs, "the PDU must not be processed")
+		})
+	}
+}
+
+// TestProcessTransactionRequestRoomIDIsCaseSensitive checks that the room
+// version of a PDU comes from its room_id key alone, as the event parser
+// reads it: a "Room_id" key must not choose another room's rules (MSC4458).
+func TestProcessTransactionRequestRoomIDIsCaseSensitive(t *testing.T) {
+	pdu := string(testEvent[:len(testEvent)-1]) + `,"Room_id":"!other:localhost"}`
+	rs := &FakeRsAPI{}
+	txn := NewTxnReq(rs, nil, "ourserver", &test.NopJSONVerifier{}, nil, nil, false, []json.RawMessage{json.RawMessage(pdu)}, []gomatrixserverlib.EDU{}, "", "", "")
+	_, jsonRes := txn.ProcessTransaction(context.Background())
+	assert.Nil(t, jsonRes)
+	assert.Equal(t, []string{"!roomid:localhost"}, rs.queriedRooms)
 }
 
 func TestProcessTransactionRequestPDUQueryFailure(t *testing.T) {

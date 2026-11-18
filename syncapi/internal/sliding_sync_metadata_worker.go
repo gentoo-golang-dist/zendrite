@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"codefloe.com/pat-s/gomatrixserverlib"
 	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/setup/process"
@@ -467,9 +468,8 @@ func (w *SlidingSyncMetadataWorker) updateMembershipSnapshots(
 			continue
 		}
 
-		var content struct {
-			Membership string `json:"membership"`
-		}
+		// Read like event auth does, matching keys exactly (MSC4458).
+		var content gomatrixserverlib.MemberContent
 		if err := json.Unmarshal(memberEvent.Content(), &content); err != nil {
 			continue
 		}

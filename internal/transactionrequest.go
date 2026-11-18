@@ -21,6 +21,7 @@ import (
 	"github.com/matrix-org/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/federationapi/producers"
 	"codefloe.com/pat-s/zendrite/federationapi/types"
@@ -167,16 +168,16 @@ func (t *TxnReq) ProcessTransaction(ctx context.Context) (*fclient.RespSend, *ut
 
 	for _, pdu := range t.PDUs {
 		PDUCountTotal.WithLabelValues("total").Inc()
-		var header struct {
-			RoomID string `json:"room_id"`
-		}
-		if err := json.Unmarshal(pdu, &header); err != nil {
-			util.GetLogger(ctx).WithError(err).Debug("Transaction: Failed to extract room ID from event")
+		// Read room_id as the event parser does, matching the key exactly:
+		// encoding/json would also take a later "Room_ID" (MSC4458).
+		roomID := gjson.GetBytes(pdu, "room_id")
+		if !gjson.ValidBytes(pdu) || roomID.Type != gjson.String {
+			util.GetLogger(ctx).Debug("Transaction: Failed to extract room ID from event")
 			// We don't know the event ID at this point so we can't return the
 			// failure in the PDU results
 			continue
 		}
-		roomVersion := getRoomVersion(header.RoomID)
+		roomVersion := getRoomVersion(roomID.Str)
 		verImpl, err := gomatrixserverlib.GetRoomVersion(roomVersion)
 		if err != nil {
 			continue

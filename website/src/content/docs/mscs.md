@@ -557,7 +557,17 @@ Previews are cached in memory per URL for `cache_duration` (default `1h`), concu
 | [MSC3821](https://github.com/matrix-org/matrix-spec-proposals/pull/3821) | Update redaction rules, again | 1.8 | Implemented: from room version 11, redacting an `m.room.member` event keeps `content.third_party_invite.signed`, so redacted events hash to the same event ID as on other servers |
 | [MSC4311](https://github.com/matrix-org/matrix-spec-proposals/pull/4311) | Create event in invite and knock stripped state | 1.16 | Implemented: `invite_room_state` and `knock_room_state` are sent as full PDUs including `m.room.create`. From room version 12, invites whose state holds PDUs that fail validation are rejected with `M_MISSING_PARAM`. Missing or stripped-only state is accepted with a warning, per the MSC's migration section, as are all failures in earlier room versions. Knock state entries that fail validation are dropped |
 | [MSC4514](https://github.com/matrix-org/matrix-spec-proposals/pull/4514) | EDU size limit | N/A | Implemented: see [EDU size limit](#edu-size-limit) |
+| [MSC4458](https://github.com/matrix-org/matrix-spec-proposals/pull/4458) | Handling incoming JSON in the server-server API | N/A (accepted) | Implemented: see [incoming federation JSON](#incoming-federation-json) |
 | [MSC4370](https://github.com/matrix-org/matrix-spec-proposals/pull/4370) | Federation endpoint for retrieving current extremities | N/A | Opt-in (`msc4370`, unstable prefix): see [MSC4370](#msc4370-current-extremities-over-federation) |
+
+### Incoming federation JSON
+
+[MSC4458](https://github.com/matrix-org/matrix-spec-proposals/pull/4458) requires that every server reads incoming federation JSON the way it was hashed and signed.
+Zendrite re-encodes events and signed requests from other servers as Canonical JSON before checking hashes and signatures, and rejects JSON that has no unambiguous encoding: objects with duplicate keys (compared after unescaping), unpaired UTF-16 surrogates and invalid UTF-8.
+From room version 6, numbers must be integers in the safe range: `-0` counts as `0`, while fractions and exponents such as `0.0` or `1E10` are rejected, as Synapse does.
+Keys of events and of the content that event auth reads match only exactly, so an extra `"Type"` or `"Users"` key is ignored as on other servers rather than read as `type` or `users`.
+Client request bodies with duplicate keys, unpaired surrogates or invalid UTF-8 are refused with 400 `M_BAD_JSON`, since parts of them, such as event content and to-device messages, are passed on to other servers that would reject them.
+JSON that Zendrite already holds, such as stored events it redacts or signs, is encoded as before, so events stored earlier keep working.
 
 ### EDU size limit
 

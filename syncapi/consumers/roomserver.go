@@ -1087,9 +1087,8 @@ func (s *OutputRoomEventConsumer) queueRoomMetadataUpdate(ev *rstypes.HeaderedEv
 		// Targeted single-user update: only upsert the affected user's snapshot
 		// instead of reprocessing all members in the room.
 		stateKey := *ev.StateKey()
-		var content struct {
-			Membership string `json:"membership"`
-		}
+		// Read like event auth does, matching keys exactly (MSC4458).
+		var content gomatrixserverlib.MemberContent
 		if err := json.Unmarshal(ev.Content(), &content); err != nil {
 			// Can't parse membership, fall back to full reprocess
 			s.metadataQueuer.QueueRoom(ev.RoomID().String())
