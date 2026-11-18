@@ -1520,17 +1520,34 @@ func (d *KeyDatabase) DeviceKeysForUser(ctx context.Context, userID string, devi
 }
 
 func (d *KeyDatabase) ClaimKeys(ctx context.Context, userToDeviceToAlgorithm map[string]map[string]string) ([]api.OneTimeKeys, error) {
+	return d.claimKeys(ctx, userToDeviceToAlgorithm, true, true)
+}
+
+func (d *KeyDatabase) ClaimOneTimeKeys(ctx context.Context, userToDeviceToAlgorithm map[string]map[string]string) ([]api.OneTimeKeys, error) {
+	return d.claimKeys(ctx, userToDeviceToAlgorithm, true, false)
+}
+
+func (d *KeyDatabase) ClaimFallbackKeys(ctx context.Context, userToDeviceToAlgorithm map[string]map[string]string) ([]api.OneTimeKeys, error) {
+	return d.claimKeys(ctx, userToDeviceToAlgorithm, false, true)
+}
+
+// claimKeys claims a key for each device: a one-time key if oneTime is set,
+// otherwise or if there is none its fallback key if fallback is set.
+func (d *KeyDatabase) claimKeys(ctx context.Context, userToDeviceToAlgorithm map[string]map[string]string, oneTime, fallback bool) ([]api.OneTimeKeys, error) {
 	var result []api.OneTimeKeys
 	err := d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		result = nil
 		for userID, deviceToAlgo := range userToDeviceToAlgorithm {
 			for deviceID, algo := range deviceToAlgo {
-				keyJSON, err := d.OneTimeKeysTable.SelectAndDeleteOneTimeKey(ctx, txn, userID, deviceID, algo)
-				if err != nil {
-					return err
+				var keyJSON map[string]json.RawMessage
+				var err error
+				if oneTime {
+					if keyJSON, err = d.OneTimeKeysTable.SelectAndDeleteOneTimeKey(ctx, txn, userID, deviceID, algo); err != nil {
+						return err
+					}
 				}
-				if len(keyJSON) == 0 {
-					keyJSON, err = d.FallbackKeysTable.SelectAndUpdateFallbackKey(ctx, txn, userID, deviceID, algo)
-					if err != nil {
+				if len(keyJSON) == 0 && fallback {
+					if keyJSON, err = d.FallbackKeysTable.SelectAndUpdateFallbackKey(ctx, txn, userID, deviceID, algo); err != nil {
 						return err
 					}
 				}

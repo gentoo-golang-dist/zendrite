@@ -107,18 +107,23 @@ func NewInternalAPI(
 	}
 
 	userAPI := &internal.UserInternalAPI{
-		DB:                   db,
-		KeyDatabase:          keyDB,
-		SyncProducer:         syncProducer,
-		KeyChangeProducer:    keyChangeProducer,
-		Config:               &zendriteCfg.UserAPI,
-		HTTPClient:           &http.Client{Timeout: 10 * time.Second}, //nolint:mnd
-		AppServices:          appServices,
-		RSAPI:                rsAPI,
-		DisableTLSValidation: zendriteCfg.UserAPI.PushGatewayDisableTLSValidation,
-		PgClient:             pgClient,
-		FedClient:            fedClient,
-		RegisteredUsersGauge: registeredUsersGauge,
+		DB:                db,
+		KeyDatabase:       keyDB,
+		SyncProducer:      syncProducer,
+		KeyChangeProducer: keyChangeProducer,
+		Config:            &zendriteCfg.UserAPI,
+		HTTPClient:        &http.Client{Timeout: 10 * time.Second}, //nolint:mnd
+		AppServices:       appServices,
+		// MSC3983 and MSC3984: key claims and queries for the users of
+		// application services.
+		AppserviceOneTimeKeyClaims: zendriteCfg.MSCs.Enabled("msc3983"),
+		AppserviceKeyQueries:       zendriteCfg.MSCs.Enabled("msc3984"),
+		AppserviceLegacyAuth:       zendriteCfg.AppServiceAPI.LegacyAuth,
+		RSAPI:                      rsAPI,
+		DisableTLSValidation:       zendriteCfg.UserAPI.PushGatewayDisableTLSValidation,
+		PgClient:                   pgClient,
+		FedClient:                  fedClient,
+		RegisteredUsersGauge:       registeredUsersGauge,
 	}
 
 	updater := internal.NewDeviceListUpdater(processContext, keyDB, userAPI, keyChangeProducer, fedClient, zendriteCfg.UserAPI.WorkerCount, rsAPI, zendriteCfg.Global.ServerName, enableMetrics, blacklistedOrBackingOffFn)

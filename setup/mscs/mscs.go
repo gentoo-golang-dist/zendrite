@@ -56,6 +56,7 @@ func EnableMSC(
 	case "msc2753": // enabled inside clientapi
 	case "msc3861": // enabled inside clientapi routing and userapi
 	case "msc4028": // enabled inside the userapi push rules
+	case "msc3983", "msc3984": // enabled inside the user API
 	case "msc4194": // enabled inside clientapi routing
 	case "msc4263": // enabled inside clientapi routing
 	case "msc4502": // enabled inside clientapi routing

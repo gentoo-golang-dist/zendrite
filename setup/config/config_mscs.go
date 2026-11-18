@@ -18,6 +18,8 @@ type MSCs struct {
 	// 'msc2836': Threading - https://github.com/matrix-org/matrix-doc/pull/2836
 	// 'msc3814': Dehydrated devices v2 - https://github.com/matrix-org/matrix-spec-proposals/pull/3814
 	// 'msc3861': OIDC delegated authentication - https://github.com/matrix-org/matrix-spec-proposals/pull/3861
+	// 'msc3983': Ask application services for the one-time keys of their users - https://github.com/matrix-org/matrix-spec-proposals/pull/3983
+	// 'msc3984': Ask application services for the keys of their users - https://github.com/matrix-org/matrix-spec-proposals/pull/3984
 	// 'msc4028': Push all encrypted events except for muted rooms - https://github.com/matrix-org/matrix-spec-proposals/pull/4028
 	// 'msc4194': Redacting a user's events in a room - https://github.com/matrix-org/matrix-spec-proposals/pull/4194
 	// 'msc4263': Only answer key queries for users who share a room with the requester - https://github.com/matrix-org/matrix-spec-proposals/pull/4263

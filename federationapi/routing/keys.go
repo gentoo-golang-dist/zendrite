@@ -56,7 +56,8 @@ func QueryDeviceKeys(
 
 	var queryRes api.QueryKeysResponse
 	keyAPI.QueryKeys(httpReq.Context(), &api.QueryKeysRequest{
-		UserToDevices: qkr.DeviceKeys,
+		UserToDevices:          qkr.DeviceKeys,
+		AskApplicationServices: true,
 	}, &queryRes)
 	if queryRes.Error != nil {
 		util.GetLogger(httpReq.Context()).WithError(queryRes.Error).Error("Failed to QueryKeys")

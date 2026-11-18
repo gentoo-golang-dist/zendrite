@@ -199,9 +199,10 @@ func QueryKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device, s
 	}
 	queryRes := api.QueryKeysResponse{}
 	keyAPI.QueryKeys(req.Context(), &api.QueryKeysRequest{
-		UserID:        device.UserID,
-		UserToDevices: r.DeviceKeys,
-		Timeout:       r.GetTimeout(),
+		UserID:                 device.UserID,
+		UserToDevices:          r.DeviceKeys,
+		Timeout:                r.GetTimeout(),
+		AskApplicationServices: true,
 	}, &queryRes)
 	return util.JSONResponse{
 		Code: http.StatusOK,

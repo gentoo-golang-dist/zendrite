@@ -311,6 +311,11 @@ type KeyDatabase interface {
 	// ClaimKeys based on the 3-uple of user_id, device_id and algorithm name. Returns the keys claimed. Returns no error if a key
 	// cannot be claimed or if none exist for this (user, device, algorithm), instead it is omitted from the returned slice.
 	ClaimKeys(ctx context.Context, userToDeviceToAlgorithm map[string]map[string]string) ([]api.OneTimeKeys, error)
+	// ClaimOneTimeKeys claims a one-time key for each device, without
+	// falling back to its fallback key.
+	ClaimOneTimeKeys(ctx context.Context, userToDeviceToAlgorithm map[string]map[string]string) ([]api.OneTimeKeys, error)
+	// ClaimFallbackKeys claims the fallback key of each device.
+	ClaimFallbackKeys(ctx context.Context, userToDeviceToAlgorithm map[string]map[string]string) ([]api.OneTimeKeys, error)
 
 	// KeyChanges returns a list of user IDs who have modified their keys from the offset given (exclusive) to the offset given (inclusive).
 	// A to offset of types.OffsetNewest means no upper limit.

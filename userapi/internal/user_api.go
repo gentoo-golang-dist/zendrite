@@ -55,10 +55,19 @@ type UserInternalAPI struct {
 	DisableTLSValidation bool
 	// AppServices is the list of all registered AS
 	AppServices []config.ApplicationService
-	RSAPI       rsapi.UserRoomserverAPI
-	PgClient    pushgateway.Client
-	FedClient   fedsenderapi.KeyserverFederationAPI
-	Updater     *DeviceListUpdater
+	// AppserviceOneTimeKeyClaims asks application services for the one-time
+	// keys of their exclusive users that have none stored (MSC3983).
+	AppserviceOneTimeKeyClaims bool
+	// AppserviceKeyQueries asks application services for the keys of their
+	// exclusive users (MSC3984).
+	AppserviceKeyQueries bool
+	// AppserviceLegacyAuth also sends the hs_token to application services
+	// as the access_token query parameter.
+	AppserviceLegacyAuth bool
+	RSAPI                rsapi.UserRoomserverAPI
+	PgClient             pushgateway.Client
+	FedClient            fedsenderapi.KeyserverFederationAPI
+	Updater              *DeviceListUpdater
 
 	RegisteredUsersGauge prometheus.Gauge
 }

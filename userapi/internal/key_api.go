@@ -85,7 +85,7 @@ func (a *UserInternalAPI) PerformClaimKeys(ctx context.Context, req *api.Perform
 			continue
 		}
 		// claim local keys
-		keys, err := a.KeyDatabase.ClaimKeys(ctx, local)
+		keys, err := a.claimLocalKeys(ctx, local)
 		if err != nil {
 			res.Error = &api.KeyError{
 				Err: fmt.Sprintf("failed to ClaimKeys locally: %s", err),
@@ -110,6 +110,40 @@ func (a *UserInternalAPI) PerformClaimKeys(ctx context.Context, req *api.Perform
 	if len(domainToDeviceKeys) > 0 {
 		a.claimRemoteKeys(ctx, req.Timeout, res, domainToDeviceKeys)
 	}
+}
+
+// claimLocalKeys claims a one-time key, or else the fallback key, of each
+// local device. With MSC3983, the application service of a user in an
+// exclusive namespace is asked for a one-time key before falling back.
+func (a *UserInternalAPI) claimLocalKeys(ctx context.Context, query map[string]map[string]string) ([]api.OneTimeKeys, error) {
+	if !a.AppserviceOneTimeKeyClaims {
+		return a.KeyDatabase.ClaimKeys(ctx, query)
+	}
+	appserviceUsers := make(map[string]map[string]string)
+	others := make(map[string]map[string]string)
+	for userID, devices := range query {
+		if a.exclusiveAppservice(userID) != nil {
+			appserviceUsers[userID] = devices
+		} else {
+			others[userID] = devices
+		}
+	}
+	keys, err := a.KeyDatabase.ClaimKeys(ctx, others)
+	if err != nil || len(appserviceUsers) == 0 {
+		return keys, err
+	}
+	stored, err := a.KeyDatabase.ClaimOneTimeKeys(ctx, appserviceUsers)
+	if err != nil {
+		return keys, err
+	}
+	keys = append(keys, stored...)
+	for _, key := range stored {
+		delete(appserviceUsers[key.UserID], key.DeviceID)
+	}
+	fromAppservice, missing := a.claimAppserviceKeys(ctx, appserviceUsers)
+	keys = append(keys, fromAppservice...)
+	fallback, err := a.KeyDatabase.ClaimFallbackKeys(ctx, missing)
+	return append(keys, fallback...), err
 }
 
 func (a *UserInternalAPI) claimRemoteKeys(
@@ -332,6 +366,9 @@ func (a *UserInternalAPI) QueryKeys(ctx context.Context, req *api.QueryKeysReque
 	a.crossSigningKeysFromDatabase(ctx, req, res)
 	if ctx.Err() != nil {
 		return
+	}
+	if a.AppserviceKeyQueries && req.AskApplicationServices {
+		a.queryAppserviceKeys(ctx, req, res)
 	}
 
 	// Finally, append signatures that we know about

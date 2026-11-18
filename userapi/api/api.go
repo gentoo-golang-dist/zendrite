@@ -1054,6 +1054,11 @@ type QueryKeysRequest struct {
 	// Maps user IDs to a list of devices
 	UserToDevices map[string][]string
 	Timeout       time.Duration
+	// AskApplicationServices asks application services for the keys of
+	// the users in their exclusive namespaces, if MSC3984 is enabled. Only
+	// the client and federation key queries set it: the server's own checks
+	// use the stored keys.
+	AskApplicationServices bool
 }
 
 type QueryKeysResponse struct {

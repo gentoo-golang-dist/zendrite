@@ -634,6 +634,7 @@ It also drops the device list of a remote user who no longer shares a room with 
 | [MSC2659](https://github.com/matrix-org/matrix-spec-proposals/pull/2659) | Application service ping endpoint | 1.7 | Implemented: `POST /_matrix/client/v1/appservice/{appserviceId}/ping`, authenticated with the application service's `as_token`, calls `POST /_matrix/app/v1/ping` with the `hs_token` and the `transaction_id`, and returns `duration_ms`. Failures return `M_URL_NOT_SET`, `M_CONNECTION_FAILED`, `M_CONNECTION_TIMEOUT` (after 30 seconds) or `M_BAD_STATUS` with the status and up to 4 KiB of the body |
 | [MSC4326](https://github.com/matrix-org/matrix-spec-proposals/pull/4326) | Device masquerading for appservices | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
 | [MSC4190](https://github.com/matrix-org/matrix-spec-proposals/pull/4190) | Device management for application services | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
+| [MSC3983](https://github.com/matrix-org/matrix-spec-proposals/pull/3983), [MSC3984](https://github.com/matrix-org/matrix-spec-proposals/pull/3984) | Sending one-time key claims and key queries to application services | N/A | Opt-in (`msc3983`, `msc3984`, unstable prefix): see [keys of application service users](#keys-of-application-service-users) |
 | [MSC4502](https://github.com/matrix-org/matrix-spec-proposals/pull/4502) | Targeted and unrestricted room member queries | N/A | Opt-in (`msc4502`, unstable prefix): see [MSC4502](#msc4502-room-member-queries) |
 
 ### Ephemeral data for application services
@@ -662,6 +663,20 @@ The device gets an access token that is never handed out: the application servic
 `DELETE /devices/{deviceId}`, `POST /delete_devices` and replacing cross-signing keys with `POST /keys/device_signing/upload` need no user-interactive authentication for application services.
 With [delegated authentication](#msc3861-oidc-delegated-authentication), these device endpoints stay available to application services only, and `m.login.application_service` logins as well as application service registrations without `inhibit_login: true` fail with 400 `M_APPSERVICE_LOGIN_UNSUPPORTED`.
 An `as_token` without `user_id` then acts as the sender, as it does without delegated authentication.
+
+### Keys of application service users
+
+Bridges that support end-to-end encryption can keep their users' keys themselves instead of uploading them, for users in their exclusive namespaces.
+
+- With `msc3983`, a one-time key claim, from a client or another server, for a device without a stored one-time key asks the application service at `POST /_matrix/app/unstable/org.matrix.msc3983/keys/claim`, before falling back to the device's fallback key.
+  Stored one-time keys are still claimed first.
+- With `msc3984`, a key query, from a client or another server, asks the application service at `POST /_matrix/app/unstable/org.matrix.msc3984/keys/query`, and lays its answer over the stored keys: device keys device by device, and cross-signing keys user by user.
+  A user-signing key is only passed on to the user it belongs to.
+
+Both use the application service's `hs_token` (also as `access_token` with `legacy_auth`), the unstable paths that Synapse calls, and a 10 second timeout, asking several application services at once.
+An application service that fails, times out, answers with something malformed, or does not know the endpoint is treated as having no keys.
+A device key it returns must name the user and device it is given for, and keeps the display name that Zendrite knows when it has none.
+The server's own checks, such as those on uploaded signatures, use the stored keys.
 
 ## Authentication
 
@@ -836,6 +851,8 @@ The following MSCs are not enabled by default and must be activated in the `mscs
 mscs:
   mscs:
     - msc2836
+    - msc3983
+    - msc3984
     - msc2444
     - msc2753
     - msc3814

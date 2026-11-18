@@ -75,6 +75,10 @@ var haQualifiedMSCs = map[string]struct{}{
 	// cross-signing reset confirmations) is lost on takeover, and every one
 	// of them fails closed: the client retries or starts the flow again.
 	"msc3861": {},
+	// Key claims and queries answered by application services. They keep
+	// no state of their own: each request asks the application service.
+	"msc3983": {},
+	"msc3984": {},
 	// Redacting a user's events in a room. It has no state of its own: each
 	// redaction is a roomserver write to the global database, the request
 	// finds what is left to redact afresh, and redacted events are skipped,
