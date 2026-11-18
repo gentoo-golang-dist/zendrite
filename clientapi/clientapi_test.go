@@ -732,6 +732,103 @@ func TestProfileFields(t *testing.T) {
 	})
 }
 
+// MSC4536: POST /profile/query returns several local profiles at once.
+func TestQueryProfiles(t *testing.T) {
+	alice := test.NewUser(t)
+	bob := test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.ClientAPI.RateLimiting.Enabled = false
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+		asPI := appservice.NewInternalAPI(processCtx, cfg, natsInstance, userAPI, rsAPI)
+		AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, asPI, nil, nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+		accessTokens := map[*test.User]userDevice{alice: {}, bob: {}}
+		createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+		do := func(method, path, body string, user *test.User) *httptest.ResponseRecorder {
+			t.Helper()
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			if user != nil {
+				req.Header.Set("Authorization", "Bearer "+accessTokens[user].accessToken)
+			}
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			return rec
+		}
+		queryPath := "/_matrix/client/unstable/org.matrix.msc4536/profile/query"
+
+		rec := do(http.MethodGet, "/_matrix/client/versions", "", nil)
+		assert.True(t, gjson.GetBytes(rec.Body.Bytes(), `unstable_features.org\.matrix\.msc4536`).Bool())
+
+		rec = do(http.MethodPut, "/_matrix/client/v3/profile/"+alice.ID+"/displayname", `{"displayname":"Alice"}`, alice)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		rec = do(http.MethodPut, "/_matrix/client/v3/profile/"+alice.ID+"/m.tz", `{"m.tz":"Europe/Berlin"}`, alice)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		rec = do(http.MethodDelete, "/_matrix/client/v3/profile/"+bob.ID+"/displayname", "", bob)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		users := fmt.Sprintf(`[%q,%q,%q,"@nobody:test","@remote:remote.example"]`, alice.ID, bob.ID, alice.ID)
+
+		// Bob's profile is empty, and neither unknown nor remote users are
+		// looked up.
+		rec = do(http.MethodPost, queryPath, `{"users":`+users+`}`, bob)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.JSONEq(t, fmt.Sprintf(`{%q:{"displayname":"Alice","m.tz":"Europe/Berlin"}}`, alice.ID), rec.Body.String())
+
+		rec = do(http.MethodPost, queryPath, `{"users":`+users+`,"fields":["m.tz","org.example.unset"]}`, bob)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.JSONEq(t, fmt.Sprintf(`{%q:{"m.tz":"Europe/Berlin"}}`, alice.ID), rec.Body.String())
+		rec = do(http.MethodPost, queryPath, `{"users":`+users+`,"fields":["org.example.unset"]}`, bob)
+		assert.JSONEq(t, `{}`, rec.Body.String())
+
+		many := make([]string, 101)
+		for i := range many {
+			many[i] = fmt.Sprintf("%q", fmt.Sprintf("@u%d:test", i))
+		}
+		manyFields := make([]string, 31)
+		for i := range manyFields {
+			manyFields[i] = fmt.Sprintf("%q", fmt.Sprintf("org.example.f%d", i))
+		}
+		for _, tc := range []struct {
+			name, body  string
+			user        *test.User
+			wantCode    int
+			wantErrCode string
+		}{
+			{"unauthenticated", `{"users":["@a:test"]}`, nil, http.StatusUnauthorized, "M_MISSING_TOKEN"},
+			{"not an object", `[]`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"missing users", `{}`, bob, http.StatusBadRequest, "M_MISSING_PARAM"},
+			{"users not a list", `{"users":"@a:test"}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"no users", `{"users":[]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"too many users", `{"users":[` + strings.Join(many, ",") + `]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"invalid user ID", `{"users":["alice"]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"user not a string", `{"users":[1]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"fields not a list", `{"users":["@a:test"],"fields":"m.tz"}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"fields null", `{"users":["@a:test"],"fields":null}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"no fields", `{"users":["@a:test"],"fields":[]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"too many fields", `{"users":["@a:test"],"fields":[` + strings.Join(manyFields, ",") + `]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"empty field", `{"users":["@a:test"],"fields":[""]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"field too long", `{"users":["@a:test"],"fields":["` + strings.Repeat("a", 256) + `"]}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+			{"body too large", `{"users":["@a:test"],"padding":"` + strings.Repeat("a", 64*1024) + `"}`, bob, http.StatusRequestEntityTooLarge, "M_TOO_LARGE"},
+			{"users null", `{"users":null}`, bob, http.StatusBadRequest, "M_BAD_JSON"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				rec := do(http.MethodPost, queryPath, tc.body, tc.user)
+				assert.Equal(t, tc.wantCode, rec.Code, rec.Body.String())
+				assert.Equal(t, tc.wantErrCode, gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
+			})
+		}
+	})
+}
+
 func TestTyping(t *testing.T) {
 	alice := test.NewUser(t)
 	room := test.NewRoom(t, alice)

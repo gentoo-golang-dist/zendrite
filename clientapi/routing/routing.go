@@ -108,6 +108,7 @@ func Setup(
 		"org.matrix.msc4222":            true, // MSC4222: state_after in /sync
 		"uk.tcpip.msc4133":              true, // MSC4133: custom profile fields, unstable path
 		"uk.tcpip.msc4133.stable":       true, // MSC4133: custom profile fields, v3 path
+		"org.matrix.msc4536":            true, // MSC4536: querying several profiles at once
 		"com.beeper.msc4169":            true, // MSC4169: redactions through /send in every room version
 		"org.matrix.msc4155":            true, // MSC4155: invite filtering
 		"org.matrix.msc4380":            true, // MSC4380: invite blocking, unstable account data type
@@ -1452,6 +1453,16 @@ func Setup(
 			return GetProfile(req, userAPI, cfg, vars["userID"], asAPI, federation, profileFailureCache)
 		}),
 	).Methods(http.MethodGet, http.MethodOptions)
+
+	// Querying several profiles at once (MSC4536).
+	unstableMux.Handle("/org.matrix.msc4536/profile/query",
+		httputil.MakeAuthAPI("profile_query", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			if r := rateLimits.Limit(req, device); r != nil {
+				return *r
+			}
+			return QueryProfiles(req, userAPI, cfg)
+		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
+	).Methods(http.MethodPost, http.MethodOptions)
 
 	// Profile fields (MSC4133), served at both the stable and the unstable path.
 	getProfileField := httputil.MakeExternalAPI("profile_field", func(req *http.Request) util.JSONResponse {

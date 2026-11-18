@@ -452,6 +452,7 @@ Unlike Synapse, this needs no experimental option.
 | [MSC3550](https://github.com/matrix-org/matrix-spec-proposals/pull/3550) | HTTP 403 for profile lookups | 1.2 | Implemented: remote lookup restrictions return 403 `M_FORBIDDEN`; local profiles remain unrestricted |
 | [MSC4133](https://github.com/matrix-org/matrix-spec-proposals/pull/4133) | Extended profiles: custom profile fields | 1.16 | Implemented: see [custom profile fields](#custom-profile-fields) |
 | [MSC4175](https://github.com/matrix-org/matrix-spec-proposals/pull/4175) | Time zone profile field (`m.tz`) | 1.16 | Implemented: `m.tz` must be a string |
+| [MSC4536](https://github.com/matrix-org/matrix-spec-proposals/pull/4536) | Additional endpoint for fetching user profiles | N/A | Implemented (unstable prefix): see [custom profile fields](#custom-profile-fields) |
 
 ### Custom profile fields
 
@@ -465,6 +466,10 @@ Only the display name and avatar URL are copied into membership events; deleting
 Guests may only change their display name.
 `/_matrix/federation/v1/query/profile` serves every field, also one at a time via `field`, and profiles of remote users include their custom fields.
 Deactivating an account removes its custom fields.
+
+`POST /_matrix/client/unstable/org.matrix.msc4536/profile/query` returns the profiles of up to 100 users at once, optionally only up to 30 of their fields ([MSC4536](https://github.com/matrix-org/matrix-spec-proposals/pull/4536), advertised as `org.matrix.msc4536`).
+As the MSC asks, and as in Synapse, it only returns local profiles and never queries other servers.
+Users without a profile, or without any of the requested fields, are left out of the response.
 
 ## Media
 
