@@ -16,6 +16,7 @@ import (
 
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
+	"github.com/matrix-org/util"
 	"github.com/stretchr/testify/require"
 
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -151,6 +152,31 @@ func TestRemoteProfileUnreachable(t *testing.T) {
 		}
 	})
 
+	// A remote that answers with an error, such as the 400 a homeserver
+	// sends for a Destination it does not serve, is not a fault of this
+	// server either, so it must not surface as a 500. It is not cached as
+	// unreachable.
+	t.Run("remote error responses", func(t *testing.T) {
+		for _, code := range []int{
+			http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusTooManyRequests,
+			http.StatusInternalServerError,
+			http.StatusBadGateway,
+		} {
+			fed := &profileFederation{t: t, err: spec.HTTPError{Code: code}}
+			failures := fakeProfileFailures{}
+			res := GetProfile(req, nil, &cfg.ClientAPI, "@bob:remote.test", nil, fed, failures)
+			requireBadGateway(t, res.Code, res.JSON)
+			res = GetProfileField(req, nil, &cfg.ClientAPI, "@bob:remote.test", "displayname", nil, fed, failures)
+			requireBadGateway(t, res.Code, res.JSON)
+			res = GetProfileField(req, nil, &cfg.ClientAPI, "@bob:remote.test", "m.tz", nil, fed, failures)
+			requireBadGateway(t, res.Code, res.JSON)
+			require.Equal(t, 3, fed.calls, code)
+			require.Empty(t, failures, code)
+		}
+	})
+
 	t.Run("canceled client request is not cached", func(t *testing.T) {
 		ctx, cancel := context.WithCancelCause(t.Context())
 		cancel(nil)
@@ -160,4 +186,19 @@ func TestRemoteProfileUnreachable(t *testing.T) {
 		require.Equal(t, http.StatusBadGateway, res.Code)
 		require.Empty(t, failures)
 	})
+}
+
+func TestProfileInvalidUserID(t *testing.T) {
+	var cfg config.Zendrite
+	cfg.Defaults(config.DefaultOpts{Generate: true, SingleDatabase: true})
+	req := httptest.NewRequest(http.MethodGet, "/_matrix/client/v3/profile/notauser", nil)
+	for _, res := range []util.JSONResponse{
+		GetProfile(req, nil, &cfg.ClientAPI, "notauser", nil, nil, nil),
+		GetProfileField(req, nil, &cfg.ClientAPI, "notauser", "displayname", nil, nil, nil),
+	} {
+		require.Equal(t, http.StatusBadRequest, res.Code)
+		matrixErr, ok := res.JSON.(spec.MatrixError)
+		require.True(t, ok)
+		require.Equal(t, spec.ErrorInvalidParam, matrixErr.ErrCode)
+	}
 }

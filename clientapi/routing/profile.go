@@ -129,9 +129,17 @@ func lookupProfile(
 			return nil, &util.JSONResponse{Code: http.StatusForbidden, JSON: spec.Forbidden("Profile lookup is forbidden by the remote server.")}
 		}
 
-		// An unreachable remote is expected on federation, not a server
-		// fault: answer 502 like Synapse does.
-		if errors.Is(err, errRemoteProfileUnavailable) {
+		if errors.Is(err, errInvalidProfileUserID) {
+			return nil, &util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.InvalidParam("Invalid user ID"),
+			}
+		}
+
+		// A remote that is unreachable or answers with an error is expected
+		// on federation, not a fault of this server: answer 502, like Synapse
+		// does for an unreachable remote.
+		if errors.Is(err, errRemoteProfileUnavailable) || errors.Is(err, errRemoteProfileRejected) {
 			util.GetLogger(req.Context()).WithError(err).WithField("user_id", userID).Warn("Remote profile lookup failed")
 			return nil, &util.JSONResponse{
 				Code: http.StatusBadGateway,
@@ -582,7 +590,7 @@ func getProfile(
 ) (*authtypes.Profile, error) {
 	localpart, domain, err := gomatrixserverlib.SplitID('@', userID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errInvalidProfileUserID, err)
 	}
 
 	if !cfg.Matrix.IsLocalServerName(domain) {
@@ -617,6 +625,16 @@ func getProfile(
 // HTTP response from the remote server.
 var errRemoteProfileUnavailable = errors.New("remote profile query failed")
 
+// errRemoteProfileRejected marks a remote profile query that the remote server
+// answered with an error other than 403 or 404, for example a 400 because the
+// server name resolves to a homeserver that does not serve it. The remote's
+// status is not passed on: a 401 would read as an invalid access token, and
+// the endpoint only knows 403 and 404 anyway.
+var errRemoteProfileRejected = errors.New("remote profile query was rejected")
+
+// errInvalidProfileUserID marks a profile lookup for a malformed user ID.
+var errInvalidProfileUserID = errors.New("invalid user ID")
+
 // remoteProfile fetches a remote user's whole profile over federation. It
 // uses the signed transport because LookupProfile only decodes the display
 // name and avatar URL, not custom fields.
@@ -642,7 +660,10 @@ func remoteProfile(
 			// No usable response: unreachable, timed out or garbled.
 			return nil, fmt.Errorf("%w: %w", errRemoteProfileUnavailable, err)
 		}
-		return nil, err
+		if httpErr.Code == http.StatusNotFound || httpErr.Code == http.StatusForbidden {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %w", errRemoteProfileRejected, err)
 	}
 
 	profile := &authtypes.Profile{}
