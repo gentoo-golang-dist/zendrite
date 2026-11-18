@@ -330,6 +330,17 @@ func Setup(
 		},
 	)).Methods(http.MethodGet)
 
+	// MSC4370: the current forward extremities of a room, for policy servers
+	// and other servers that do not track the room DAG themselves.
+	if mscCfg.Enabled("msc4370") {
+		fedMux.Handle("/unstable/org.matrix.msc4370/extremities/{roomID}", MakeFedAPI(
+			"federation_get_extremities", cfg.Matrix.ServerName, cfg.Matrix.IsLocalServerName, keys, wakeup,
+			func(httpReq *http.Request, request *fclient.FederationRequest, vars map[string]string) util.JSONResponse {
+				return GetExtremities(httpReq, request, rsAPI, vars["roomID"])
+			},
+		)).Methods(http.MethodGet)
+	}
+
 	if mscCfg.Enabled("msc2444") {
 		v1fedmux.Handle("/peek/{roomID}/{peekID}", MakeFedAPI(
 			"federation_peek", cfg.Matrix.ServerName, cfg.Matrix.IsLocalServerName, keys, wakeup,

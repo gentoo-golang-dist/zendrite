@@ -13,7 +13,7 @@ These checks add storage and recovery prerequisites to that qualification.
 
 - Configure one global PostgreSQL database and leave component connection strings empty or identical to the global connection string.
   Separate component databases and SQLite are not supported in HA mode.
-- Enable only the experimental MSCs qualified for HA: `msc2444`, `msc2753`, `msc2836`, `msc3861`, `msc3983`, `msc3984`, `msc4194`, `msc4263`, and `msc4293`.
+- Enable only the experimental MSCs qualified for HA: `msc2444`, `msc2753`, `msc2836`, `msc3861`, `msc3983`, `msc3984`, `msc4194`, `msc4263`, `msc4293`, and `msc4370`.
   Startup refuses any other MSC, including `msc3814`.
   With `msc2836`, leave `mscs.database.connection_string` empty or identical to the global connection string, so the relationship index is fenced like every other table.
   With `msc3861` (delegated authentication, for example through MAS), accounts, devices, external ID mappings and login tokens it provisions are stored in the global database like every other write.
@@ -22,6 +22,7 @@ These checks add storage and recovery prerequisites to that qualification.
   With `msc3983` and `msc3984`, key claims and queries ask the application service on each request and keep nothing of their own.
   With `msc4263`, each key query only reads the roomserver memberships, so it keeps no state of its own.
   With `msc4293`, the redactions a kick or ban asks for are roomserver writes to the global database, made by the owner that processes the kick or ban.
+  With `msc4370`, each request reads the roomserver's latest events, so it keeps no state of its own.
 - Configure external JetStream addresses, a nonempty homeserver-specific topic prefix, and `global.jetstream.replicas: 3` or `5`.
   HA uses file storage for every stream, including typing and presence streams.
   Startup waits up to 30 seconds per stream for every configured replica to become current and online.

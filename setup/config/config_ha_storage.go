@@ -92,6 +92,9 @@ var haQualifiedMSCs = map[string]struct{}{
 	// own: the redactions are roomserver writes to the global database,
 	// made by the candidate that processes the kick or ban.
 	"msc4293": {},
+	// The current forward extremities of a room over federation. It has no
+	// state of its own: each request reads the roomserver's latest events.
+	"msc4370": {},
 }
 
 func sortedKeys(m map[string]struct{}) []string {

@@ -553,6 +553,7 @@ mscs:
   #  - msc4194  # (Redacting a user's events in a room, see https://github.com/matrix-org/matrix-spec-proposals/pull/4194)
   #  - msc4263  # (Only answer key queries for users who share a room, see https://github.com/matrix-org/matrix-spec-proposals/pull/4263)
   #  - msc4293  # (Redact a user's events with a kick or ban, see https://github.com/matrix-org/matrix-spec-proposals/pull/4293)
+  #  - msc4370  # (Federation endpoint for the current forward extremities of a room, see https://github.com/matrix-org/matrix-spec-proposals/pull/4370)
   #  - msc4502  # (Targeted and unrestricted room member queries, see https://github.com/matrix-org/matrix-spec-proposals/pull/4502)
 
   # MSC3861: OIDC delegated authentication configuration.

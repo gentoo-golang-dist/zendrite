@@ -546,6 +546,7 @@ Previews are cached in memory per URL for `cache_duration` (default `1h`), concu
 | [MSC3821](https://github.com/matrix-org/matrix-spec-proposals/pull/3821) | Update redaction rules, again | 1.8 | Implemented: from room version 11, redacting an `m.room.member` event keeps `content.third_party_invite.signed`, so redacted events hash to the same event ID as on other servers |
 | [MSC4311](https://github.com/matrix-org/matrix-spec-proposals/pull/4311) | Create event in invite and knock stripped state | 1.16 | Implemented: `invite_room_state` and `knock_room_state` are sent as full PDUs including `m.room.create`. From room version 12, invites whose state holds PDUs that fail validation are rejected with `M_MISSING_PARAM`. Missing or stripped-only state is accepted with a warning, per the MSC's migration section, as are all failures in earlier room versions. Knock state entries that fail validation are dropped |
 | [MSC4514](https://github.com/matrix-org/matrix-spec-proposals/pull/4514) | EDU size limit | N/A | Implemented: see [EDU size limit](#edu-size-limit) |
+| [MSC4370](https://github.com/matrix-org/matrix-spec-proposals/pull/4370) | Federation endpoint for retrieving current extremities | N/A | Opt-in (`msc4370`, unstable prefix): see [MSC4370](#msc4370-current-extremities-over-federation) |
 
 ### EDU size limit
 
@@ -878,6 +879,7 @@ mscs:
     - msc4194
     - msc4263
     - msc4293
+    - msc4370
     - msc4502
 ```
 
@@ -1017,6 +1019,18 @@ In rooms with pseudo IDs (the experimental room version `org.matrix.msc4014`), m
 The federation endpoint `/_matrix/federation/v1/user/keys/query`, which the MSC allows servers to refuse, stays open, since remote servers need it to encrypt for local users.
 
 Synapse has the same option as `msc4263_limit_key_queries_to_users_who_share_rooms`, but only keeps users who are joined or invited to a room that the requester is joined or invited to, while the MSC also requires the members of public rooms and users with any membership.
+
+### MSC4370: Current extremities over federation
+
+MSC4370 lets a server that does not track the room DAG itself, such as a [policy server](#policy-servers), ask another server for the room's current forward extremities, and fetch the current state from there.
+Zendrite follows Synapse, where it needs `msc4370_enabled`: it serves only the unstable endpoint and is off by default.
+
+- `GET /_matrix/federation/unstable/org.matrix.msc4370/extremities/{roomId}` answers `{"prev_events": [...]}` with the event IDs Zendrite would put in `prev_events` if it sent an event to the room now.
+  Zendrite does not resolve them into one first, so there can be more than one.
+- A server with no joined member in the room gets 403 `M_FORBIDDEN`, and so does a server the room's server ACL denies; as in Synapse, the ACL is only checked for servers in the room, so it is not disclosed to others.
+- A room Zendrite does not know answers 404 `M_NOT_FOUND`, and a room it joined with partial state answers 403 `ORG.MATRIX.MSC3895_UNABLE_DUE_TO_PARTIAL_STATE` until its state is complete, since its view of the room's members is incomplete until then.
+- A room Zendrite has left answers 404 `M_NOT_FOUND` to servers still in it, since its extremities are no longer current.
+- Without the MSC, the endpoint answers 404 `M_UNRECOGNIZED`.
 
 ### MSC4502: Room member queries
 
