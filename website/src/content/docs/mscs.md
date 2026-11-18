@@ -713,6 +713,7 @@ mscs:
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
+| [MSC4075](https://github.com/matrix-org/matrix-spec-proposals/pull/4075) | MatrixRTC call notifications | N/A | Push rules implemented (unstable prefix): see [call notification push rules](#call-notification-push-rules) |
 | [MSC4140](https://github.com/matrix-org/matrix-spec-proposals/pull/4140) | Cancellable delayed events | N/A (accepted) | Implemented with stable and unstable endpoints, disabled by default: see [delayed events](#delayed-events) |
 | [MSC4143](https://github.com/matrix-org/matrix-spec-proposals/pull/4143) | MatrixRTC transport discovery | N/A (accepted) | Implemented with stable and unstable endpoints (configure via [`rtc_foci`](/administration/matrixrtc/)) |
 | [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195) | LiveKit transport for MatrixRTC | N/A (accepted) | Partial: `livekit` transports pointing at lk-jwt-service are advertised; the homeserver `rtc/livekit/get_token` and `delegate_delayed_leave` endpoints are not implemented, so `org.matrix.msc4195.stable` is not advertised |
@@ -777,6 +778,22 @@ The four `underride` rules come after the other default `underride` rules, each 
 Polls in encrypted rooms are `m.room.encrypted` events, which the encryption rules handle.
 Existing accounts receive the rules when their push rules are next read; a rule the user disabled stays disabled.
 Unlike Synapse, where they need `msc3381_polls_enabled`, the rules are always installed, because MSC3930 is accepted.
+
+### Call notification push rules
+
+Element Call rings the people it calls with an `org.matrix.msc4075.rtc.notification` event that mentions them or the room.
+Zendrite installs the two default push rules of MSC4075 for it, with the unstable rule IDs and event type that Synapse and Element Call use, so that the push gateway is told to ring:
+
+- `.org.matrix.msc4075.rule.rtc.invite_for_me` notifies with the `ring` sound for a call notification whose `m.mentions.user_ids` contains the user.
+- `.org.matrix.msc4075.rule.rtc.invite_for_room` does the same for one with `m.mentions.room: true` from a sender allowed to notify the room.
+
+Both come right before `.m.rule.is_user_mention`, in Synapse's order (the MSC places the second one before `.m.rule.is_room_mention`).
+
+Without them, a call notification that mentions the user is handled by the mention rule, which highlights it and plays the default sound instead.
+In encrypted rooms the server only sees `m.room.encrypted` events, so clients apply the rules themselves after decrypting.
+Existing accounts receive the rules when their push rules are next read; a rule the user disabled stays disabled.
+Unlike Synapse, where they need `msc4075_enabled`, the rules are always installed: they only match call notifications, which current Element Call releases send.
+Older releases sent `org.matrix.msc4075.call.notify`, which no rule matches, as in Synapse.
 
 ## Client-only MSCs
 

@@ -38,6 +38,8 @@ func UpgradeDefaultRules(rules *RuleSet, localpart string, serverName spec.Serve
 		rules.Override = append(rules.Override, mRuleSuppressEditsDefinition())
 	}
 	RemoveLegacyMentionRules(rules)
+	// Before the user mention rule, which AddMentionRules made sure exists.
+	addRTCRules(rules, "@"+localpart+":"+string(serverName))
 	addPostContentRules(rules)
 	// After .m.rule.suppress_edits, as in the defaults.
 	addPollRules(rules)

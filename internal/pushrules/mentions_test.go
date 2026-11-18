@@ -110,7 +110,8 @@ func TestUpgradeDefaultRulesLegacyMentions(t *testing.T) {
 			// mention rules are now.
 			old = append(old, legacy.Override...)
 		}
-		if rule.RuleID == MRuleIsUserMention || rule.RuleID == MRuleIsRoomMention || rule.RuleID == MRuleSuppressEdits || rule.RuleID == MRulePollResponse {
+		if rule.RuleID == MRuleIsUserMention || rule.RuleID == MRuleIsRoomMention || rule.RuleID == MRuleSuppressEdits || rule.RuleID == MRulePollResponse ||
+			rule.RuleID == MRuleRTCInviteForMe || rule.RuleID == MRuleRTCInviteForRoom {
 			continue
 		}
 		clone := *rule

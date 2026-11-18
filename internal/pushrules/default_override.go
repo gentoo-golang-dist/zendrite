@@ -8,6 +8,8 @@ func defaultOverrideRules(userID string) []*Rule {
 		&mRuleSuppressNoticesDefinition,
 		mRuleInviteForMeDefinition(userID),
 		&mRuleMemberEventDefinition,
+		mRuleRTCInviteForMeDefinition(userID),
+		mRuleRTCInviteForRoomDefinition(),
 		mRuleIsUserMentionDefinition(userID),
 		mRuleIsRoomMentionDefinition(),
 		&mRuleTombstoneDefinition,
