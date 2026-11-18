@@ -936,6 +936,12 @@ and [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268) (en
 [MSC4095](https://github.com/matrix-org/matrix-spec-proposals/pull/4095) (bundled URL previews, accepted but not in a spec release) is client-only too: the sending client puts the preview data in the event content under `m.url_previews` (unstable `com.beeper.linkpreviews`), and receiving clients read it from there.
 `/preview_url` stays available for clients that ask the server instead.
 
+[MSC4402](https://github.com/matrix-org/matrix-spec-proposals/pull/4402) (consistent redirects for `.well-known` files, merged) asks clients to follow redirects for `/.well-known/matrix/client`, as servers already do for `/.well-known/matrix/server`.
+Zendrite's server discovery follows up to 10 redirects, only over https and with certificate validation, and stops at a URL it already visited.
+The `/.well-known/matrix/client` that Zendrite serves carries CORS headers and answers preflight requests, as the MSC asks of each hop.
+
+[MSC4455](https://github.com/matrix-org/matrix-spec-proposals/pull/4455) (catch-all property for spaces, open) is client-only: `m.space.catch_all` (unstable `de.spiritcroc.space.catch_all`) is an ordinary state event in the space, and the MSC keeps `/hierarchy` to `m.space.child` relations.
+
 ## Opt-in MSCs
 
 The following MSCs are not enabled by default and must be activated in the `mscs` section of the config file:

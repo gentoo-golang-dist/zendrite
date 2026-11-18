@@ -76,3 +76,34 @@ func TestWellKnownSupportUnconfigured(t *testing.T) {
 	rec := serveWellKnownSupport(t, config.Support{})
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
+
+// TestWellKnownClientCORS checks that /.well-known/matrix/client answers web
+// clients, including their preflight requests: MSC4402 lets clients follow
+// redirects to it, and asks every hop to send CORS headers.
+func TestWellKnownClientCORS(t *testing.T) {
+	t.Parallel()
+
+	var cfg config.Zendrite
+	cfg.Defaults(config.DefaultOpts{})
+	cfg.Global.WellKnownClientName = "https://matrix.example.com"
+
+	routers := httputil.NewRouters()
+	Setup(routers, &cfg, nil, nil, &discoveryUserAPI{}, nil, nil, nil, nil, nil, nil, nil, nil, caching.DisableMetrics)
+
+	for _, method := range []string{http.MethodGet, http.MethodOptions} {
+		req := httptest.NewRequest(method, "/.well-known/matrix/client", nil)
+		req.Header.Set("Origin", "https://app.example.org")
+		if method == http.MethodOptions {
+			req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		}
+		rec := httptest.NewRecorder()
+		routers.WellKnown.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, method)
+		assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"), method)
+		assert.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), http.MethodGet, method)
+		assert.Contains(t, rec.Header().Get("Access-Control-Allow-Headers"), "Authorization", method)
+		if method == http.MethodGet {
+			assert.JSONEq(t, `{"m.homeserver":{"base_url":"https://matrix.example.com"}}`, rec.Body.String())
+		}
+	}
+}
