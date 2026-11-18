@@ -97,15 +97,15 @@ type Topology interface {
 	// InsertEventInTopology inserts the given event in the room's topology, based on the event's depth.
 	// `pos` is the stream position of this event in the events table, and is used to order events which have the same depth.
 	InsertEventInTopology(ctx context.Context, txn *sql.Tx, event *rstypes.HeaderedEvent, pos types.StreamPosition) (topoPos types.StreamPosition, err error)
-	// SelectEventIDsInRange selects the IDs and the topological position of events whose depths are within a given range in a given room's topological order.
-	// Events with `minDepth` are *exclusive*, as is the event which has exactly `minDepth`,`maxStreamPos`. Returns the eventIDs and start/end topological tokens.
-	// `maxStreamPos` is only used when events have the same depth as `maxDepth`, which results in events less than `maxStreamPos` being returned.
-	// Returns an empty slice if no events match the given range.
-	SelectEventIDsInRange(ctx context.Context, txn *sql.Tx, roomID string, minDepth, maxDepth, maxStreamPos types.StreamPosition, limit int, chronologicalOrder bool) (eventIDs []string, start, end types.TopologyToken, err error)
-	// SelectEventIDsBeforeStream selects, latest depth first, the events of a room above `minDepth`
+	// SelectEventIDsInRange selects the IDs and the topological position of events between two positions in a given room's topological order.
+	// A position names the place just after the event at that (depth, stream position), so tokens work in both directions (MSC4492):
+	// in chronological order it returns the events after `from` up to and including `to`, otherwise the events up to and including `from` and after `to`, latest first.
+	// Returns the eventIDs and start/end topological tokens, or an empty slice if no events match the given range.
+	SelectEventIDsInRange(ctx context.Context, txn *sql.Tx, roomID string, from, to types.TopologyToken, limit int, chronologicalOrder bool) (eventIDs []string, start, end types.TopologyToken, err error)
+	// SelectEventIDsBeforeStream selects, latest depth first, the events of a room after the position `to`
 	// that the stream delivered up to `streamBound`, and events that never came down the stream,
 	// such as backfilled ones, whose stream position says nothing about when they were sent.
-	SelectEventIDsBeforeStream(ctx context.Context, txn *sql.Tx, roomID string, minDepth, streamBound types.StreamPosition, limit int) (eventIDs []string, start, end types.TopologyToken, err error)
+	SelectEventIDsBeforeStream(ctx context.Context, txn *sql.Tx, roomID string, to types.TopologyToken, streamBound types.StreamPosition, limit int) (eventIDs []string, start, end types.TopologyToken, err error)
 	// SelectRecentEventsByTopology returns, for each room, the latest `limit` events of the
 	// filter that the stream delivered up to `to`, in topological order (depth, then stream
 	// position), oldest first (MSC4445). Events kept from sync are left out. Returns

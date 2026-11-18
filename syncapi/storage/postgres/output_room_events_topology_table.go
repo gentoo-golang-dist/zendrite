@@ -49,26 +49,30 @@ const insertEventInTopologySQL = "" +
 	" ON CONFLICT (topological_position, stream_position, room_id) DO UPDATE SET event_id = $1" +
 	" RETURNING topological_position"
 
+// A position (topological_position, stream_position) names the place just
+// after that event, so that one token works in both directions (MSC4492):
+// going forward returns the events after "from" up to and including "to",
+// going backward the events up to and including "from" and after "to".
 const selectEventIDsInRangeASCSQL = "" +
 	"SELECT event_id, topological_position, stream_position FROM syncapi_output_room_events_topology" +
-	" WHERE room_id = $1 AND (" +
-	"(topological_position > $2 AND topological_position < $3) OR" +
-	"(topological_position = $4 AND stream_position >= $5)" +
-	") ORDER BY topological_position ASC, stream_position ASC LIMIT $6"
+	" WHERE room_id = $1" +
+	" AND (topological_position, stream_position) > ($2, $3)" +
+	" AND (topological_position, stream_position) <= ($4, $5)" +
+	" ORDER BY topological_position ASC, stream_position ASC LIMIT $6"
 
 const selectEventIDsInRangeDESCSQL = "" +
 	"SELECT event_id, topological_position, stream_position FROM syncapi_output_room_events_topology" +
-	" WHERE room_id = $1 AND (" +
-	"(topological_position > $2 AND topological_position < $3) OR" +
-	"(topological_position = $4 AND stream_position <= $5)" +
-	") ORDER BY topological_position DESC, stream_position DESC LIMIT $6"
+	" WHERE room_id = $1" +
+	" AND (topological_position, stream_position) <= ($2, $3)" +
+	" AND (topological_position, stream_position) > ($4, $5)" +
+	" ORDER BY topological_position DESC, stream_position DESC LIMIT $6"
 
 const selectEventIDsBeforeStreamSQL = "" +
 	"SELECT t.event_id, t.topological_position, t.stream_position FROM syncapi_output_room_events_topology t" +
 	" JOIN syncapi_output_room_events e ON e.event_id = t.event_id" +
-	" WHERE t.room_id = $1 AND t.topological_position > $2" +
-	" AND (t.stream_position <= $3 OR e.exclude_from_sync)" +
-	" ORDER BY t.topological_position DESC, t.stream_position DESC LIMIT $4"
+	" WHERE t.room_id = $1 AND (t.topological_position, t.stream_position) > ($2, $3)" +
+	" AND (t.stream_position <= $4 OR e.exclude_from_sync)" +
+	" ORDER BY t.topological_position DESC, t.stream_position DESC LIMIT $5"
 
 // selectRecentEventsByTopologySQL selects the latest events of each room in
 // the order of the room's DAG (MSC4445): by depth, with the stream position
@@ -160,12 +164,12 @@ func (s *outputRoomEventsTopologyStatements) InsertEventInTopology(
 	return
 }
 
-// SelectEventIDsInRange selects the IDs of events which positions are within a
-// given range in a given room's topological order. Returns the start/end topological tokens for
+// SelectEventIDsInRange selects the IDs of events which positions are between
+// from and to in a given room's topological order, from first. Returns the start/end topological tokens for
 // the returned eventIDs.
 // Returns an empty slice if no events match the given range.
 func (s *outputRoomEventsTopologyStatements) SelectEventIDsInRange(
-	ctx context.Context, txn *sql.Tx, roomID string, minDepth, maxDepth, maxStreamPos types.StreamPosition,
+	ctx context.Context, txn *sql.Tx, roomID string, from, to types.TopologyToken,
 	limit int, chronologicalOrder bool,
 ) (eventIDs []string, start, end types.TopologyToken, err error) {
 	// Decide on the selection's order according to whether chronological order
@@ -178,7 +182,7 @@ func (s *outputRoomEventsTopologyStatements) SelectEventIDsInRange(
 	}
 
 	// Query the event IDs.
-	rows, err := stmt.QueryContext(ctx, roomID, minDepth, maxDepth, maxDepth, maxStreamPos, limit)
+	rows, err := stmt.QueryContext(ctx, roomID, from.Depth, from.PDUPosition, to.Depth, to.PDUPosition, limit)
 	if errors.Is(err, sql.ErrNoRows) {
 		// If no event matched the request, return an empty slice.
 		return []string{}, start, end, nil
@@ -211,15 +215,15 @@ func (s *outputRoomEventsTopologyStatements) SelectEventIDsInRange(
 // SelectEventIDsBeforeStream selects the events of a room that the stream
 // delivered up to streamBound or that never came down it, latest depth first.
 func (s *outputRoomEventsTopologyStatements) SelectEventIDsBeforeStream(
-	ctx context.Context, txn *sql.Tx, roomID string, minDepth, streamBound types.StreamPosition, limit int,
+	ctx context.Context, txn *sql.Tx, roomID string, to types.TopologyToken, streamBound types.StreamPosition, limit int,
 ) (eventIDs []string, start, end types.TopologyToken, err error) {
 	// Not prepared with the others, as it reads a table that may not exist
 	// yet when this one is set up.
 	var rows *sql.Rows
 	if txn != nil {
-		rows, err = txn.QueryContext(ctx, selectEventIDsBeforeStreamSQL, roomID, minDepth, streamBound, limit)
+		rows, err = txn.QueryContext(ctx, selectEventIDsBeforeStreamSQL, roomID, to.Depth, to.PDUPosition, streamBound, limit)
 	} else {
-		rows, err = s.db.QueryContext(ctx, selectEventIDsBeforeStreamSQL, roomID, minDepth, streamBound, limit)
+		rows, err = s.db.QueryContext(ctx, selectEventIDsBeforeStreamSQL, roomID, to.Depth, to.PDUPosition, streamBound, limit)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return []string{}, start, end, nil

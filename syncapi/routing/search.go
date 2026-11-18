@@ -7,7 +7,6 @@
 package routing
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"sort"
@@ -25,7 +24,6 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/fulltext"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
-	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/syncapi/internal"
 	"codefloe.com/pat-s/zendrite/syncapi/storage"
 	"codefloe.com/pat-s/zendrite/syncapi/synctypes"
@@ -201,17 +199,10 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 
 	stateForRooms := make(map[string][]synctypes.ClientEvent)
 	for _, event := range evs {
-		eventsBefore, eventsAfter, err := contextEvents(ctx, snapshot, event, roomFilter, searchReq)
+		eventContext := searchReq.SearchCategories.RoomEvents.EventContext
+		eventsBefore, eventsAfter, startToken, endToken, err := contextWindow(ctx, snapshot, event.RoomID().String(), event.EventID(), roomFilter, eventContext.BeforeLimit, eventContext.AfterLimit)
 		if err != nil {
 			logrus.WithError(err).Error("failed to get context events")
-			return util.JSONResponse{
-				Code: http.StatusInternalServerError,
-				JSON: spec.InternalServerError{},
-			}
-		}
-		startToken, endToken, err := getStartEnd(ctx, snapshot, event.EventID(), eventsBefore, eventsAfter)
-		if err != nil {
-			logrus.WithError(err).Error("failed to get start/end")
 			return util.JSONResponse{
 				Code: http.StatusInternalServerError,
 				JSON: spec.InternalServerError{},
@@ -337,33 +328,6 @@ func Search(req *http.Request, device *api.Device, syncDB storage.Database, fts 
 }
 
 // contextEvents returns the events around a given eventID.
-func contextEvents(
-	ctx context.Context,
-	snapshot storage.DatabaseTransaction,
-	event *types.HeaderedEvent,
-	roomFilter *synctypes.RoomEventFilter,
-	searchReq SearchRequest,
-) ([]*types.HeaderedEvent, []*types.HeaderedEvent, error) {
-	id, _, err := snapshot.SelectContextEvent(ctx, event.RoomID().String(), event.EventID())
-	if err != nil {
-		logrus.WithError(err).Error("failed to query context event")
-		return nil, nil, err
-	}
-	roomFilter.Limit = searchReq.SearchCategories.RoomEvents.EventContext.BeforeLimit
-	eventsBefore, err := snapshot.SelectContextBeforeEvent(ctx, id, event.RoomID().String(), roomFilter)
-	if err != nil {
-		logrus.WithError(err).Error("failed to query before context event")
-		return nil, nil, err
-	}
-	roomFilter.Limit = searchReq.SearchCategories.RoomEvents.EventContext.AfterLimit
-	_, eventsAfter, err := snapshot.SelectContextAfterEvent(ctx, id, event.RoomID().String(), roomFilter)
-	if err != nil {
-		logrus.WithError(err).Error("failed to query after context event")
-		return nil, nil, err
-	}
-	return eventsBefore, eventsAfter, err
-}
-
 type EventContext struct {
 	AfterLimit     int  `json:"after_limit,omitempty"`
 	BeforeLimit    int  `json:"before_limit,omitempty"`

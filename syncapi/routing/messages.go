@@ -235,7 +235,9 @@ func OnIncomingMessagesRequest(
 				Code: http.StatusInternalServerError,
 			}
 		}
-		if backwardOrdering {
+		// Going backward, start no later than the leave, but keep a token
+		// from an earlier page so that pagination moves on.
+		if backwardOrdering && topologyBefore(token, from) {
 			from = token
 		}
 	}
@@ -348,7 +350,12 @@ func (r *messagesReq) retrieveEvents(ctx context.Context, rsAPI api.SyncRoomserv
 		err = fmt.Errorf("GetEventsInRange: %w", err)
 		return []synctypes.ClientEvent{}, *r.from, emptyToken, err
 	}
-	end.Decrement()
+	if r.backwardOrdering {
+		// A token names the place after an event, so step back over the
+		// oldest event of a backward page. Going forward, the newest event's
+		// own position already is the place after it.
+		end.Decrement()
+	}
 
 	// topologyHadEvents distinguishes "no events in topology range" (true end of history
 	// or backward extremity) from "events existed but the filter removed all of them".
@@ -416,7 +423,8 @@ func (r *messagesReq) retrieveEvents(ctx context.Context, rsAPI api.SyncRoomserv
 
 	// Sort the events to ensure we send them in the right order.
 	if r.backwardOrdering {
-		if events[len(events)-1].Type() == spec.MRoomCreate {
+		// The events are oldest first.
+		if events[0].Type() == spec.MRoomCreate {
 			// NOTSPEC: We've hit the beginning of the room so there's really nowhere
 			// else to go. This seems to fix Element iOS from looping on /messages endlessly.
 			end = types.TopologyToken{}
@@ -451,7 +459,8 @@ func (r *messagesReq) retrieveEvents(ctx context.Context, rsAPI api.SyncRoomserv
 func (r *messagesReq) getStartEnd(events []*rstypes.HeaderedEvent) (start, end types.TopologyToken, err error) {
 	if r.backwardOrdering {
 		start = *r.from
-		if events[len(events)-1].Type() == spec.MRoomCreate {
+		// The events are oldest first.
+		if events[0].Type() == spec.MRoomCreate {
 			// NOTSPEC: We've hit the beginning of the room so there's really nowhere
 			// else to go. This seems to fix Element iOS from looping on /messages endlessly.
 			end = types.TopologyToken{}
@@ -489,6 +498,11 @@ func (r *messagesReq) getStartEnd(events []*rstypes.HeaderedEvent) (start, end t
 func (r *messagesReq) handleEmptyEventsSlice() (
 	events []*rstypes.HeaderedEvent, err error,
 ) {
+	// Backfilling fetches older history, which never belongs on a forward page:
+	// going forward, an empty page is the live end of the room.
+	if !r.backwardOrdering {
+		return []*rstypes.HeaderedEvent{}, nil
+	}
 	backwardExtremities, err := r.snapshot.BackwardExtremitiesForRoom(r.ctx, r.roomID)
 
 	// Check if we have backward extremities for this room.
@@ -773,4 +787,9 @@ func backfillEvents(
 	}
 
 	return events, nil
+}
+
+// topologyBefore reports whether position a comes before position b.
+func topologyBefore(a, b types.TopologyToken) bool {
+	return a.Depth < b.Depth || (a.Depth == b.Depth && a.PDUPosition < b.PDUPosition)
 }

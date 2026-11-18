@@ -147,3 +147,15 @@ func TestFilterHeaderedEventsByRelationAndLabel(t *testing.T) {
 	assert.Equal(t, []string{root.EventID()}, ids(filterHeaderedEvents(events, &synctypes.RoomEventFilter{Labels: list("#fun")})))
 	assert.Equal(t, []string{thread.EventID()}, ids(filterHeaderedEvents(events, &synctypes.RoomEventFilter{NotLabels: list("#fun")})))
 }
+
+// TestForwardMessagesNeverBackfill checks that an empty forward page is the
+// live end of the room: backfilling would return older history as newer
+// events.
+func TestForwardMessagesNeverBackfill(t *testing.T) {
+	// A nil snapshot fails the test if the request looks for extremities.
+	r := &messagesReq{backwardOrdering: false}
+	events, err := r.handleEmptyEventsSlice()
+	assert.NoError(t, err)
+	assert.Empty(t, events)
+	assert.False(t, r.didBackfill)
+}

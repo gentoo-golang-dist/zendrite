@@ -160,6 +160,7 @@ Backfilled events never appear in `/sync` timelines.
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
 | [MSC2675](https://github.com/matrix-org/matrix-spec-proposals/pull/2675) | Serverside aggregations of message relationships | 1.3 | Implemented: [bundled aggregations](#bundled-aggregations), and `/relations` in topological order with `/messages` and `/sync` tokens |
+| [MSC4492](https://github.com/matrix-org/matrix-spec-proposals/pull/4492) | Pagination tokens are directionless | N/A (accepted) | Implemented: see [pagination tokens](#pagination-tokens) |
 | [MSC3981](https://github.com/matrix-org/matrix-spec-proposals/pull/3981) | Recursive relations | 1.10 | Implemented: `recurse` follows relations three levels deep |
 | [MSC2676](https://github.com/matrix-org/matrix-spec-proposals/pull/2676) | Message editing | 1.4 | Implemented: the latest valid edit is bundled under `m.replace`, in the v1.7 format; invalid edits are ignored, and a redacted original carries no edits |
 | [MSC3316](https://github.com/matrix-org/matrix-spec-proposals/pull/3316) | Timestamp massaging | 1.3 | Implemented: the `ts` parameter on `/send`, `/state`, membership endpoints, `/createRoom` and profile updates only applies to requests made with an application service token, and is ignored otherwise |
@@ -188,6 +189,14 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC4194](https://github.com/matrix-org/matrix-spec-proposals/pull/4194) | Batch redaction of events by sender within a room | N/A | Opt-in (`msc4194`, unstable prefix): see [MSC4194](#msc4194-redacting-a-users-events) |
 | [MSC4293](https://github.com/matrix-org/matrix-spec-proposals/pull/4293) | Redact on kick/ban | N/A | Opt-in (`msc4293`, unstable prefix): see [MSC4293](#msc4293-redact-on-kick-and-ban) |
 | [MSC4169](https://github.com/matrix-org/matrix-spec-proposals/pull/4169) | Backwards-compatible redaction sending using `/send` | 1.18 | Implemented: `PUT /send/m.room.redaction` copies `content.redacts` to the top level, so it redacts in every room version. Advertised as `com.beeper.msc4169` in `/versions` |
+
+### Pagination tokens
+
+As [MSC4492](https://github.com/matrix-org/matrix-spec-proposals/pull/4492) requires, a token names a position in the room, and `dir` alone decides which way to page from it.
+`/messages` and `/relations` accept, as `from` and `to`, the tokens of `/messages` (`start`, `end`), `/relations` (`next_batch`, `prev_batch`), `/context` (`start`, `end`), `/search` result contexts, and `/sync` (`prev_batch`, `next_batch`).
+Paging backward from a token returns the events before that position, and paging forward the events after it, so reversing direction at a page boundary returns the events of that page again.
+`/context` names the place before the oldest event of the window as `start` and the place after its newest as `end`.
+The tokens of `/threads` and `/hierarchy` are separate and only work with their own endpoint.
 
 ### Bundled aggregations
 

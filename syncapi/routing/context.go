@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -118,7 +119,7 @@ func Context(
 		ContainsURL:             filter.ContainsURL,
 	}
 
-	id, requestedEvent, err := snapshot.SelectContextEvent(ctx, roomID, eventID)
+	_, requestedEvent, err := snapshot.SelectContextEvent(ctx, roomID, eventID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return util.JSONResponse{
@@ -159,18 +160,9 @@ func Context(
 		filter.Limit /= 2
 	}
 
-	eventsBefore, err := snapshot.SelectContextBeforeEvent(ctx, id, roomID, filter)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		logrus.WithError(err).Error("unable to fetch before events")
-		return util.JSONResponse{
-			Code: http.StatusInternalServerError,
-			JSON: spec.InternalServerError{},
-		}
-	}
-
-	_, eventsAfter, err := snapshot.SelectContextAfterEvent(ctx, id, roomID, filter)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		logrus.WithError(err).Error("unable to fetch after events")
+	eventsBefore, eventsAfter, start, end, err := contextWindow(ctx, snapshot, roomID, eventID, filter, filter.Limit, filter.Limit)
+	if err != nil {
+		logrus.WithError(err).Error("unable to fetch context events")
 		return util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
@@ -261,11 +253,8 @@ func Context(
 	if len(response.State) > filter.Limit {
 		response.State = response.State[len(response.State)-filter.Limit:]
 	}
-	start, end, err := getStartEnd(ctx, snapshot, requestedEvent.EventID(), eventsBefore, eventsAfter)
-	if err == nil {
-		response.End = end.String()
-		response.Start = start.String()
-	}
+	response.End = end.String()
+	response.Start = start.String()
 	succeeded = true
 	return util.JSONResponse{
 		Code: http.StatusOK,
@@ -313,34 +302,53 @@ func applyHistoryVisibilityOnContextEvents(
 	return filteredBefore, filteredAfter, nil
 }
 
-// getStartEnd returns the pagination tokens around the context window. When
-// no events come before or after the requested event, the token on that side
-// is the requested event's own position: a backward page includes the event
-// at its token, so the start token steps back over it.
-func getStartEnd(
-	ctx context.Context, snapshot storage.DatabaseTransaction, eventID string, startEvents, endEvents []*rstypes.HeaderedEvent,
-) (start, end types.TopologyToken, err error) {
-	var position types.TopologyToken
-	if len(startEvents) == 0 || len(endEvents) == 0 {
-		if position, err = snapshot.EventPositionInTopology(ctx, eventID); err != nil {
-			return
+// contextWindow selects up to beforeLimit events before the given event and
+// up to afterLimit after it, in topological order as /messages pages them:
+// events before come latest first, events after oldest first. Start is the
+// place before the oldest event it looked at and end the place after the
+// newest, so that both work as /messages and /relations tokens in either
+// direction (MSC4492). Events the filter removes still move the tokens on,
+// as on a /messages page.
+func contextWindow(
+	ctx context.Context, snapshot storage.DatabaseTransaction, roomID, eventID string,
+	filter *synctypes.RoomEventFilter, beforeLimit, afterLimit int,
+) (before, after []*rstypes.HeaderedEvent, start, end types.TopologyToken, err error) {
+	position, err := snapshot.EventPositionInTopology(ctx, eventID)
+	if err != nil {
+		return nil, nil, start, end, err
+	}
+	// A token names the place after an event, so step back over the oldest.
+	start, end = position, position
+	start.Decrement()
+	page := func(from, to types.TopologyToken, limit int, backward bool) ([]*rstypes.HeaderedEvent, types.TopologyToken, error) {
+		f := *filter
+		f.Limit = limit
+		events, _, last, err := snapshot.GetEventsInTopologicalRange(ctx, &from, &to, roomID, &f, backward)
+		out := make([]*rstypes.HeaderedEvent, 0, len(events))
+		for _, event := range events {
+			out = append(out, event.HeaderedEvent)
+		}
+		return out, last, err
+	}
+	var last types.TopologyToken
+	if beforeLimit > 0 {
+		if before, last, err = page(start, types.TopologyToken{}, beforeLimit, true); err != nil {
+			return nil, nil, start, end, err
+		}
+		if last != (types.TopologyToken{}) {
+			start = last
+			start.Decrement()
 		}
 	}
-	if len(startEvents) > 0 {
-		start, err = snapshot.EventPositionInTopology(ctx, startEvents[0].EventID())
-		if err != nil {
-			return
+	if afterLimit > 0 {
+		if after, last, err = page(position, types.TopologyToken{Depth: math.MaxInt64, PDUPosition: math.MaxInt64}, afterLimit, false); err != nil {
+			return nil, nil, start, end, err
 		}
-	} else {
-		start = position
-		start.Decrement()
+		if last != (types.TopologyToken{}) {
+			end = last
+		}
 	}
-	if len(endEvents) > 0 {
-		end, err = snapshot.EventPositionInTopology(ctx, endEvents[0].EventID())
-	} else {
-		end = position
-	}
-	return
+	return before, after, start, end, nil
 }
 
 func applyLazyLoadMembers(
