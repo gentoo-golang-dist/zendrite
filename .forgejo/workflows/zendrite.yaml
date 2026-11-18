@@ -7,9 +7,9 @@ on:
   pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group: on Forgejo 17 a push while a run in the group was
+# still in progress created no new run at all (PR #697), so required checks
+# never reported and auto-merge waited forever. Superseded runs now finish.
 
 jobs:
   # Detect whether Go-related files changed. Lint/test are gated on this so

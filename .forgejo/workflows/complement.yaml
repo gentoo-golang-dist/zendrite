@@ -19,9 +19,7 @@ on:
       - '.forgejo/workflows/complement.yaml'
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group, see zendrite.yaml.
 
 jobs:
   complement:
