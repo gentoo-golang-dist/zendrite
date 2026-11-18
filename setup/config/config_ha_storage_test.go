@@ -45,6 +45,7 @@ func TestHAStorageValidation(t *testing.T) {
 		{"unqualified MSC", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc2836", "msc3814"} }, true},
 		{"delegated authentication", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc2444", "msc2753", "msc2836", "msc3861"} }, false},
 		{"redacting a user's events", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc4194"} }, false},
+		{"key queries for users who share a room", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc4263"} }, false},
 		{"dehydrated devices", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc3814"} }, true},
 		{"MSC name that enables nothing", func(c *Zendrite) { c.MSCs.MSCs = []string{"MSC2836"} }, true},
 		{"MSC database is global", func(c *Zendrite) {

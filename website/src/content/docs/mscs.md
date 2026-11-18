@@ -508,6 +508,7 @@ Previews are cached in memory per URL for `cache_duration` (default `1h`), concu
 | [MSC3916](https://github.com/matrix-org/matrix-spec-proposals/pull/3916) | Authenticated media | 1.11 | Implemented, including [URL previews](#url-previews). A `Location` in a remote multipart response is followed, see [MSC3860](#media) |
 | [MSC2732](https://github.com/matrix-org/matrix-spec-proposals/pull/2732) | OLM fallback keys | 1.2 | Implemented: ordinary and dehydrated devices upload reusable fallback keys; claims mark them used and sync reports unused algorithms |
 | [MSC3814](https://github.com/matrix-org/matrix-spec-proposals/pull/3814) | Dehydrated devices v2 | N/A | Opt-in (`msc3814`) |
+| [MSC4263](https://github.com/matrix-org/matrix-spec-proposals/pull/4263) | Preventing MXID enumeration via key queries | N/A | Opt-in (`msc4263`): see [MSC4263](#msc4263-key-queries-for-users-who-share-a-room) |
 | [MSC4115](https://github.com/matrix-org/matrix-spec-proposals/pull/4115) | Membership metadata on events | 1.11 | Implemented: `unsigned.membership` is the requesting user's membership at each event, including the change made by the user's own membership events, wherever events pass the history visibility filter (sync timelines, `/messages`, `/context`, `/event`, `/relations`, threads). Events without a known membership, such as the `state` section of `/sync`, carry none, which the spec allows |
 
 ## Federation
@@ -802,6 +803,7 @@ mscs:
     - msc3861
     - msc4028
     - msc4194
+    - msc4263
     - msc4502
 ```
 
@@ -914,6 +916,17 @@ MSC4194 is qualified for active-passive HA.
 Each redaction is a roomserver write to the global database, and nothing is kept in memory between requests.
 When the owner changes during a request, the redactions already made stay, and the client's next request carries on from the newest unredacted event.
 If the owner made a redaction but its answer was lost, the retried request may redact a few of the events once more; that is harmless.
+
+### MSC4263: Key queries for users who share a room
+
+`POST /_matrix/client/v3/keys/query` answers for any user by default, which lets a client find out which user IDs exist.
+With `msc4263`, it leaves out the users who neither share a room with the requester nor are in a room published in the room directory, as if they had no keys.
+A user shares a room with the requester when the requester is joined or invited to it and the user has any membership in it, including an invite, a knock, a leave or a ban, so that clients still get the keys of invited users.
+The requester's own keys are always returned, and so are those of the users who invited the requester, even into a room that Zendrite is not in yet.
+In rooms with pseudo IDs (the experimental room version `org.matrix.msc4014`), memberships belong to keys made for the room, not to user IDs, so the limit does not apply to a user in such a room.
+The federation endpoint `/_matrix/federation/v1/user/keys/query`, which the MSC allows servers to refuse, stays open, since remote servers need it to encrypt for local users.
+
+Synapse has the same option as `msc4263_limit_key_queries_to_users_who_share_rooms`, but only keeps users who are joined or invited to a room that the requester is joined or invited to, while the MSC also requires the members of public rooms and users with any membership.
 
 ### MSC4502: Room member queries
 

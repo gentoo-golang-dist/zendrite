@@ -1048,6 +1048,10 @@ func (r *Queryer) QueryKnownUsers(ctx context.Context, req *api.QueryKnownUsersR
 	return nil
 }
 
+func (r *Queryer) QueryUsersSharingRoom(ctx context.Context, userID string, otherUserIDs []string) ([]string, error) {
+	return r.DB.UsersSharingRoom(ctx, userID, otherUserIDs)
+}
+
 func (r *Queryer) QueryBulkStateContent(ctx context.Context, req *api.QueryBulkStateContentRequest, res *api.QueryBulkStateContentResponse) error {
 	events, err := r.DB.GetBulkStateContent(ctx, req.RoomIDs, req.StateTuples, req.AllowWildcards)
 	if err != nil {

@@ -108,6 +108,23 @@ var selectKnownUsersSQL = "" +
 	"  roomserver_rooms.room_id = roomserver_published.room_id WHERE roomserver_published.published = true" +
 	") AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateJoin) + " AND event_state_key LIKE $2 LIMIT $3"
 
+// selectUsersSharingRoomSQL returns those of the given users who have a
+// membership of any kind in a room that the user is joined or invited to, or
+// in a room published in the room directory, and the senders of the user's
+// invites, whose rooms this server may not be in yet (MSC4263). SQLite numbers the
+// parameters in the order they appear, so $1 must come before the $2 list.
+var selectUsersSharingRoomSQL = "" +
+	"SELECT target_nid FROM roomserver_membership" +
+	" WHERE room_nid IN (" +
+	"  SELECT room_nid FROM roomserver_membership WHERE target_nid = $1 AND membership_nid IN (" +
+	fmt.Sprintf("%d, %d", tables.MembershipStateJoin, tables.MembershipStateInvite) + ")" +
+	"  UNION SELECT roomserver_rooms.room_nid FROM roomserver_rooms INNER JOIN roomserver_published ON" +
+	"  roomserver_rooms.room_id = roomserver_published.room_id WHERE roomserver_published.published = true" +
+	") AND target_nid IN ($2)" +
+	" UNION SELECT sender_nid FROM roomserver_membership" +
+	" WHERE target_nid = $1 AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateInvite) +
+	" AND sender_nid IN ($2)"
+
 // selectLocalServerInRoomSQL is an optimized case for checking if we, the local server,
 // are in the room by using the target_local column of the membership table. Normally when
 // we want to know if a server is in a room, we have to unmarshal the entire room state which
@@ -389,6 +406,40 @@ func (s *membershipStatements) SelectKnownUsers(ctx context.Context, txn *sql.Tx
 			return nil, err
 		}
 		result = append(result, resUserID)
+	}
+	return result, rows.Err()
+}
+
+func (s *membershipStatements) SelectUsersSharingRoom(
+	ctx context.Context, txn *sql.Tx, userNID types.EventStateKeyNID, otherNIDs []types.EventStateKeyNID,
+) ([]types.EventStateKeyNID, error) {
+	if len(otherNIDs) == 0 {
+		return nil, nil
+	}
+	params := make([]any, 0, 1+len(otherNIDs))
+	params = append(params, userNID)
+	for _, nid := range otherNIDs {
+		params = append(params, nid)
+	}
+	query := strings.ReplaceAll(selectUsersSharingRoomSQL, "($2)", sqlutil.QueryVariadicOffset(len(otherNIDs), 1))
+	var rows *sql.Rows
+	var err error
+	if txn != nil {
+		rows, err = txn.QueryContext(ctx, query, params...)
+	} else {
+		rows, err = s.db.QueryContext(ctx, query, params...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectUsersSharingRoom: rows.close() failed")
+	var result []types.EventStateKeyNID
+	for rows.Next() {
+		var nid types.EventStateKeyNID
+		if err := rows.Scan(&nid); err != nil {
+			return nil, err
+		}
+		result = append(result, nid)
 	}
 	return result, rows.Err()
 }

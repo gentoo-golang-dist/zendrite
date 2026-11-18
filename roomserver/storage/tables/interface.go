@@ -276,6 +276,10 @@ type Membership interface {
 	// SelectJoinedUsersSetForRooms returns how many times each of the given users appears across the given rooms.
 	SelectJoinedUsersSetForRooms(ctx context.Context, txn *sql.Tx, roomNIDs []types.RoomNID, userNIDs []types.EventStateKeyNID, localOnly bool) (map[types.EventStateKeyNID]int, error)
 	SelectKnownUsers(ctx context.Context, txn *sql.Tx, userID types.EventStateKeyNID, searchString string, limit int) ([]string, error)
+	// SelectUsersSharingRoom returns those of otherNIDs that have a membership
+	// of any kind in a room that userNID is joined or invited to, or in a room
+	// published in the room directory.
+	SelectUsersSharingRoom(ctx context.Context, txn *sql.Tx, userNID types.EventStateKeyNID, otherNIDs []types.EventStateKeyNID) ([]types.EventStateKeyNID, error)
 	UpdateForgetMembership(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, targetUserNID types.EventStateKeyNID, forget bool) error
 	SelectLocalServerInRoom(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) (bool, error)
 	SelectServerInRoom(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, serverName spec.ServerName) (bool, error)

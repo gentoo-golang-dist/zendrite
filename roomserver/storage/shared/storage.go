@@ -1880,6 +1880,62 @@ func (d *Database) GetKnownUsers(ctx context.Context, userID, searchString strin
 	return d.MembershipTable.SelectKnownUsers(ctx, nil, stateKeyNID, searchString, limit)
 }
 
+// usersSharingRoomBatch bounds the users looked up at once, below SQLite's
+// limit on bound variables.
+const usersSharingRoomBatch = 500
+
+// UsersSharingRoom returns those of otherUserIDs that have a membership of
+// any kind in a room that userID is joined or invited to, or in a room
+// published in the room directory, and the senders of userID's invites
+// (MSC4263).
+//
+// In rooms with pseudo IDs, memberships belong to per-room keys rather than
+// user IDs, so they cannot be matched: for a user in such a room, every
+// user counts as sharing one.
+func (d *Database) UsersSharingRoom(ctx context.Context, userID string, otherUserIDs []string) ([]string, error) {
+	userNID, err := d.EventStateKeysTable.SelectEventStateKeyNID(ctx, nil, userID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The user has never been in a room, but still sees the members of
+		// published rooms. No membership has the zero NID as its target.
+		userNID = 0
+	case err != nil:
+		return nil, err
+	}
+	if userNID != 0 {
+		roomKeys, keysErr := d.UserRoomKeyTable.SelectAllPublicKeysForUser(ctx, nil, userNID)
+		if keysErr != nil && !errors.Is(keysErr, sql.ErrNoRows) {
+			return nil, keysErr
+		}
+		if len(roomKeys) > 0 {
+			return otherUserIDs, nil
+		}
+	}
+	result := make([]string, 0, len(otherUserIDs))
+	for start := 0; start < len(otherUserIDs); start += usersSharingRoomBatch {
+		batch := otherUserIDs[start:min(start+usersSharingRoomBatch, len(otherUserIDs))]
+		// Users who have never been in a room have no NID, and are not given one.
+		otherNIDsMap, err := d.EventStateKeysTable.BulkSelectEventStateKeyNID(ctx, nil, batch)
+		if err != nil {
+			return nil, err
+		}
+		otherNIDs := make([]types.EventStateKeyNID, 0, len(otherNIDsMap))
+		nidToUserID := make(map[types.EventStateKeyNID]string, len(otherNIDsMap))
+		for id, nid := range otherNIDsMap {
+			otherNIDs = append(otherNIDs, nid)
+			nidToUserID[nid] = id
+		}
+		sharing, err := d.MembershipTable.SelectUsersSharingRoom(ctx, nil, userNID, otherNIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, nid := range sharing {
+			result = append(result, nidToUserID[nid])
+		}
+	}
+	return result, nil
+}
+
 func (d *Database) RoomsWithACLs(ctx context.Context) ([]string, error) {
 	eventTypeNID, err := d.GetOrCreateEventTypeNID(ctx, "m.room.server_acl")
 	if err != nil {

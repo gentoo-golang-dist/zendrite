@@ -3,6 +3,7 @@ package shared_test
 import (
 	"context"
 	"crypto/ed25519"
+	"fmt"
 	"testing"
 	"time"
 
@@ -156,6 +157,90 @@ func Test_GetKnownUsersWithoutMemberships(t *testing.T) {
 		knownUsers, err = db.GetKnownUsers(ctx, bob.ID, "", 10)
 		assert.NoError(t, err)
 		assert.Equal(t, []string{alice.ID}, knownUsers)
+	})
+}
+
+// MSC4263: key queries are answered for the users who have any membership
+// in a room the requester is joined or invited to, or in a published room.
+func TestUsersSharingRoom(t *testing.T) {
+	ctx := context.Background()
+	users := map[string]*test.User{}
+	for _, name := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "gina", "harry", "nobody"} {
+		users[name] = test.NewUser(t)
+	}
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		db, close := mustCreateRoomserverDatabase(t, dbType) //nolint:contextcheck
+		defer close()
+
+		nids := map[string]types.EventStateKeyNID{}
+		for _, name := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "gina", "harry"} {
+			nid, err := db.EventStateKeysTable.InsertEventStateKeyNID(ctx, nil, users[name].ID)
+			assert.NoError(t, err)
+			nids[name] = nid
+		}
+		rooms := map[string]map[string]tables.MembershipState{
+			// Alice is joined: everyone with a membership shares it.
+			"!shared:test": {"alice": tables.MembershipStateJoin, "bob": tables.MembershipStateInvite, "carol": tables.MembershipStateLeaveOrBan},
+			// Alice is only invited.
+			"!invited:test": {"alice": tables.MembershipStateInvite, "erin": tables.MembershipStateJoin},
+			// Alice left.
+			"!left:test": {"alice": tables.MembershipStateLeaveOrBan, "gina": tables.MembershipStateJoin},
+			// Alice was never in it, but it gets published.
+			"!public:test":  {"frank": tables.MembershipStateJoin},
+			"!private:test": {"dave": tables.MembershipStateJoin},
+		}
+		for roomID, members := range rooms {
+			roomNID, err := db.RoomsTable.InsertRoomNID(ctx, nil, roomID, "10")
+			assert.NoError(t, err)
+			for name, membership := range members {
+				assert.NoError(t, db.MembershipTable.InsertMembership(ctx, nil, roomNID, nids[name], true))
+				_, err = db.MembershipTable.UpdateMembership(ctx, nil, roomNID, nids[name], nids[name], membership, 1, false)
+				assert.NoError(t, err)
+			}
+		}
+		// Harry invited Alice over federation: only her invite is known.
+		roomNID, err := db.RoomsTable.InsertRoomNID(ctx, nil, "!fedinvite:test", "10")
+		assert.NoError(t, err)
+		assert.NoError(t, db.MembershipTable.InsertMembership(ctx, nil, roomNID, nids["alice"], true))
+		_, err = db.MembershipTable.UpdateMembership(ctx, nil, roomNID, nids["alice"], nids["harry"], tables.MembershipStateInvite, 1, false)
+		assert.NoError(t, err)
+
+		query := func(name string) []string {
+			others := make([]string, 0, len(users))
+			for other, user := range users {
+				if other != name {
+					others = append(others, user.ID)
+				}
+			}
+			sharing, err := db.UsersSharingRoom(ctx, users[name].ID, others)
+			assert.NoError(t, err)
+			return sharing
+		}
+
+		assert.ElementsMatch(t, []string{users["bob"].ID, users["carol"].ID, users["erin"].ID, users["harry"].ID}, query("alice"))
+		// Nobody has never been in a room.
+		assert.Empty(t, query("nobody"))
+
+		// Lookups are split into batches.
+		many := []string{users["bob"].ID}
+		for i := range 1200 {
+			many = append(many, fmt.Sprintf("@unknown%d:test", i))
+		}
+		many = append(many, users["erin"].ID)
+		sharing, err := db.UsersSharingRoom(ctx, users["alice"].ID, many)
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{users["bob"].ID, users["erin"].ID}, sharing)
+
+		_, err = db.DB.ExecContext(ctx, "INSERT INTO roomserver_published (room_id, appservice_id, network_id, published) VALUES ('!public:test', '', '', true)")
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{users["bob"].ID, users["carol"].ID, users["erin"].ID, users["frank"].ID, users["harry"].ID}, query("alice"))
+		assert.Equal(t, []string{users["frank"].ID}, query("nobody"))
+
+		// Memberships in pseudo ID rooms cannot be matched, so a user in one
+		// sees everyone.
+		_, err = db.UserRoomKeyTable.InsertUserRoomPrivatePublicKey(ctx, nil, nids["dave"], roomNID, ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)))
+		assert.NoError(t, err)
+		assert.Len(t, query("dave"), len(users)-1)
 	})
 }
 

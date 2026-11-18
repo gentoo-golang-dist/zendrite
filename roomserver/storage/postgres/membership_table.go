@@ -134,6 +134,22 @@ var selectKnownUsersSQL = "" +
 	"  roomserver_rooms.room_id = roomserver_published.room_id WHERE roomserver_published.published = true" +
 	") AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateJoin) + " AND event_state_key LIKE $2 LIMIT $3"
 
+// selectUsersSharingRoomSQL returns those of the given users who have a
+// membership of any kind in a room that the user is joined or invited to, or
+// in a room published in the room directory, and the senders of the user's
+// invites, whose rooms this server may not be in yet (MSC4263).
+var selectUsersSharingRoomSQL = "" +
+	"SELECT target_nid FROM roomserver_membership" +
+	" WHERE room_nid IN (" +
+	"  SELECT room_nid FROM roomserver_membership WHERE target_nid = $1 AND membership_nid IN (" +
+	fmt.Sprintf("%d, %d", tables.MembershipStateJoin, tables.MembershipStateInvite) + ")" +
+	"  UNION SELECT roomserver_rooms.room_nid FROM roomserver_rooms INNER JOIN roomserver_published ON" +
+	"  roomserver_rooms.room_id = roomserver_published.room_id WHERE roomserver_published.published = true" +
+	") AND target_nid = ANY($2)" +
+	" UNION SELECT sender_nid FROM roomserver_membership" +
+	" WHERE target_nid = $1 AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateInvite) +
+	" AND sender_nid = ANY($2)"
+
 // selectLocalServerInRoomSQL is an optimized case for checking if we, the local server,
 // are in the room by using the target_local column of the membership table. Normally when
 // we want to know if a server is in a room, we have to unmarshal the entire room state which
@@ -190,6 +206,7 @@ type membershipStatements struct {
 	selectJoinedUsersSetForRoomsAndUserStmt         *sql.Stmt
 	selectJoinedUsersSetForRoomsStmt                *sql.Stmt
 	selectKnownUsersStmt                            *sql.Stmt
+	selectUsersSharingRoomStmt                      *sql.Stmt
 	updateMembershipForgetRoomStmt                  *sql.Stmt
 	selectLocalServerInRoomStmt                     *sql.Stmt
 	selectServerInRoomStmt                          *sql.Stmt
@@ -228,6 +245,7 @@ func PrepareMembershipTable(db *sql.DB) (tables.Membership, error) {
 		{&s.selectJoinedUsersSetForRoomsAndUserStmt, selectJoinedUsersSetForRoomsAndUserSQL},
 		{&s.selectJoinedUsersSetForRoomsStmt, selectJoinedUsersSetForRoomsSQL},
 		{&s.selectKnownUsersStmt, selectKnownUsersSQL},
+		{&s.selectUsersSharingRoomStmt, selectUsersSharingRoomSQL},
 		{&s.updateMembershipForgetRoomStmt, updateMembershipForgetRoom},
 		{&s.selectLocalServerInRoomStmt, selectLocalServerInRoomSQL},
 		{&s.selectServerInRoomStmt, selectServerInRoomSQL},
@@ -435,6 +453,28 @@ func (s *membershipStatements) SelectKnownUsers(
 			return nil, err
 		}
 		result = append(result, resUserID)
+	}
+	return result, rows.Err()
+}
+
+func (s *membershipStatements) SelectUsersSharingRoom(
+	ctx context.Context, txn *sql.Tx, userNID types.EventStateKeyNID, otherNIDs []types.EventStateKeyNID,
+) ([]types.EventStateKeyNID, error) {
+	if len(otherNIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := sqlutil.TxStmt(txn, s.selectUsersSharingRoomStmt).QueryContext(ctx, userNID, otherNIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectUsersSharingRoom: rows.close() failed")
+	var result []types.EventStateKeyNID
+	for rows.Next() {
+		var nid types.EventStateKeyNID
+		if err := rows.Scan(&nid); err != nil {
+			return nil, err
+		}
+		result = append(result, nid)
 	}
 	return result, rows.Err()
 }

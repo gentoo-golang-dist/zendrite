@@ -81,6 +81,9 @@ var haQualifiedMSCs = map[string]struct{}{
 	// so a client retrying against the successor carries on where the
 	// former owner stopped.
 	"msc4194": {},
+	// Limiting key queries to users who share a room. It has no state of its
+	// own: each request reads the roomserver memberships.
+	"msc4263": {},
 }
 
 func sortedKeys(m map[string]struct{}) []string {

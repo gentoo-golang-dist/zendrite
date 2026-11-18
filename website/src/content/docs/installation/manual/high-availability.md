@@ -13,12 +13,13 @@ These checks add storage and recovery prerequisites to that qualification.
 
 - Configure one global PostgreSQL database and leave component connection strings empty or identical to the global connection string.
   Separate component databases and SQLite are not supported in HA mode.
-- Enable only the experimental MSCs qualified for HA: `msc2444`, `msc2753`, `msc2836`, `msc3861`, and `msc4194`.
+- Enable only the experimental MSCs qualified for HA: `msc2444`, `msc2753`, `msc2836`, `msc3861`, `msc4194`, and `msc4263`.
   Startup refuses any other MSC, including `msc3814`.
   With `msc2836`, leave `mscs.database.connection_string` empty or identical to the global connection string, so the relationship index is fenced like every other table.
   With `msc3861` (delegated authentication, for example through MAS), accounts, devices, external ID mappings and login tokens it provisions are stored in the global database like every other write.
   What it keeps in process memory is lost on takeover, and the client retries; see [Delegated authentication](/administration/oidc/#high-availability).
   With `msc4194`, every redaction it makes is a roomserver write to the global database; a request cut short by a takeover keeps the redactions it made, and the client's next request carries on; see [MSC4194](/mscs/#msc4194-redacting-a-users-events).
+  With `msc4263`, each key query only reads the roomserver memberships, so it keeps no state of its own.
 - Configure external JetStream addresses, a nonempty homeserver-specific topic prefix, and `global.jetstream.replicas: 3` or `5`.
   HA uses file storage for every stream, including typing and presence streams.
   Startup waits up to 30 seconds per stream for every configured replica to become current and online.

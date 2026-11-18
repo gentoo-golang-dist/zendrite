@@ -2113,9 +2113,15 @@ func Setup(
 			return UploadKeys(req, userAPI, device)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPost, http.MethodOptions)
+	// MSC4263: only answer key queries for users who share a room with the
+	// requester.
+	var keyQuerySharingRoom usersSharingRoom
+	if mscCfg.Enabled("msc4263") {
+		keyQuerySharingRoom = rsAPI.QueryUsersSharingRoom
+	}
 	v3mux.Handle("/keys/query",
 		httputil.MakeAuthAPI("keys_query", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
-			return QueryKeys(req, userAPI, device)
+			return QueryKeys(req, userAPI, device, keyQuerySharingRoom)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPost, http.MethodOptions)
 	v3mux.Handle("/keys/claim",

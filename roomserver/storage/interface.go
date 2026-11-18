@@ -188,6 +188,10 @@ type Database interface {
 	GetServerInRoom(ctx context.Context, roomNID types.RoomNID, serverName spec.ServerName) (bool, error)
 	// GetKnownUsers searches all users that userID knows about.
 	GetKnownUsers(ctx context.Context, userID, searchString string, limit int) ([]string, error)
+	// UsersSharingRoom returns those of otherUserIDs that have a membership of
+	// any kind in a room that userID is joined or invited to, or in a room
+	// published in the room directory (MSC4263).
+	UsersSharingRoom(ctx context.Context, userID string, otherUserIDs []string) ([]string, error)
 	// ForgetRoom sets a flag in the membership table, that the user wishes to forget a specific room.
 	// senderID is the room-specific sender ID of the user (equal to the user ID except in pseudo-ID rooms).
 	ForgetRoom(ctx context.Context, senderID, roomID string, forget bool) error

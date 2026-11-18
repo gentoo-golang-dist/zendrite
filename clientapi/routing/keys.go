@@ -7,6 +7,7 @@
 package routing
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,11 +170,23 @@ func (r *queryKeysRequest) GetTimeout() time.Duration {
 	return timeout
 }
 
-func QueryKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device) util.JSONResponse {
+// usersSharingRoom returns those of otherUserIDs that share a room with
+// userID, as RoomserverInternalAPI.QueryUsersSharingRoom does.
+type usersSharingRoom func(ctx context.Context, userID string, otherUserIDs []string) ([]string, error)
+
+// QueryKeys implements POST /keys/query. With sharingRoom set, it leaves out
+// the users who do not share a room with the requester (MSC4263).
+func QueryKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device, sharingRoom usersSharingRoom) util.JSONResponse {
 	var r queryKeysRequest
 	resErr := httputil.UnmarshalJSONRequest(req, &r)
 	if resErr != nil {
 		return *resErr
+	}
+	if sharingRoom != nil {
+		if err := limitKeyQuery(req.Context(), r.DeviceKeys, device.UserID, sharingRoom); err != nil {
+			util.GetLogger(req.Context()).WithError(err).Error("failed to find the users sharing a room with the requester")
+			return util.JSONResponse{Code: http.StatusInternalServerError, JSON: spec.InternalServerError{}}
+		}
 	}
 	queryRes := api.QueryKeysResponse{}
 	keyAPI.QueryKeys(req.Context(), &api.QueryKeysRequest{
@@ -191,6 +204,34 @@ func QueryKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device) u
 			"failures":          queryRes.Failures,
 		},
 	}
+}
+
+// limitKeyQuery removes the users who do not share a room with userID from
+// a key query, except userID itself.
+func limitKeyQuery(ctx context.Context, query map[string][]string, userID string, sharingRoom usersSharingRoom) error {
+	others := make([]string, 0, len(query))
+	for other := range query {
+		if other != userID {
+			others = append(others, other)
+		}
+	}
+	if len(others) == 0 {
+		return nil
+	}
+	sharing, err := sharingRoom(ctx, userID, others)
+	if err != nil {
+		return err
+	}
+	allowed := make(map[string]struct{}, len(sharing))
+	for _, other := range sharing {
+		allowed[other] = struct{}{}
+	}
+	for _, other := range others {
+		if _, ok := allowed[other]; !ok {
+			delete(query, other)
+		}
+	}
+	return nil
 }
 
 type claimKeysRequest struct {
