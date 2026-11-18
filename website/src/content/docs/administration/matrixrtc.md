@@ -4,8 +4,8 @@ description: Advertising a LiveKit focus server to clients so that Element Call 
 ---
 
 MatrixRTC ([MSC4143](https://github.com/matrix-org/matrix-spec-proposals/pull/4143)) is the transport used by Element Call for voice and video.
-The media itself never passes through Zendrite: clients connect to a [LiveKit](https://livekit.io/) SFU, and obtain a token for it from [lk-jwt-service](https://github.com/element-hq/lk-jwt-service).
-Zendrite's only job is to tell clients where that service lives.
+The media itself never passes through Zendrite: clients connect to a [LiveKit](https://livekit.io/) SFU, and obtain a token for it from [lk-jwt-service](https://github.com/element-hq/lk-jwt-service), or from Zendrite itself if it holds the SFU's API key (see [issuing tokens in Zendrite](#issuing-tokens-in-zendrite)).
+Otherwise Zendrite's only job is to tell clients where that service lives.
 
 You therefore need a working LiveKit SFU and lk-jwt-service deployment before any of this has an effect.
 [Deploying Element Call](#deploying-element-call) below walks through the whole setup; the sections before it cover the Zendrite side.
@@ -25,7 +25,40 @@ global:
 `livekit_service_url` is the URL of **lk-jwt-service**, not of the LiveKit SFU.
 Clients discover the SFU itself from the token that service hands out.
 
-Zendrite validates the list at startup and refuses to start if a `livekit` focus has no service URL.
+Zendrite validates the list at startup and refuses to start if a `livekit` focus has neither a service URL nor an SFU URL.
+
+### Issuing tokens in Zendrite
+
+Instead of lk-jwt-service, Zendrite can issue the LiveKit tokens itself, as [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195) describes.
+Give the focus the SFU's WebSocket URL and the API key and secret that the SFU is configured with:
+
+```yaml
+global:
+  rtc_foci:
+    - type: livekit
+      url: "wss://livekit.example.com"
+      livekit_api_key: "APIxxxxxxxx"
+      livekit_api_secret: "the secret"
+      # Optional: the SFU's HTTP API, if it is not the url with an http(s) scheme.
+      # livekit_api_url: "http://livekit.internal:7880"
+```
+
+The key and secret are never shown to clients; the `url` is.
+`livekit_service_url` may stay alongside `url` for clients that still ask lk-jwt-service.
+With a key, Zendrite then:
+
+- serves `POST /_matrix/client/v1/rtc/livekit/get_token` and `/_matrix/client/unstable/io.element.msc4195/rtc/livekit/get_token` to users, guests and call guests, rate limited.
+  A user joined to the room gets a token for the SFU, after Zendrite creates the LiveKit room for the call through the SFU's API.
+  A `url` that is not one of the configured SFUs is refused with `M_INVALID_PARAM`.
+- serves the federation side, `POST /_matrix/federation/v1/rtc/livekit/get_token` and its unstable path, to users of other servers joined to the room, unless the room's server ACL denies their server, at most 5 requests a second per server.
+- advertises `org.matrix.msc4195.stable` in `unstable_features`.
+
+Whether or not it holds a key, Zendrite asks the other server, over federation, for a token for its SFU when a request names another `server_name` that is in the room, and passes its `M_FORBIDDEN` and `M_INVALID_PARAM` errors on.
+
+Tokens last an hour, may publish and subscribe, and cannot create, delete or hide in rooms.
+A room created on the SFU is not created again for a minute.
+LiveKit room names and participant identities are hashes of the Matrix room and slot, and of the user and member ID, so the SFU does not learn them.
+Zendrite does not yet remove participants from the SFU when they leave the Matrix room, nor handle delegated delayed leave events (`delegate_delayed_leave`), which the MSC recommends and makes optional.
 
 ## What clients see
 
@@ -45,6 +78,8 @@ All three use the flat wire format that clients expect:
   }
 ]
 ```
+
+A focus with a `url` (MSC4195) carries it as `url` as well.
 
 `GET /_matrix/client/versions` also advertises `org.matrix.msc4143` in `unstable_features`, but only while at least one focus is configured.
 It always advertises `org.matrix.msc4143.stable`, as Synapse (and so matrix.org) does, since the stable endpoint is always served.

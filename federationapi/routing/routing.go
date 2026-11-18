@@ -26,6 +26,7 @@ import (
 	"codefloe.com/pat-s/zendrite/federationapi/producers"
 	"codefloe.com/pat-s/zendrite/internal"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
+	"codefloe.com/pat-s/zendrite/internal/livekit"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
@@ -297,6 +298,19 @@ func Setup(
 			)
 		},
 	)).Methods(http.MethodGet).Name(QueryDirectoryRouteName)
+
+	// MSC4195: tokens for this server's LiveKit SFUs, for users of other
+	// servers in MatrixRTC sessions. Served only when Zendrite issues them.
+	if issuer := livekit.NewIssuer(zendriteCfg.Global.RTCFoci); issuer.Enabled() {
+		liveKitToken := MakeFedAPI(
+			"federation_livekit_get_token", cfg.Matrix.ServerName, cfg.Matrix.IsLocalServerName, keys, wakeup,
+			func(httpReq *http.Request, request *fclient.FederationRequest, vars map[string]string) util.JSONResponse {
+				return GetLiveKitToken(httpReq, request, cfg, rsAPI, issuer)
+			},
+		)
+		v1fedmux.Handle("/rtc/livekit/get_token", liveKitToken).Methods(http.MethodPost)
+		fedMux.Handle("/unstable/io.element.msc4195/rtc/livekit/get_token", liveKitToken).Methods(http.MethodPost)
+	}
 
 	v1fedmux.Handle("/query/profile", MakeFedAPI(
 		"federation_query_profile", cfg.Matrix.ServerName, cfg.Matrix.IsLocalServerName, keys, wakeup,

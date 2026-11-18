@@ -28,6 +28,7 @@ import (
 	federationAPI "codefloe.com/pat-s/zendrite/federationapi/api"
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
+	"codefloe.com/pat-s/zendrite/internal/livekit"
 	"codefloe.com/pat-s/zendrite/internal/transactions"
 	roomserverAPI "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/base"
@@ -102,20 +103,23 @@ func Setup(
 		"org.matrix.msc4140.stable":     cfg.DelayedEvents.Enabled(), // MSC4140: stable delayed event endpoints
 		"org.matrix.msc4143":            len(cfg.Matrix.RTCFoci) > 0,
 		"org.matrix.msc4143.stable":     true, // MSC4143: GET /v1/rtc/transports, always served
-		"org.matrix.msc4262":            true, // MSC4262: sliding sync profile updates
-		"org.matrix.msc4429":            true, // MSC4429: profile updates in /sync
-		"org.matrix.msc4354":            true, // MSC4354: sticky events
-		"org.matrix.msc4222":            true, // MSC4222: state_after in /sync
-		"uk.tcpip.msc4133":              true, // MSC4133: custom profile fields, unstable path
-		"uk.tcpip.msc4133.stable":       true, // MSC4133: custom profile fields, v3 path
-		"com.beeper.msc4437":            true, // MSC4437: replacing the whole profile, unstable path
-		"org.matrix.msc4536":            true, // MSC4536: querying several profiles at once
-		"com.beeper.msc4169":            true, // MSC4169: redactions through /send in every room version
-		"org.matrix.msc4155":            true, // MSC4155: invite filtering
-		"org.matrix.msc4380":            true, // MSC4380: invite blocking, unstable account data type
-		"org.matrix.msc4380.stable":     true, // MSC4380: invite blocking, m.invite_permission_config
-		"org.matrix.msc4306":            true, // MSC4306: thread subscriptions
-		"fi.mau.msc2815":                true, // MSC2815: moderators viewing redacted event content
+		// MSC4195: LiveKit tokens issued by the homeserver, when it holds the
+		// API key of an SFU.
+		"org.matrix.msc4195.stable": livekit.NewIssuer(cfg.Matrix.RTCFoci).Enabled(),
+		"org.matrix.msc4262":        true, // MSC4262: sliding sync profile updates
+		"org.matrix.msc4429":        true, // MSC4429: profile updates in /sync
+		"org.matrix.msc4354":        true, // MSC4354: sticky events
+		"org.matrix.msc4222":        true, // MSC4222: state_after in /sync
+		"uk.tcpip.msc4133":          true, // MSC4133: custom profile fields, unstable path
+		"uk.tcpip.msc4133.stable":   true, // MSC4133: custom profile fields, v3 path
+		"com.beeper.msc4437":        true, // MSC4437: replacing the whole profile, unstable path
+		"org.matrix.msc4536":        true, // MSC4536: querying several profiles at once
+		"com.beeper.msc4169":        true, // MSC4169: redactions through /send in every room version
+		"org.matrix.msc4155":        true, // MSC4155: invite filtering
+		"org.matrix.msc4380":        true, // MSC4380: invite blocking, unstable account data type
+		"org.matrix.msc4380.stable": true, // MSC4380: invite blocking, m.invite_permission_config
+		"org.matrix.msc4306":        true, // MSC4306: thread subscriptions
+		"fi.mau.msc2815":            true, // MSC2815: moderators viewing redacted event content
 		// MSC4491: uk.timedout.msc4491.invite_reason in createRoom.
 		"uk.timedout.msc4491.create_room_invite_reasons": true,
 		"org.matrix.msc3874":                             true, // MSC3874: relation type filters for /messages
@@ -597,6 +601,19 @@ func Setup(
 		Methods(http.MethodGet, http.MethodOptions)
 	v1mux.Handle("/rtc/transports", rtcTransports(stableRTCTransportsKey)).
 		Methods(http.MethodGet, http.MethodOptions)
+
+	// MSC4195: tokens for LiveKit SFUs, issued by Zendrite for its own SFUs
+	// and fetched from the other server for theirs, which works without an
+	// SFU of its own. Open to guests, as the MSC asks, and to call guests.
+	liveKitIssuer := livekit.NewIssuer(cfg.Matrix.RTCFoci)
+	liveKitToken := httputil.MakeAuthAPI("rtc_livekit_get_token", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+		if r := rateLimits.Limit(req, device); r != nil {
+			return *r
+		}
+		return GetLiveKitToken(req, device, cfg, rsAPI, federation, liveKitIssuer)
+	}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests())
+	v1mux.Handle("/rtc/livekit/get_token", liveKitToken).Methods(http.MethodPost, http.MethodOptions)
+	unstableMux.Handle("/io.element.msc4195/rtc/livekit/get_token", liveKitToken).Methods(http.MethodPost, http.MethodOptions)
 
 	// Room Summary API (Matrix v1.15, previously MSC3266).
 	// Supports both authenticated and unauthenticated requests.

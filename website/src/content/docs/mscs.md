@@ -767,7 +767,7 @@ mscs:
 | [MSC4075](https://github.com/matrix-org/matrix-spec-proposals/pull/4075) | MatrixRTC call notifications | N/A | Push rules implemented (unstable prefix): see [call notification push rules](#call-notification-push-rules) |
 | [MSC4140](https://github.com/matrix-org/matrix-spec-proposals/pull/4140) | Cancellable delayed events | N/A (accepted) | Implemented with stable and unstable endpoints, disabled by default: see [delayed events](#delayed-events) |
 | [MSC4143](https://github.com/matrix-org/matrix-spec-proposals/pull/4143) | MatrixRTC transport discovery | N/A (accepted) | Implemented with stable and unstable endpoints (configure via [`rtc_foci`](/administration/matrixrtc/)) |
-| [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195) | LiveKit transport for MatrixRTC | N/A (accepted) | Partial: `livekit` transports pointing at lk-jwt-service are advertised; the homeserver `rtc/livekit/get_token` and `delegate_delayed_leave` endpoints are not implemented, so `org.matrix.msc4195.stable` is not advertised |
+| [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195) | LiveKit transport for MatrixRTC | N/A (accepted) | Implemented when a focus has a LiveKit API key: Zendrite issues tokens for its SFUs on `POST /_matrix/client/v1/rtc/livekit/get_token` and the federation endpoint, and fetches tokens for remote SFUs, and advertises `org.matrix.msc4195.stable`; see [MatrixRTC](/administration/matrixrtc/#issuing-tokens-in-zendrite). Removing participants on leave and `delegate_delayed_leave` are not implemented. Without a key, `livekit` transports pointing at lk-jwt-service are advertised as before |
 
 ### Delayed events
 

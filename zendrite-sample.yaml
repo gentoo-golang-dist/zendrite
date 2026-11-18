@@ -104,6 +104,12 @@ global:
   rtc_foci:
   #  - type: livekit
   #    livekit_service_url: "https://matrix.example.com/livekit/jwt"
+  # Or let Zendrite issue the LiveKit tokens itself (MSC4195), with the SFU's
+  # WebSocket URL and API key. The key and secret are never advertised.
+  #  - type: livekit
+  #    url: "wss://livekit.example.com"
+  #    livekit_api_key: "APIxxxxxxxx"
+  #    livekit_api_secret: "the secret"
 
   # Lists of domains that the server will trust as identity servers to verify third
   # party identifiers such as phone numbers and email addresses.

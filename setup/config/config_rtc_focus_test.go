@@ -162,12 +162,36 @@ func TestRTCFocus_Verify(t *testing.T) {
 		{
 			name:    "no service url",
 			focus:   RTCFocus{Type: "livekit"},
-			wantErr: `global.rtc_foci[0].livekit_service_url is required for type "livekit"`,
+			wantErr: `global.rtc_foci[0].livekit_service_url or url is required for type "livekit"`,
 		},
 		{
 			name:    "empty nested service url",
 			focus:   RTCFocus{Type: "livekit", LiveKit: &LiveKitFocus{}},
-			wantErr: `global.rtc_foci[0].livekit_service_url is required for type "livekit"`,
+			wantErr: `global.rtc_foci[0].livekit_service_url or url is required for type "livekit"`,
+		},
+		{
+			name:  "sfu url only (MSC4195)",
+			focus: RTCFocus{Type: "livekit", URL: "wss://livekit.example.com"},
+		},
+		{
+			name:    "m.livekit without url",
+			focus:   RTCFocus{Type: "m.livekit"},
+			wantErr: `global.rtc_foci[0].url is required for type "m.livekit"`,
+		},
+		{
+			name:    "api key without secret",
+			focus:   RTCFocus{Type: "livekit", URL: "wss://livekit.example.com", LiveKitAPIKey: "key"},
+			wantErr: `global.rtc_foci[0].livekit_api_key and livekit_api_secret must be set together`,
+		},
+		{
+			name:    "api key without url",
+			focus:   RTCFocus{Type: "livekit", LiveKitServiceURL: "https://jwt.example.com", LiveKitAPIKey: "key", LiveKitAPISecret: "secret"},
+			wantErr: `global.rtc_foci[0].url is required with livekit_api_key`,
+		},
+		{
+			name:    "api url without key",
+			focus:   RTCFocus{Type: "livekit", URL: "wss://livekit.example.com", LiveKitAPIURL: "http://livekit:7880"},
+			wantErr: `global.rtc_foci[0].livekit_api_url needs livekit_api_key`,
 		},
 		{
 			name:    "no type",

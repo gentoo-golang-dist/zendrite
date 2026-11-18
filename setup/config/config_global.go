@@ -155,8 +155,25 @@ func (c *Global) Verify(configErrs *ConfigErrors) {
 		if focus.Type == "" {
 			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].type is required", i))
 		}
-		if focus.Type == "livekit" && focus.serviceURL() == "" {
-			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].livekit_service_url is required for type \"livekit\"", i))
+		if focus.Type == "livekit" && focus.serviceURL() == "" && focus.URL == "" {
+			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].livekit_service_url or url is required for type \"livekit\"", i))
+		}
+		if focus.Type == "m.livekit" && focus.URL == "" {
+			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].url is required for type \"m.livekit\"", i))
+		}
+		if (focus.LiveKitAPIKey == "") != (focus.LiveKitAPISecret == "") {
+			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].livekit_api_key and livekit_api_secret must be set together", i))
+		}
+		if focus.LiveKitAPIKey != "" && focus.URL == "" {
+			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].url is required with livekit_api_key", i))
+		}
+		if focus.LiveKitAPIURL != "" && focus.LiveKitAPIKey == "" {
+			configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].livekit_api_url needs livekit_api_key", i))
+		}
+		for j, other := range c.RTCFoci[:i] {
+			if focus.IssuesTokens() && other.IssuesTokens() && strings.TrimSuffix(focus.URL, "/") == strings.TrimSuffix(other.URL, "/") {
+				configErrs.Add(fmt.Sprintf("global.rtc_foci[%d].url is the SFU of global.rtc_foci[%d] too", i, j))
+			}
 		}
 		if focus.LiveKit != nil {
 			logrus.Warnf("global.rtc_foci[%d].livekit.service_url is deprecated, use livekit_service_url instead", i)
@@ -532,6 +549,15 @@ type RTCFocus struct {
 	Type string `json:"type" yaml:"type"`
 	// LiveKitServiceURL is the lk-jwt-service URL for a "livekit" focus.
 	LiveKitServiceURL string `json:"livekit_service_url,omitempty" yaml:"livekit_service_url,omitempty"`
+	// URL is the WebSocket URL of the LiveKit SFU (MSC4195).
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+	// LiveKitAPIKey and LiveKitAPISecret let Zendrite issue access tokens
+	// for the SFU at URL itself (MSC4195). They are never advertised.
+	LiveKitAPIKey    string `json:"-" yaml:"livekit_api_key,omitempty"`
+	LiveKitAPISecret string `json:"-" yaml:"livekit_api_secret,omitempty"`
+	// LiveKitAPIURL is the SFU's HTTP API, used to create rooms. It defaults
+	// to URL with the ws(s) scheme replaced by http(s).
+	LiveKitAPIURL string `json:"-" yaml:"livekit_api_url,omitempty"`
 	// LiveKit focus configuration. It is never part of the wire format;
 	// MarshalJSON resolves it into LiveKitServiceURL instead.
 	//
@@ -561,7 +587,14 @@ func (f RTCFocus) MarshalJSON() ([]byte, error) {
 	return json.Marshal(rtcFocus{
 		Type:              f.Type,
 		LiveKitServiceURL: f.serviceURL(),
+		URL:               f.URL,
 	})
+}
+
+// IssuesTokens reports whether Zendrite issues LiveKit access tokens for
+// this focus's SFU itself (MSC4195).
+func (f RTCFocus) IssuesTokens() bool {
+	return f.URL != "" && f.LiveKitAPIKey != "" && f.LiveKitAPISecret != ""
 }
 
 // LiveKitFocus represents LiveKit-specific focus configuration.

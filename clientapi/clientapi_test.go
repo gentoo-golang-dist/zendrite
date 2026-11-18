@@ -3,6 +3,7 @@ package clientapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +33,7 @@ import (
 	"codefloe.com/pat-s/zendrite/federationapi/statistics"
 	"codefloe.com/pat-s/zendrite/internal/caching"
 	"codefloe.com/pat-s/zendrite/internal/httputil"
+	"codefloe.com/pat-s/zendrite/internal/livekit"
 	"codefloe.com/pat-s/zendrite/internal/pushrules"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	"codefloe.com/pat-s/zendrite/internal/transactions"
@@ -971,6 +974,99 @@ func TestKickBanRedactEvents(t *testing.T) {
 		rec = do(http.MethodPost, "/_matrix/client/v3/rooms/"+roomID+"/unban", `{"user_id":"`+bob.ID+`","org.matrix.msc4293.redact_events":true}`, alice)
 		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		assert.False(t, memberState().Get(`org\.matrix\.msc4293\.redact_events`).Exists(), "unbans do not carry the flag")
+	})
+}
+
+// MSC4195: POST /rtc/livekit/get_token issues tokens for the server's own
+// SFUs to users joined to the room.
+func TestLiveKitGetToken(t *testing.T) {
+	alice, bob := test.NewUser(t), test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		var created []string
+		var createdMu sync.Mutex
+		sfu := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			createdMu.Lock()
+			created = append(created, body["name"])
+			createdMu.Unlock()
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer sfu.Close()
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.ClientAPI.RateLimiting.Enabled = false
+		cfg.Global.RTCFoci = []config.RTCFocus{{
+			Type: "livekit", URL: "wss://sfu.example.com", LiveKitAPIKey: "key", LiveKitAPISecret: "secret", LiveKitAPIURL: sfu.URL,
+		}}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+		asPI := appservice.NewInternalAPI(processCtx, cfg, natsInstance, userAPI, rsAPI)
+		AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, asPI, nil, nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+		accessTokens := map[*test.User]userDevice{alice: {}, bob: {}}
+		createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+		do := func(method, path, body string, user *test.User) *httptest.ResponseRecorder {
+			t.Helper()
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+accessTokens[user].accessToken)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			return rec
+		}
+		rec := do(http.MethodGet, "/_matrix/client/versions", "", alice)
+		assert.True(t, gjson.GetBytes(rec.Body.Bytes(), `unstable_features.org\.matrix\.msc4195\.stable`).Bool())
+		rec = do(http.MethodGet, "/_matrix/client/v1/rtc/transports", "", alice)
+		assert.JSONEq(t, `{"transports":[{"type":"livekit","url":"wss://sfu.example.com"}]}`, rec.Body.String(), "the API key stays secret")
+
+		rec = do(http.MethodPost, "/_matrix/client/v3/createRoom", `{}`, alice)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		roomID := gjson.GetBytes(rec.Body.Bytes(), "room_id").Str
+		request := func(fields string) string {
+			return `{"url":"wss://sfu.example.com","room_id":"` + roomID + `","slot_id":"slot","member_id":"member"` + fields + `}`
+		}
+
+		for _, path := range []string{"/_matrix/client/v1/rtc/livekit/get_token", "/_matrix/client/unstable/io.element.msc4195/rtc/livekit/get_token"} {
+			rec = do(http.MethodPost, path, request(""), alice)
+			assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			parts := strings.Split(gjson.GetBytes(rec.Body.Bytes(), "jwt").Str, ".")
+			if !assert.Len(t, parts, 3) {
+				continue
+			}
+			payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+			assert.NoError(t, err)
+			assert.Equal(t, livekit.RoomName(roomID, "slot"), gjson.GetBytes(payload, "video.room").Str)
+			assert.Equal(t, livekit.ParticipantIdentity(alice.ID, "member"), gjson.GetBytes(payload, "sub").Str)
+			assert.False(t, gjson.GetBytes(payload, "video.roomCreate").Bool())
+		}
+		createdMu.Lock()
+		assert.Contains(t, created, livekit.RoomName(roomID, "slot"))
+		createdMu.Unlock()
+
+		for _, tc := range []struct {
+			name, body  string
+			user        *test.User
+			wantCode    int
+			wantErrCode string
+		}{
+			{"not joined", request(""), bob, http.StatusForbidden, "M_FORBIDDEN"},
+			{"unknown SFU", `{"url":"wss://other.example.com","room_id":"` + roomID + `","slot_id":"slot","member_id":"member"}`, alice, http.StatusBadRequest, "M_INVALID_PARAM"},
+			{"own server by name", request(`,"server_name":"test"`), alice, http.StatusOK, ""},
+			{"remote server not in the room", request(`,"server_name":"remote.example"`), alice, http.StatusForbidden, "M_FORBIDDEN"},
+			{"missing member_id", `{"url":"wss://sfu.example.com","room_id":"` + roomID + `","slot_id":"slot"}`, alice, http.StatusBadRequest, "M_MISSING_PARAM"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				rec := do(http.MethodPost, "/_matrix/client/v1/rtc/livekit/get_token", tc.body, tc.user)
+				assert.Equal(t, tc.wantCode, rec.Code, rec.Body.String())
+				assert.Equal(t, tc.wantErrCode, gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
+			})
+		}
 	})
 }
 
