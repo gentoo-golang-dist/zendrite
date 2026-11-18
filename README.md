@@ -8,10 +8,11 @@ Zendrite is a Matrix homeserver written in Go, designed to be efficient, reliabl
 
 > Forked from [element-hq/dendrite](https://github.com/element-hq/dendrite) in February 2026
 
-The existing Dendrite Matrix rooms are used for chatting:
+Chat about Zendrite happens in the [#matrix:zendrite.xyz](https://matrix.to/#/#matrix:zendrite.xyz) space:
 
-- [![#dendrite:matrix.org](https://img.shields.io/matrix/dendrite%3Amatrix.org?fetchMode=summary&logo=matrix&label=%23dendrite%3Amatrix.org&color=orange)](https://matrix.to/#/#dendrite:matrix.org) for general project discussion and support
-- [![#dendrite-dev:matrix.org](https://img.shields.io/matrix/dendrite-dev%3Amatrix.org?fetchMode=summary&logo=matrix&label=%23dendrite-dev%3Amatrix.org&color=orange)](https://matrix.to/#/#dendrite-dev:matrix.org) for chat about development specifically
+- [![#announcements:zendrite.xyz](https://img.shields.io/matrix/announcements%3Azendrite.xyz?fetchMode=summary&server_fqdn=matrix.zendrite.xyz&logo=matrix&label=%23announcements%3Azendrite.xyz&color=orange)](https://matrix.to/#/#announcements:zendrite.xyz) for releases and project news
+- [![#help:zendrite.xyz](https://img.shields.io/matrix/help%3Azendrite.xyz?fetchMode=summary&server_fqdn=matrix.zendrite.xyz&logo=matrix&label=%23help%3Azendrite.xyz&color=orange)](https://matrix.to/#/#help:zendrite.xyz) for questions about installing and running Zendrite
+- [![#development:zendrite.xyz](https://img.shields.io/matrix/development%3Azendrite.xyz?fetchMode=summary&server_fqdn=matrix.zendrite.xyz&logo=matrix&label=%23development%3Azendrite.xyz&color=orange)](https://matrix.to/#/#development:zendrite.xyz) for chat about development specifically
 
 ## Getting Started
 

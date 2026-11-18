@@ -119,6 +119,6 @@ website-links:
         --exclude '^https://zendrite\.pat-s\.me/404/$' \
         'dist/**/*.html'
 
-# Regenerate the light, dark and theme-agnostic repo avatars from the logo SVG
+# Regenerate the repo avatars plus the Matrix space and room avatars and space banner from the logo SVG
 avatar:
     uv run scripts/gen-repo-avatar.py

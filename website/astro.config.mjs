@@ -17,9 +17,7 @@ export default defineConfig({
         alt: 'Zendrite logo',
       },
       description: 'A second-generation Matrix homeserver written in Go',
-      // social: [
-      //   { icon: 'matrix', label: 'Matrix', href: 'https://matrix.to/#/#zendrite:matrix.org' },
-      // ],
+      social: [{ icon: 'matrix', label: 'Matrix', href: 'https://matrix.to/#/#matrix:zendrite.xyz' }],
       sidebar: [
         {
           label: 'Getting Started',
