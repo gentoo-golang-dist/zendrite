@@ -104,6 +104,15 @@ func validateCondition(cond *Condition) []error {
 		if cond.Subscribed == nil {
 			errs = append(errs, fmt.Errorf("missing condition subscribed"))
 		}
+	case RelatedEventMatchCondition:
+		// MSC3664: key and pattern go together, so that a rule without them
+		// is one that needs no lookup of the related event.
+		if cond.RelType == "" {
+			errs = append(errs, fmt.Errorf("missing condition rel_type"))
+		}
+		if (cond.Key == "") != (cond.Pattern == nil) {
+			errs = append(errs, fmt.Errorf("condition key and pattern must be given together"))
+		}
 
 	default:
 		errs = append(errs, fmt.Errorf("invalid rule condition kind: %s", cond.Kind))

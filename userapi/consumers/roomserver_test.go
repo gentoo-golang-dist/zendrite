@@ -192,7 +192,7 @@ func Test_evaluatePushRules(t *testing.T) {
 					UserID:    "@test:localhost",
 					Localpart: "test",
 					Domain:    "localhost",
-				}, 10, tc.thread)
+				}, 10, tc.thread, nil)
 				if err != nil {
 					t.Fatalf("failed to evaluate push rules: %v", err)
 				}

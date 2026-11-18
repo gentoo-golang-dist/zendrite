@@ -67,6 +67,8 @@ func NewInternalAPI(
 		storage.WithPushRuleOptions(pushrules.Options{
 			// MSC4028 is opt-in, as in Synapse.
 			EncryptedEvent: zendriteCfg.MSCs.Enabled("msc4028"),
+			// MSC3664 is opt-in, as in Synapse.
+			RelatedEventMatch: zendriteCfg.MSCs.Enabled("msc3664"),
 		}),
 	)
 	if err != nil {

@@ -547,6 +547,7 @@ media_api:
 mscs:
   mscs:
   #  - msc2836  # (Threading, see https://github.com/matrix-org/matrix-doc/pull/2836)
+  #  - msc3664  # (Push rules for related events, such as replies, see https://github.com/matrix-org/matrix-spec-proposals/pull/3664)
   #  - msc3814  # (Dehydrated devices v2, see https://github.com/matrix-org/matrix-spec-proposals/pull/3814)
   #  - msc3861  # (OIDC delegated auth, see https://github.com/matrix-org/matrix-spec-proposals/pull/3861)
   #  - msc3983  # (Ask application services for the one-time keys of their users, see https://github.com/matrix-org/matrix-spec-proposals/pull/3983)

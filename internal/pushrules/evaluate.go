@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
+	"strings"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -33,6 +35,17 @@ type EvaluationContext interface {
 	// ThreadSubscription reports whether the current event is in a thread
 	// and, if so, whether the user is subscribed to it (MSC4306).
 	ThreadSubscription() (inThread, subscribed bool, err error)
+}
+
+// A RelatedEventContext gives related_event_match conditions (MSC3664) the
+// events that the current event relates to. Without it, or with MSC3664
+// off, those conditions never match.
+type RelatedEventContext interface {
+	// RelatedEvent returns the event that the current event relates to with
+	// relType, with replies as m.in_reply_to, and whether that relation is a
+	// fallback. It returns nil when there is no such event, or it is not
+	// stored in the room.
+	RelatedEvent(relType string) (event gomatrixserverlib.PDU, fallback bool, err error)
 }
 
 // A kindAndRules is just here to simplify iteration of the (ordered)
@@ -183,6 +196,9 @@ func conditionMatches(cond *Condition, event gomatrixserverlib.PDU, ec Evaluatio
 	case SenderNotificationPermissionCondition:
 		return ec.HasPowerLevel(event.SenderID(), cond.Key)
 
+	case RelatedEventMatchCondition:
+		return relatedEventMatches(cond, ec)
+
 	case ThreadSubscriptionCondition:
 		if cond.Subscribed == nil {
 			return false, nil
@@ -196,6 +212,68 @@ func conditionMatches(cond *Condition, event gomatrixserverlib.PDU, ec Evaluatio
 	default:
 		return false, nil
 	}
+}
+
+// relatedEventMatches evaluates a related_event_match condition (MSC3664) as
+// Synapse does: without a key it matches any event with such a relation, and
+// a key without a pattern matches nothing.
+func relatedEventMatches(cond *Condition, ec EvaluationContext) (bool, error) {
+	rec, ok := ec.(RelatedEventContext)
+	if !ok || cond.RelType == "" {
+		return false, nil
+	}
+	related, fallback, err := rec.RelatedEvent(cond.RelType)
+	if err != nil {
+		return false, fmt.Errorf("RelatedEvent failed: %w", err)
+	}
+	if related == nil {
+		return false, nil
+	}
+	if fallback && (cond.IncludeFallbacks == nil || !*cond.IncludeFallbacks) {
+		return false, nil
+	}
+	if cond.Key == "" {
+		return true, nil
+	}
+	if cond.Pattern == nil {
+		return false, nil
+	}
+	return synapsePatternMatches(cond.Key, *cond.Pattern, related)
+}
+
+// synapsePatternMatches matches a glob pattern as the spec and Synapse do:
+// ignoring case, against the whole value, or against whole words of
+// content.body. PatternMatches, used for event_match, also matches a pattern
+// without wildcards anywhere in the value; related_event_match must not, or
+// the reply rule for @alice:a would match replies to @alice:a.example.
+func synapsePatternMatches(key, pattern string, event gomatrixserverlib.PDU) (bool, error) {
+	if pattern == "" {
+		return false, nil
+	}
+	var eventMap map[string]any
+	if err := json.Unmarshal(event.JSON(), &eventMap); err != nil {
+		return false, fmt.Errorf("parsing event: %w", err)
+	}
+	v, err := lookupMapPath(splitPropertyPath(key), eventMap)
+	if err != nil {
+		return false, nil
+	}
+	value, ok := v.(string)
+	if !ok {
+		return false, nil
+	}
+	glob := globNonMetaRegexp.ReplaceAllStringFunc(pattern, regexp.QuoteMeta)
+	glob = strings.ReplaceAll(glob, "*", ".*")
+	glob = strings.ReplaceAll(glob, "?", ".")
+	expr := `\A(?:` + glob + `)\z`
+	if key == "content.body" {
+		expr = `(?:^|\b|\W)(?:` + glob + `)(?:\b|\W|$)`
+	}
+	re, err := regexp.Compile("(?is)" + expr)
+	if err != nil {
+		return false, err
+	}
+	return re.MatchString(value), nil
 }
 
 func patternMatches(key, pattern string, event gomatrixserverlib.PDU) (bool, error) {

@@ -49,6 +49,7 @@ func TestHAStorageValidation(t *testing.T) {
 		{"key queries for users who share a room", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc4263"} }, false},
 		{"redacting a user's events with a kick or ban", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc4293"} }, false},
 		{"current forward extremities over federation", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc4370"} }, false},
+		{"push rules for related events", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc3664"} }, false},
 		{"dehydrated devices", func(c *Zendrite) { c.MSCs.MSCs = []string{"msc3814"} }, true},
 		{"MSC name that enables nothing", func(c *Zendrite) { c.MSCs.MSCs = []string{"MSC2836"} }, true},
 		{"MSC database is global", func(c *Zendrite) {

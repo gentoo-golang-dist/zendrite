@@ -22,8 +22,9 @@ import (
 // and other relevant capabilities to an authenticated user. When oidcEnabled is
 // true (MSC3861 delegated authentication), password and 3PID management are
 // delegated to the OIDC provider and reported as unavailable. UrlPreviewEnabled
-// is media_api.url_preview.enabled.
-func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, delayedEvents *config.DelayedEvents, urlPreviewEnabled bool, device *userapi.Device) util.JSONResponse {
+// is media_api.url_preview.enabled. RelatedEventMatch is whether MSC3664 push
+// rules for related events are enabled.
+func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, delayedEvents *config.DelayedEvents, urlPreviewEnabled, relatedEventMatch bool, device *userapi.Device) util.JSONResponse {
 	versionsMap := map[gomatrixserverlib.RoomVersion]string{}
 	for v, desc := range version.SupportedRoomVersions() {
 		if desc.Stable() {
@@ -85,6 +86,13 @@ func GetCapabilities(rsAPI roomserverAPI.ClientRoomserverAPI, oidcEnabled bool, 
 	}
 	capabilities["m.preview_url"] = previewURL
 	capabilities["io.element.msc4452.preview_url"] = previewURL
+
+	// MSC3664: clients look for this capability to know that
+	// related_event_match conditions are evaluated. As in Synapse, it is
+	// only given with the MSC enabled.
+	if relatedEventMatch {
+		capabilities["im.nheko.msc3664.related_event_match"] = map[string]bool{"enabled": true}
+	}
 
 	// Administrators can suspend accounts, and lock them unless the OIDC
 	// provider does (MSC4323). The capability is omitted for everyone else.

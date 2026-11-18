@@ -54,6 +54,7 @@ func EnableMSC(
 		return msc3814.Enable(cfg, cm, routers, monolith.UserAPI)
 	case "msc2444": // enabled inside federationapi
 	case "msc2753": // enabled inside clientapi
+	case "msc3664": // enabled inside the user API push rules and clientapi capabilities
 	case "msc3861": // enabled inside clientapi routing and userapi
 	case "msc4028": // enabled inside the userapi push rules
 	case "msc3983", "msc3984": // enabled inside the user API

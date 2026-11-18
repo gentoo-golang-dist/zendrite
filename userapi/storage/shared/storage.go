@@ -518,7 +518,7 @@ func (d *Database) queryPushRulesLocked(
 // defaultPushRules returns the default push rules for a new account.
 func (d *Database) defaultPushRules(localpart string, serverName spec.ServerName) *pushrules.AccountRuleSets {
 	ruleSets := pushrules.DefaultAccountRuleSets(localpart, serverName)
-	pushrules.ApplyOptions(&ruleSets.Global, d.PushRuleOptions)
+	pushrules.ApplyUserOptions(&ruleSets.Global, d.PushRuleOptions, "@"+localpart+":"+string(serverName))
 	return ruleSets
 }
 
@@ -526,7 +526,7 @@ func (d *Database) defaultPushRules(localpart string, serverName spec.ServerName
 // defaults and the configured optional rules.
 func (d *Database) upgradePushRules(global *pushrules.RuleSet, localpart string, serverName spec.ServerName) {
 	pushrules.UpgradeDefaultRules(global, localpart, serverName)
-	pushrules.ApplyOptions(global, d.PushRuleOptions)
+	pushrules.ApplyUserOptions(global, d.PushRuleOptions, "@"+localpart+":"+string(serverName))
 }
 
 func (d *Database) parsePushRules(data json.RawMessage, localpart string, serverName spec.ServerName) (*pushrules.AccountRuleSets, error) {

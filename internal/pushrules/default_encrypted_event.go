@@ -15,6 +15,8 @@ type Options struct {
 	// EncryptedEvent adds the MSC4028 rule, which notifies for every
 	// encrypted event so that clients decide after decrypting it.
 	EncryptedEvent bool
+	// RelatedEventMatch adds the MSC3664 reply rule; see ApplyUserOptions.
+	RelatedEventMatch bool
 }
 
 // mRuleEncryptedEventDefinition notifies for every encrypted event (MSC4028).

@@ -48,7 +48,7 @@ func TestCapabilitiesPreviewURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			res := GetCapabilities(capabilitiesRoomserverAPI{}, false, &config.DelayedEvents{}, tc.enabled, &userapi.Device{AccountType: tc.accountType})
+			res := GetCapabilities(capabilitiesRoomserverAPI{}, false, &config.DelayedEvents{}, tc.enabled, false, &userapi.Device{AccountType: tc.accountType})
 			body, ok := res.JSON.(map[string]any)
 			require.True(t, ok)
 			capabilities, ok := body["capabilities"].(map[string]any)
@@ -57,5 +57,24 @@ func TestCapabilitiesPreviewURL(t *testing.T) {
 				assert.Equal(t, map[string]bool{"enabled": tc.want}, capabilities[key], key)
 			}
 		})
+	}
+}
+
+// TestCapabilitiesRelatedEventMatch checks the MSC3664 capability, which is
+// only given with the MSC enabled, as in Synapse.
+func TestCapabilitiesRelatedEventMatch(t *testing.T) {
+	t.Parallel()
+
+	for _, enabled := range []bool{false, true} {
+		res := GetCapabilities(capabilitiesRoomserverAPI{}, false, &config.DelayedEvents{}, false, enabled, &userapi.Device{AccountType: userapi.AccountTypeUser})
+		body, ok := res.JSON.(map[string]any)
+		require.True(t, ok)
+		capabilities, ok := body["capabilities"].(map[string]any)
+		require.True(t, ok)
+		got, present := capabilities["im.nheko.msc3664.related_event_match"]
+		assert.Equal(t, enabled, present)
+		if enabled {
+			assert.Equal(t, map[string]bool{"enabled": true}, got)
+		}
 	}
 }

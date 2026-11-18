@@ -539,6 +539,10 @@ func (s *OutputRoomEventConsumer) processMessage(ctx context.Context, event *rst
 		}
 	}
 
+	// The events this one relates to are looked up at most once, for all
+	// members, when a related_event_match condition needs them (MSC3664).
+	related := &relatedEvents{ctx: ctx, rsAPI: s.rsAPI, event: event, enabled: s.cfg.MSCs != nil && s.cfg.MSCs.Enabled("msc3664")}
+
 	// Notification.UserIsTarget is a per-member field, so we
 	// cannot group all users in a single request.
 	//
@@ -547,7 +551,7 @@ func (s *OutputRoomEventConsumer) processMessage(ctx context.Context, event *rst
 	// e.g. Element's Push gateway in one go.
 	var notified []string
 	for _, mem := range members {
-		inserted, err := s.notifyLocal(ctx, event, mem, roomSize, roomName, streamPos, thread)
+		inserted, err := s.notifyLocal(ctx, event, mem, roomSize, roomName, streamPos, thread, related)
 		if inserted {
 			notified = append(notified, mem.UserID)
 		}
@@ -787,8 +791,8 @@ func unmarshalCanonicalAlias(event *rstypes.HeaderedEvent) (string, error) {
 
 // notifyLocal finds the right push actions for a local user, given an event.
 // It reports whether it stored a notification, even when a later step fails.
-func (s *OutputRoomEventConsumer) notifyLocal(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int, roomName string, streamPos uint64, thread eventThread) (bool, error) {
-	actions, err := s.evaluatePushRules(ctx, event, mem, roomSize, thread)
+func (s *OutputRoomEventConsumer) notifyLocal(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int, roomName string, streamPos uint64, thread eventThread, related *relatedEvents) (bool, error) {
+	actions, err := s.evaluatePushRules(ctx, event, mem, roomSize, thread, related)
 	if err != nil {
 		return false, fmt.Errorf("s.evaluatePushRules: %w", err)
 	}
@@ -909,7 +913,7 @@ func (s *OutputRoomEventConsumer) notifyLocal(ctx context.Context, event *rstype
 
 // evaluatePushRules fetches and evaluates the push rules of a local
 // user. Returns actions (including dont_notify).
-func (s *OutputRoomEventConsumer) evaluatePushRules(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int, thread eventThread) ([]*pushrules.Action, error) {
+func (s *OutputRoomEventConsumer) evaluatePushRules(ctx context.Context, event *rstypes.HeaderedEvent, mem *localMembership, roomSize int, thread eventThread, related *relatedEvents) ([]*pushrules.Action, error) {
 	user := ""
 	sender, err := s.rsAPI.QueryUserIDForSender(ctx, event.RoomID(), event.SenderID())
 	if err == nil {
@@ -948,6 +952,7 @@ func (s *OutputRoomEventConsumer) evaluatePushRules(ctx context.Context, event *
 		roomID:   event.RoomID().String(),
 		roomSize: roomSize,
 		thread:   thread,
+		related:  related,
 	}
 	eval := pushrules.NewRuleSetEvaluator(ec, &ruleSets.Global)
 	rule, err := eval.MatchEvent(event.PDU, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
@@ -1000,6 +1005,93 @@ type ruleSetEvalContext struct {
 	roomID   string
 	roomSize int
 	thread   eventThread
+	related  *relatedEvents
+}
+
+func (rse *ruleSetEvalContext) RelatedEvent(relType string) (gomatrixserverlib.PDU, bool, error) {
+	return rse.related.get(relType)
+}
+
+// relatedEvents holds the events that an event relates to, for MSC3664
+// related_event_match conditions. Each is looked up once, on first use.
+type relatedEvents struct {
+	ctx     context.Context
+	rsAPI   rsapi.UserRoomserverAPI
+	event   *rstypes.HeaderedEvent
+	enabled bool
+
+	mu     sync.Mutex
+	parsed bool
+	// relType and relEventID are the event's m.relates_to relation, and
+	// replyEventID its m.in_reply_to target. replyFallback is whether the
+	// reply is the fallback of a thread event.
+	relType, relEventID, replyEventID string
+	replyFallback                     bool
+	// loaded holds the events looked up so far, nil for those not found.
+	loaded map[string]gomatrixserverlib.PDU
+}
+
+// get returns the event related with relType, with replies as m.in_reply_to,
+// and whether the relation is a fallback, as Synapse works them out: the
+// m.relates_to target under its rel_type, and the m.in_reply_to target, as a
+// fallback when it is the reply fallback of a thread event. Without the MSC,
+// or when the event is not stored in the room, it returns nil: the MSC lets
+// a condition that cannot be evaluated count as not matching.
+func (r *relatedEvents) get(relType string) (gomatrixserverlib.PDU, bool, error) {
+	if r == nil || !r.enabled {
+		return nil, false, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.parsed {
+		r.parsed = true
+		relatesTo := gjson.GetBytes(r.event.Content(), `m\.relates_to`)
+		if relatesTo.IsObject() {
+			r.relType, r.relEventID = relatesTo.Get("rel_type").Str, relatesTo.Get("event_id").Str
+			r.replyEventID = relatesTo.Get(`m\.in_reply_to.event_id`).Str
+			r.replyFallback = r.relType == "m.thread" && relatesTo.Get("is_falling_back").Type == gjson.True
+		}
+	}
+	var eventID string
+	fallback := false
+	switch {
+	case relType == "m.in_reply_to":
+		eventID, fallback = r.replyEventID, r.replyFallback
+	case relType != "" && relType == r.relType:
+		eventID = r.relEventID
+	}
+	if eventID == "" {
+		return nil, false, nil
+	}
+	event, ok := r.loaded[eventID]
+	if !ok {
+		event = r.load(eventID)
+		if r.loaded == nil {
+			r.loaded = map[string]gomatrixserverlib.PDU{}
+		}
+		r.loaded[eventID] = event
+	}
+	if event == nil {
+		return nil, false, nil
+	}
+	return event, fallback, nil
+}
+
+// load looks up a related event that is stored, and not rejected, in the
+// room of the event.
+func (r *relatedEvents) load(eventID string) gomatrixserverlib.PDU {
+	roomID := r.event.RoomID().String()
+	var res rsapi.QueryEventsByIDResponse
+	if err := r.rsAPI.QueryEventsByID(r.ctx, &rsapi.QueryEventsByIDRequest{EventIDs: []string{eventID}, RoomID: roomID, ExcludeRejected: true}, &res); err != nil {
+		log.WithField("event_id", r.event.EventID()).WithError(err).Error("Unable to load a related event for push rules")
+		return nil
+	}
+	for _, event := range res.Events {
+		if event.EventID() == eventID && event.RoomID().String() == roomID {
+			return event.PDU
+		}
+	}
+	return nil
 }
 
 func (rse *ruleSetEvalContext) ThreadSubscription() (inThread, subscribed bool, err error) {

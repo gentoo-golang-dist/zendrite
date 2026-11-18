@@ -167,6 +167,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC3958](https://github.com/matrix-org/matrix-spec-proposals/pull/3958) | Suppress notifications from message edits | 1.9 | Implemented: the `.m.rule.suppress_edits` default push rule, also added to existing accounts' rules |
 | [MSC3930](https://github.com/matrix-org/matrix-spec-proposals/pull/3930) | Push rules for polls | N/A | Implemented (unstable prefix): see [poll push rules](#poll-push-rules) |
 | [MSC4028](https://github.com/matrix-org/matrix-spec-proposals/pull/4028) | Push all encrypted events except for muted rooms | N/A | Opt-in (`msc4028`): see [MSC4028](#msc4028-push-all-encrypted-events) |
+| [MSC3664](https://github.com/matrix-org/matrix-spec-proposals/pull/3664) | Push rules for relations | N/A | Opt-in (`msc3664`, unstable prefix): see [MSC3664](#msc3664-push-rules-for-related-events) |
 | [MSC3881](https://github.com/matrix-org/matrix-spec-proposals/pull/3881) | Remotely toggle push notifications for another client | N/A | Implemented (unstable prefix): see [remote push notification toggling](#remote-push-notification-toggling) |
 | [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Implemented: relations are stored and served through `/relations`. Sending an annotation that the sender has already made, with the same event type and key on the same event and not redacted, fails with 400 `M_DUPLICATE_ANNOTATION`; retrying the original transaction still returns its event. The spec defines no server-side aggregation for annotations |
 | [MSC3970](https://github.com/matrix-org/matrix-spec-proposals/pull/3970) | Scope transaction IDs to devices | 1.7 | Implemented: `/send`, `/redact`, `/sendToDevice`, delayed events and server notices recognise a retransmission by device, endpoint and transaction ID, so it survives a refreshed access token. Application services share one scope per application service, whichever user they act as |
@@ -873,6 +874,7 @@ mscs:
     - msc3984
     - msc2444
     - msc2753
+    - msc3664
     - msc3814
     - msc3861
     - msc4028
@@ -918,6 +920,24 @@ mscs:
 ```
 
 No additional configuration is needed beyond enabling the MSC.
+
+### MSC3664: Push rules for related events
+
+With `msc3664`, push rules can match on the event that an event relates to, such as the event a reply answers, and a default rule notifies users of replies to their own events.
+Zendrite follows Synapse, where it needs `msc3664_enabled`: it uses the unstable names and is off by default.
+
+- Rules may use the condition `im.nheko.msc3664.related_event_match`, with `rel_type`, and optionally `key` and `pattern`, which must be given together, and `include_fallbacks`.
+  It matches when the event relates to an event with `rel_type`, stored and not rejected in the same room, whose `key` matches `pattern`; without `key` and `pattern` any such event matches.
+  Replies match as `rel_type` `m.in_reply_to`, and the reply of a thread event marked `is_falling_back` only matches with `include_fallbacks: true`.
+- `key` and `pattern` match as Synapse does: ignoring case, against the whole value, or against whole words of `content.body`.
+  This is stricter than `event_match` in Zendrite, which also matches a pattern without wildcards anywhere in the value.
+- The override rule `.im.nheko.msc3664.reply` follows `.m.rule.member_event`, and notifies with a highlight and the default sound for replies to the user's own events.
+  It is added to every account's rules, keeping a user's changes to it, and dropped again when the MSC is turned off.
+- `/capabilities` gives `im.nheko.msc3664.related_event_match: {"enabled": true}`.
+- Without the MSC, the condition can still be stored, as in Synapse, but never matches.
+
+The related event is looked up once per event, whatever the number of users it is evaluated for.
+In rooms with pseudo IDs (MSC4014), the related event's `sender` is a pseudo ID, so the reply rule does not match there.
 
 ### MSC4028: Push all encrypted events
 

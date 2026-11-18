@@ -29,6 +29,14 @@ type Condition struct {
 	// Subscribed is whether the user must be subscribed to the event's
 	// thread. Required for ThreadSubscriptionCondition.
 	Subscribed *bool `json:"subscribed,omitempty"`
+
+	// RelType is the relation type of the related event, with replies
+	// matched as m.in_reply_to. Required for RelatedEventMatchCondition.
+	RelType string `json:"rel_type,omitempty"`
+
+	// IncludeFallbacks makes RelatedEventMatchCondition follow fallback
+	// relations, such as the reply fallback of a thread event.
+	IncludeFallbacks *bool `json:"include_fallbacks,omitempty"`
 }
 
 // ConditionKind represents a kind of condition.
@@ -65,4 +73,9 @@ const (
 	// is (or, with subscribed false, is not) subscribed to (MSC4306,
 	// unstable name).
 	ThreadSubscriptionCondition ConditionKind = "io.element.msc4306.thread_subscription"
+
+	// RelatedEventMatchCondition matches like EventMatchCondition, but
+	// against the event the current event relates to with RelType
+	// (MSC3664, unstable name).
+	RelatedEventMatchCondition ConditionKind = "im.nheko.msc3664.related_event_match"
 )
