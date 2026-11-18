@@ -2136,14 +2136,22 @@ func (d *Database) PurgeExpiredEvents(
 			done = true
 			return nil
 		}
-		// The room updater looks up the last event sent to the output log,
-		// which need not be a forward extremity, so neither is purged.
+		// Forward extremities are never purged. Neither is the last event
+		// sent to the output log, which the room updater looks up and which
+		// need not be a forward extremity, nor any event after it: the room's
+		// input worker processes the room's events one at a time and stores
+		// each before it locks the room, so an event still in flight has a
+		// higher NID than the last one sent, and purging it would fail its
+		// processing. Candidates come in NID order, so the batch stops there.
 		keep, lastSent, _, err := d.RoomsTable.SelectLatestEventsNIDsForUpdate(ctx, txn, roomNID)
 		if err != nil {
 			return fmt.Errorf("d.RoomsTable.SelectLatestEventsNIDsForUpdate: %w", err)
 		}
-		keep = append(keep, lastSent)
 		for _, c := range candidates {
+			if c.EventNID >= lastSent {
+				done = true
+				break
+			}
 			if slices.Contains(keep, c.EventNID) {
 				continue
 			}

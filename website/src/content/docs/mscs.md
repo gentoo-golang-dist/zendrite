@@ -377,7 +377,7 @@ global:
   Each job first runs a minute after startup rather than an interval later.
 - The roomserver deletes an expired non-state event with its JSON, its redaction and annotation records, its moderator copy of redacted content (MSC2815) and its client transaction record.
   It keeps the record that the event was referenced by later events, so the event does not become a forward extremity if a server sends it again.
-  It never deletes a forward extremity of the room, so new events can still reference it, as the MSC asks, nor the last event it sent to the other components, and leaves rooms with partial state alone until their state is complete.
+  It never deletes a forward extremity of the room, so new events can still reference it, as the MSC asks, nor the last event it sent to the other components or any event stored after it, which may still be in processing, and leaves rooms with partial state alone until their state is complete.
   It reads each batch of up to 500 candidates before locking the room, and deletes them in a transaction that holds the room's lock, so new events are not held up for long.
 - The sync API deletes the event from its timeline, topology, relation, label and sticky event tables and from the search index.
   It keeps the room's latest event of the kinds that order rooms by activity in sliding sync, so the room keeps its place in room lists.

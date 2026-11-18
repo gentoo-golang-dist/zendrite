@@ -279,3 +279,55 @@ func TestRetentionPurgeBatches(t *testing.T) {
 		assert.Len(t, res.Events, len(kept))
 	})
 }
+
+// TestRetentionPurgeSkipsEventInFlight checks that the roomserver's purge
+// leaves alone an expired event that the room's input worker has stored but
+// not yet made a forward extremity, since purging it would fail the event's
+// processing (MSC1763).
+func TestRetentionPurgeSkipsEventInFlight(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		alice := test.NewUser(t)
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		natsInstance := jetstream.NATSInstance{}
+		jsctx, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
+		defer jetstream.DeleteAllStreams(jsctx, &cfg.Global.JetStream)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		now := time.Now()
+		room := test.NewRoom(t, alice)
+		require.NoError(t, rsapi.SendEvents(context.Background(), rsAPI, rsapi.KindNew, room.Events(), "test", "test", "test", nil, false))
+
+		// Store an expired event the way the input worker does before it
+		// locks the room, without updating the room's latest events.
+		ctx := context.Background()
+		rsDB, err := rsstorage.Open(processCtx.Context(), cm, &cfg.RoomServer.Database, caches)
+		require.NoError(t, err)
+		inFlight := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "in flight"}, test.WithTimestamp(now.Add(-2*time.Hour)))
+		roomInfo, err := rsDB.RoomInfo(ctx, room.ID)
+		require.NoError(t, err)
+		eventTypeNID, err := rsDB.GetOrCreateEventTypeNID(ctx, inFlight.Type())
+		require.NoError(t, err)
+		eventStateKeyNID, err := rsDB.GetOrCreateEventStateKeyNID(ctx, inFlight.StateKey())
+		require.NoError(t, err)
+		_, _, err = rsDB.StoreEvent(ctx, inFlight.PDU, roomInfo, eventTypeNID, eventStateKeyNID, nil, false, false)
+		require.NoError(t, err)
+
+		var after rstypes.EventNID
+		for {
+			purged, next, done, err := rsDB.PurgeExpiredEvents(ctx, room.ID, now.Add(-time.Hour).UnixMilli(), after, 1)
+			require.NoError(t, err)
+			assert.NotContains(t, purged, inFlight.EventID())
+			if done {
+				break
+			}
+			after = next
+		}
+		nids, err := rsDB.EventNIDs(ctx, []string{inFlight.EventID()})
+		require.NoError(t, err)
+		assert.Contains(t, nids, inFlight.EventID(), "the purge deleted an event in flight")
+	})
+}
