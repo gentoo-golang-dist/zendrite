@@ -1194,55 +1194,16 @@ func (d *EventDatabase) MaybeRedactEvent(
 			return nil
 		}
 
-		// Keep the content for room moderators (MSC2815), unless an earlier
-		// redaction already removed it.
-		var originalJSON []byte
-		if d.RedactedContentRetention != 0 && roomInfo != nil && !redactedEvent.Redacted() &&
-			!gjson.GetBytes(redactedEvent.JSON(), "unsigned.redacted_because").Exists() {
-			originalJSON = slices.Clone(redactedEvent.JSON())
-		}
-
-		// mark the event as redacted
-		if redactionsArePermanent {
-			redactedEvent.Redact()
-		}
-
-		err = redactedEvent.SetUnsignedField("redacted_because", redactionEvent)
-		if err != nil {
-			return fmt.Errorf("redactedEvent.SetUnsignedField: %w", err)
-		}
-		// NOTSPEC: sytest relies on this unspecced field existing :(
-		err = redactedEvent.SetUnsignedField("redacted_by", redactionEvent.EventID())
-		if err != nil {
-			return fmt.Errorf("redactedEvent.SetUnsignedField: %w", err)
-		}
-		// overwrite the eventJSON table
-		err = d.EventJSONTable.InsertEventJSON(ctx, txn, redactedEvent.EventNID, redactedEvent.JSON())
-		if err != nil {
-			return fmt.Errorf("d.EventJSONTable.InsertEventJSON: %w", err)
-		}
-
-		if originalJSON != nil {
-			err = d.RedactedContentTable.InsertRedactedContent(ctx, txn, redactedEvent.EventNID, roomInfo.RoomNID, originalJSON, time.Now().UnixMilli())
-			if err != nil {
-				return fmt.Errorf("d.RedactedContentTable.InsertRedactedContent: %w", err)
-			}
+		// The event itself, not its *types.Event wrapper, whose JSON would
+		// nest it under "PDU".
+		if err = d.writeRedaction(ctx, txn, roomInfo, redactedEvent, redactionEvent.PDU); err != nil {
+			return err
 		}
 
 		err = d.RedactionsTable.MarkRedactionValidated(ctx, txn, redactionEvent.EventID(), true)
 		if err != nil {
 			return fmt.Errorf("d.RedactionsTable.MarkRedactionValidated: %w", err)
 		}
-
-		// A redacted annotation no longer counts as a duplicate.
-		err = d.AnnotationsTable.DeleteAnnotation(ctx, txn, redactedEvent.EventID())
-		if err != nil {
-			return fmt.Errorf("d.AnnotationsTable.DeleteAnnotation: %w", err)
-		}
-
-		// We remove the entry from the cache, as if we just "StoreRoomServerEvent", we can't be
-		// certain that the cached entry actually is updated, since ristretto is eventual-persistent.
-		d.Cache.InvalidateRoomServerEvent(redactedEvent.EventNID)
 
 		return nil
 	})
@@ -1253,6 +1214,58 @@ func (d *EventDatabase) MaybeRedactEvent(
 		return nil, nil, nil
 	}
 	return redactionEvent.PDU, redactedEvent.PDU, nil
+}
+
+// writeRedaction stores the redacted form of an event, with redactionEvent as
+// its redacted_because. It keeps the content for room moderators (MSC2815)
+// and drops the event's annotation.
+func (d *EventDatabase) writeRedaction(ctx context.Context, txn *sql.Tx, roomInfo *types.RoomInfo, redactedEvent *types.Event, redactionEvent gomatrixserverlib.PDU) error {
+	var err error
+	// Keep the content for room moderators (MSC2815), unless an earlier
+	// redaction already removed it.
+	var originalJSON []byte
+	if d.RedactedContentRetention != 0 && roomInfo != nil && !redactedEvent.Redacted() &&
+		!gjson.GetBytes(redactedEvent.JSON(), "unsigned.redacted_because").Exists() {
+		originalJSON = slices.Clone(redactedEvent.JSON())
+	}
+
+	// mark the event as redacted
+	if redactionsArePermanent {
+		redactedEvent.Redact()
+	}
+
+	err = redactedEvent.SetUnsignedField("redacted_because", redactionEvent)
+	if err != nil {
+		return fmt.Errorf("redactedEvent.SetUnsignedField: %w", err)
+	}
+	// NOTSPEC: sytest relies on this unspecced field existing :(
+	err = redactedEvent.SetUnsignedField("redacted_by", redactionEvent.EventID())
+	if err != nil {
+		return fmt.Errorf("redactedEvent.SetUnsignedField: %w", err)
+	}
+	// overwrite the eventJSON table
+	err = d.EventJSONTable.InsertEventJSON(ctx, txn, redactedEvent.EventNID, redactedEvent.JSON())
+	if err != nil {
+		return fmt.Errorf("d.EventJSONTable.InsertEventJSON: %w", err)
+	}
+
+	if originalJSON != nil {
+		err = d.RedactedContentTable.InsertRedactedContent(ctx, txn, redactedEvent.EventNID, roomInfo.RoomNID, originalJSON, time.Now().UnixMilli())
+		if err != nil {
+			return fmt.Errorf("d.RedactedContentTable.InsertRedactedContent: %w", err)
+		}
+	}
+
+	// A redacted annotation no longer counts as a duplicate.
+	err = d.AnnotationsTable.DeleteAnnotation(ctx, txn, redactedEvent.EventID())
+	if err != nil {
+		return fmt.Errorf("d.AnnotationsTable.DeleteAnnotation: %w", err)
+	}
+
+	// We remove the entry from the cache, as if we just "StoreRoomServerEvent", we can't be
+	// certain that the cached entry actually is updated, since ristretto is eventual-persistent.
+	d.Cache.InvalidateRoomServerEvent(redactedEvent.EventNID)
+	return nil
 }
 
 // loadRedactionPair returns both the redaction event and the redacted event, else nil.
@@ -2860,6 +2873,77 @@ func (d *Database) UnredactedEventsBySender(ctx context.Context, roomNID types.R
 		}
 	}
 	return result, nil
+}
+
+// RedactSenderEventsBetween implements storage.Database.
+func (d *Database) RedactSenderEventsBetween(
+	ctx context.Context, roomInfo *types.RoomInfo, senderID spec.SenderID, afterNID, beforeNID types.EventNID,
+	because gomatrixserverlib.PDU, batch int, onBatch func(eventIDs []string) error,
+) error {
+	sender := string(senderID)
+	needle := sender
+	if encoded, err := json.Marshal(sender); err != nil || string(encoded) != `"`+sender+`"` {
+		needle = ""
+	}
+	var nids []types.EventNID
+	before := beforeNID
+	for {
+		candidates, err := d.SenderEvents.SelectSenderEventCandidates(ctx, nil, roomInfo.RoomNID, needle, before, senderEventCandidatesBatch)
+		if err != nil {
+			return err
+		}
+		done := len(candidates) < senderEventCandidatesBatch
+		for _, c := range candidates {
+			before = c.EventNID
+			if c.EventNID <= afterNID {
+				done = true
+				break
+			}
+			if gjson.GetBytes(c.EventJSON, "sender").Str != sender || gjson.GetBytes(c.EventJSON, "unsigned.redacted_because").Exists() {
+				continue
+			}
+			nids = append(nids, c.EventNID)
+		}
+		if done {
+			break
+		}
+	}
+	for start := 0; start < len(nids); start += batch {
+		chunk := nids[start:min(start+batch, len(nids))]
+		var redacted []string
+		err := d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+			redacted = redacted[:0]
+			events, err := d.events(ctx, txn, roomInfo.RoomVersion, chunk)
+			if err != nil {
+				return err
+			}
+			for i := range events {
+				if err = d.writeRedaction(ctx, txn, roomInfo, &events[i], because); err != nil {
+					return err
+				}
+				redacted = append(redacted, events[i].EventID())
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if err = onBatch(redacted); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RedactEventBecause implements storage.Database.
+func (d *Database) RedactEventBecause(ctx context.Context, roomInfo *types.RoomInfo, eventNID types.EventNID, because gomatrixserverlib.PDU) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		events, err := d.events(ctx, txn, roomInfo.RoomVersion, []types.EventNID{eventNID})
+		if err != nil || len(events) != 1 || gjson.GetBytes(events[0].JSON(), "unsigned.redacted_because").Exists() {
+			return err
+		}
+		return d.writeRedaction(ctx, txn, roomInfo, &events[0], because)
+	})
 }
 
 // ExpireRedactedContent implements storage.Database.

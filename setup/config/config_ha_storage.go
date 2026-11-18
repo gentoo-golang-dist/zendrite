@@ -88,6 +88,10 @@ var haQualifiedMSCs = map[string]struct{}{
 	// Limiting key queries to users who share a room. It has no state of its
 	// own: each request reads the roomserver memberships.
 	"msc4263": {},
+	// Redacting a user's events with a kick or ban. It has no state of its
+	// own: the redactions are roomserver writes to the global database,
+	// made by the candidate that processes the kick or ban.
+	"msc4293": {},
 }
 
 func sortedKeys(m map[string]struct{}) []string {

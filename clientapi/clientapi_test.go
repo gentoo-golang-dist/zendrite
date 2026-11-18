@@ -909,6 +909,71 @@ func TestEDUSizeLimit(t *testing.T) {
 	})
 }
 
+// MSC4293: /ban and /kick copy redact_events into the membership event.
+func TestKickBanRedactEvents(t *testing.T) {
+	alice, bob := test.NewUser(t), test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.ClientAPI.RateLimiting.Enabled = false
+		cfg.MSCs.MSCs = []string{"msc4293"}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+		asPI := appservice.NewInternalAPI(processCtx, cfg, natsInstance, userAPI, rsAPI)
+		AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, asPI, nil, nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+		accessTokens := map[*test.User]userDevice{alice: {}, bob: {}}
+		createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+		do := func(method, path, body string, user *test.User) *httptest.ResponseRecorder {
+			t.Helper()
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+accessTokens[user].accessToken)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			return rec
+		}
+		rec := do(http.MethodPost, "/_matrix/client/v3/createRoom", `{"preset":"public_chat"}`, alice)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		roomID := gjson.GetBytes(rec.Body.Bytes(), "room_id").Str
+		memberState := func() gjson.Result {
+			rec := do(http.MethodGet, "/_matrix/client/v3/rooms/"+roomID+"/state/m.room.member/"+bob.ID, "", alice)
+			assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			return gjson.ParseBytes(rec.Body.Bytes())
+		}
+		join := func() {
+			rec := do(http.MethodPost, "/_matrix/client/v3/join/"+roomID, `{}`, bob)
+			assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}
+
+		join()
+		rec = do(http.MethodPost, "/_matrix/client/v3/rooms/"+roomID+"/kick", `{"user_id":"`+bob.ID+`","reason":"spam","org.matrix.msc4293.redact_events":true}`, alice)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		state := memberState()
+		assert.Equal(t, "leave", state.Get("membership").Str)
+		assert.Equal(t, "spam", state.Get("reason").Str)
+		assert.True(t, state.Get(`org\.matrix\.msc4293\.redact_events`).Bool())
+
+		join()
+		rec = do(http.MethodPost, "/_matrix/client/v3/rooms/"+roomID+"/ban", `{"user_id":"`+bob.ID+`","org.matrix.msc4293.redact_events":false}`, alice)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		state = memberState()
+		assert.Equal(t, "ban", state.Get("membership").Str)
+		assert.True(t, state.Get(`org\.matrix\.msc4293\.redact_events`).Exists())
+		assert.False(t, state.Get(`org\.matrix\.msc4293\.redact_events`).Bool())
+
+		// Without the flag, nothing is added.
+		rec = do(http.MethodPost, "/_matrix/client/v3/rooms/"+roomID+"/unban", `{"user_id":"`+bob.ID+`","org.matrix.msc4293.redact_events":true}`, alice)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.False(t, memberState().Get(`org\.matrix\.msc4293\.redact_events`).Exists(), "unbans do not carry the flag")
+	})
+}
+
 func TestTyping(t *testing.T) {
 	alice := test.NewUser(t)
 	room := test.NewRoom(t, alice)

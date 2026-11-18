@@ -44,6 +44,15 @@ type Database interface {
 	// by senderID that no validated redaction covers, newest first
 	// (MSC4194).
 	UnredactedEventsBySender(ctx context.Context, roomNID types.RoomNID, senderID spec.SenderID, limit int) ([]types.SenderEvent, error)
+	// RedactSenderEventsBetween redacts the events senderID sent to the
+	// room that were stored after the event afterNID and before beforeNID,
+	// with because as their redacted_because (MSC4293), batch events per
+	// transaction, and calls onBatch with the IDs of each batch once it is
+	// stored. Events already redacted are left alone.
+	RedactSenderEventsBetween(ctx context.Context, roomInfo *types.RoomInfo, senderID spec.SenderID, afterNID, beforeNID types.EventNID, because gomatrixserverlib.PDU, batch int, onBatch func(eventIDs []string) error) error
+	// RedactEventBecause redacts one event, with because as its
+	// redacted_because, unless it is already redacted (MSC4293).
+	RedactEventBecause(ctx context.Context, roomInfo *types.RoomInfo, eventNID types.EventNID, because gomatrixserverlib.PDU) error
 	// Do we support processing input events for more than one room at a time?
 	SupportsConcurrentRoomInputs() bool
 	AssignRoomNID(ctx context.Context, roomID spec.RoomID, roomVersion gomatrixserverlib.RoomVersion) (roomNID types.RoomNID, err error)
@@ -316,6 +325,15 @@ type UserRoomKeys interface {
 }
 
 type RoomDatabase interface {
+	// RedactSenderEventsBetween redacts the events senderID sent to the
+	// room that were stored after the event afterNID and before beforeNID,
+	// with because as their redacted_because (MSC4293), batch events per
+	// transaction, and calls onBatch with the IDs of each batch once it is
+	// stored. Events already redacted are left alone.
+	RedactSenderEventsBetween(ctx context.Context, roomInfo *types.RoomInfo, senderID spec.SenderID, afterNID, beforeNID types.EventNID, because gomatrixserverlib.PDU, batch int, onBatch func(eventIDs []string) error) error
+	// RedactEventBecause redacts one event, with because as its
+	// redacted_because, unless it is already redacted (MSC4293).
+	RedactEventBecause(ctx context.Context, roomInfo *types.RoomInfo, eventNID types.EventNID, because gomatrixserverlib.PDU) error
 	EventDatabase
 	UserRoomKeys
 	AssignRoomNID(ctx context.Context, roomID spec.RoomID, roomVersion gomatrixserverlib.RoomVersion) (roomNID types.RoomNID, err error)

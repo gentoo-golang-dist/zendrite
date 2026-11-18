@@ -23,6 +23,7 @@ type MSCs struct {
 	// 'msc4028': Push all encrypted events except for muted rooms - https://github.com/matrix-org/matrix-spec-proposals/pull/4028
 	// 'msc4194': Redacting a user's events in a room - https://github.com/matrix-org/matrix-spec-proposals/pull/4194
 	// 'msc4263': Only answer key queries for users who share a room with the requester - https://github.com/matrix-org/matrix-spec-proposals/pull/4263
+	// 'msc4293': Redact a user's events with a kick or ban - https://github.com/matrix-org/matrix-spec-proposals/pull/4293
 	// 'msc4502': Targeted and unrestricted room member queries - https://github.com/matrix-org/matrix-spec-proposals/pull/4502
 	MSCs []string `yaml:"mscs"`
 

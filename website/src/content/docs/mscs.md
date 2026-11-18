@@ -185,6 +185,7 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC3874](https://github.com/matrix-org/matrix-spec-proposals/pull/3874) | Filtering threads from the `/messages` endpoint | N/A | Implemented (unstable prefix): see [relation type and label filters](#relation-type-and-label-filters) |
 | [MSC2326](https://github.com/matrix-org/matrix-spec-proposals/pull/2326) | Label based filtering | N/A | Implemented (unstable prefix): see [relation type and label filters](#relation-type-and-label-filters) |
 | [MSC4194](https://github.com/matrix-org/matrix-spec-proposals/pull/4194) | Batch redaction of events by sender within a room | N/A | Opt-in (`msc4194`, unstable prefix): see [MSC4194](#msc4194-redacting-a-users-events) |
+| [MSC4293](https://github.com/matrix-org/matrix-spec-proposals/pull/4293) | Redact on kick/ban | N/A | Opt-in (`msc4293`, unstable prefix): see [MSC4293](#msc4293-redact-on-kick-and-ban) |
 | [MSC4169](https://github.com/matrix-org/matrix-spec-proposals/pull/4169) | Backwards-compatible redaction sending using `/send` | 1.18 | Implemented: `PUT /send/m.room.redaction` copies `content.redacts` to the top level, so it redacts in every room version. Advertised as `com.beeper.msc4169` in `/versions` |
 
 ### Bundled aggregations
@@ -876,6 +877,7 @@ mscs:
     - msc4028
     - msc4194
     - msc4263
+    - msc4293
     - msc4502
 ```
 
@@ -956,6 +958,22 @@ mscs:
 
 See [Delegated authentication (OIDC)](/administration/oidc/) for the full setup guide, the complete configuration reference, client support, account provisioning rules, migration caveats and troubleshooting.
 It is qualified for active-passive HA; [High availability](/administration/oidc/#high-availability) there lists what a takeover loses and how clients recover.
+
+### MSC4293: Redact on kick and ban
+
+With `msc4293`, a moderator can remove everything a user sent while kicking or banning them, without sending a redaction event for each message.
+
+- `POST /rooms/{roomId}/kick` and `/ban` accept `org.matrix.msc4293.redact_events`, and copy it into the membership event, as `reason` is.
+- When a kick or ban with `org.matrix.msc4293.redact_events: true` is accepted, local or from another server, Zendrite redacts the events the target sent during their current stay in the room: since the join that began it, profile changes aside.
+  Each redacted event names the kick or ban as its `redacted_because`, also when served by sync, `/messages` or federation, and leaves the search index.
+  No redaction events are sent: clients that support the MSC apply the kick or ban themselves, and others see the redacted events when they fetch them again.
+- An event the target sends afterwards, which arrives soft-failed while the kick or ban is still their membership, is redacted when it is stored.
+- The flag only counts if the kick or ban's sender may redact the target's events: a power level at least that of `redact` and of `m.room.redaction` events, if set, or a creator in room versions with privileged creators.
+  It has no effect on voluntary leaves, unbans or other memberships, and a kick or ban received late, from history, redacts nothing.
+- Redactions are not undone when the user is unbanned; events from before the previous membership, and events from before a kick or ban without the flag, are kept.
+
+Synapse needs `msc4293_enabled` for the same behaviour.
+Moderation bots may still send redaction events for servers and clients without the MSC, for example with [MSC4194](#msc4194-redacting-a-users-events).
 
 ### MSC4194: Redacting a user's events
 

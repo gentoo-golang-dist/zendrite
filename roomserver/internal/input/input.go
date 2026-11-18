@@ -83,6 +83,9 @@ type Inputer struct {
 	Queryer       *query.Queryer
 	UserAPI       userapi.RoomserverUserAPI
 	EnableMetrics bool
+	// RedactOnKickOrBan redacts the target's events after a kick or ban
+	// that asks for it (MSC4293).
+	RedactOnKickOrBan bool
 
 	// missingStateCooldown tracks rooms where state resolution recently failed.
 	// When state resolution via federation fails for a room, we record the failure

@@ -193,8 +193,9 @@ func truncateAuthAndPrevEvents(auth, prev []string) (
 // RedactEvent redacts the given event and sets the unsigned field appropriately. This should be used by
 // downstream components to the roomserver when an OutputTypeRedactedEvent occurs.
 func RedactEvent(ctx context.Context, redactionEvent, redactedEvent gomatrixserverlib.PDU, querier api.QuerySenderIDAPI) error {
-	// sanity check
-	if redactionEvent.Type() != spec.MRoomRedaction {
+	// sanity check: a redaction, or a kick or ban that redacts the target's
+	// events (MSC4293)
+	if redactionEvent.Type() != spec.MRoomRedaction && redactionEvent.Type() != spec.MRoomMember {
 		return fmt.Errorf("RedactEvent: redactionEvent isn't a redaction event, is '%s'", redactionEvent.Type())
 	}
 	redactedEvent.Redact()

@@ -144,6 +144,7 @@ func (r *RoomserverInternalAPI) SetFederationAPI(fsAPI fsAPI.RoomserverFederatio
 		ACLs:                r.ServerACLs,
 		Queryer:             r.Queryer,
 		EnableMetrics:       r.enableMetrics,
+		RedactOnKickOrBan:   r.Cfg.MSCs.Enabled("msc4293"),
 	}
 	r.Inviter = &perform.Inviter{
 		DB:      r.DB,

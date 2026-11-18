@@ -733,6 +733,11 @@ func (r *Inputer) processRoomEvent(
 
 	case softfail:
 		logger.WithError(rejectionErr).Warn("Stored soft-failed event")
+		if r.RedactOnKickOrBan {
+			if redactErr := r.redactLateEvent(ctx, roomInfo, eventNID, event); redactErr != nil {
+				logger.WithError(redactErr).Warn("Failed to redact an event sent after a kick or ban with redact_events (MSC4293)")
+			}
+		}
 		if rejectionErr != nil {
 			return types.RejectedError(rejectionErr.Error())
 		}
@@ -868,6 +873,17 @@ func (r *Inputer) processRoomEvent(
 		})
 		if err != nil {
 			return fmt.Errorf("r.WriteOutputEvents (redactions): %w", err)
+		}
+	}
+
+	// A kick or ban may ask for the target's events to be redacted (MSC4293).
+	// The membership change itself is already stored and sent, so a failure
+	// here only leaves the events unredacted.
+	// Only new events: a kick or ban fetched late, from history, must not
+	// redact what the target sent after it.
+	if r.RedactOnKickOrBan && input.Kind == api.KindNew {
+		if redactErr := r.redactForKickOrBan(ctx, roomInfo, eventNID, event); redactErr != nil {
+			logger.WithError(redactErr).Warn("Failed to redact the events of a kicked or banned user (MSC4293)")
 		}
 	}
 

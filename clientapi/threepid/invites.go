@@ -32,8 +32,11 @@ import (
 // MembershipRequest represents the body of an incoming POST request
 // on /rooms/{roomID}/(join|kick|ban|unban|leave|invite).
 type MembershipRequest struct {
-	UserID        string `json:"user_id"`
-	Reason        string `json:"reason"`
+	UserID string `json:"user_id"`
+	Reason string `json:"reason"`
+	// RedactEvents asks for the target's events to be redacted with a kick
+	// or ban (MSC4293); the tag is roomserver/api.RedactEventsKey.
+	RedactEvents  *bool  `json:"org.matrix.msc4293.redact_events,omitempty"`
 	IDServer      string `json:"id_server"`
 	IDAccessToken string `json:"id_access_token"`
 	Medium        string `json:"medium"`

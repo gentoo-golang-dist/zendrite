@@ -322,6 +322,18 @@ func (s *OutputRoomEventConsumer) onRedactEvent(
 		return err
 	}
 
+	// A kick or ban that redacts the target's events (MSC4293) is already in
+	// the timeline, and clients apply it themselves. The redacted event only
+	// leaves the search index.
+	if msg.RedactedBecause.Type() != spec.MRoomRedaction {
+		if s.cfg.Fulltext.Enabled {
+			if err = s.fts.Delete(msg.RedactedEventID); err != nil {
+				return fmt.Errorf("failed to delete entry from fulltext index: %w", err)
+			}
+		}
+		return nil
+	}
+
 	// fake a room event so we notify clients about the redaction, as if it were
 	// a normal event.
 	return s.onNewRoomEvent(ctx, api.OutputNewRoomEvent{

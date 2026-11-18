@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -20,6 +21,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/getsentry/sentry-go"
 	"github.com/matrix-org/util"
+	"github.com/tidwall/sjson"
 
 	appserviceAPI "codefloe.com/pat-s/zendrite/appservice/api"
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
@@ -89,16 +91,26 @@ func SendBan(
 		}
 	}
 
-	return sendMembership(req.Context(), profileAPI, device, roomID, spec.Ban, body.Reason, cfg, body.UserID, evTime, rsAPI, asAPI)
+	return sendMembership(req.Context(), profileAPI, device, roomID, spec.Ban, body.Reason, cfg, body.UserID, evTime, rsAPI, asAPI, redactEventsContent(cfg, body))
+}
+
+// redactEventsContent returns the content that asks for the target's events
+// to be redacted with a kick or ban (MSC4293), or nil.
+func redactEventsContent(cfg *config.ClientAPI, body *threepid.MembershipRequest) map[string]any {
+	if body.RedactEvents == nil || cfg.MSCs == nil || !cfg.MSCs.Enabled("msc4293") {
+		return nil
+	}
+	return map[string]any{roomserverAPI.RedactEventsKey: *body.RedactEvents}
 }
 
 func sendMembership(ctx context.Context, profileAPI userapi.ClientUserAPI, device *userapi.Device,
 	roomID, membership, reason string, cfg *config.ClientAPI, targetUserID string, evTime time.Time,
 	rsAPI roomserverAPI.ClientRoomserverAPI, asAPI appserviceAPI.AppServiceInternalAPI,
+	extraContent map[string]any,
 ) util.JSONResponse {
 	event, err := buildMembershipEvent(
 		ctx, targetUserID, reason, profileAPI, device, membership,
-		roomID, false, cfg, evTime, rsAPI, asAPI,
+		roomID, false, cfg, evTime, rsAPI, asAPI, extraContent,
 	)
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("buildMembershipEvent failed")
@@ -222,7 +234,7 @@ func SendKick(
 		}
 	}
 	// TODO: should we be using SendLeave instead?
-	return sendMembership(req.Context(), profileAPI, device, roomID, spec.Leave, body.Reason, cfg, body.UserID, evTime, rsAPI, asAPI)
+	return sendMembership(req.Context(), profileAPI, device, roomID, spec.Leave, body.Reason, cfg, body.UserID, evTime, rsAPI, asAPI, redactEventsContent(cfg, body))
 }
 
 func SendUnban(
@@ -278,7 +290,7 @@ func SendUnban(
 		}
 	}
 	// TODO: should we be using SendLeave instead?
-	return sendMembership(req.Context(), profileAPI, device, roomID, spec.Leave, body.Reason, cfg, body.UserID, evTime, rsAPI, asAPI)
+	return sendMembership(req.Context(), profileAPI, device, roomID, spec.Leave, body.Reason, cfg, body.UserID, evTime, rsAPI, asAPI, nil)
 }
 
 func SendInvite(
@@ -440,7 +452,7 @@ func buildMembershipEventDirect(
 	sender spec.SenderID, senderDomain spec.ServerName,
 	membership, roomID string, isDirect bool,
 	keyID gomatrixserverlib.KeyID, privateKey ed25519.PrivateKey, evTime time.Time,
-	rsAPI roomserverAPI.ClientRoomserverAPI,
+	rsAPI roomserverAPI.ClientRoomserverAPI, extraContent map[string]any,
 ) (*types.HeaderedEvent, error) {
 	targetSenderString := string(targetSenderID)
 	proto := gomatrixserverlib.ProtoEvent{
@@ -461,6 +473,13 @@ func buildMembershipEventDirect(
 	if err := proto.SetContent(content); err != nil {
 		return nil, err
 	}
+	for key, value := range extraContent {
+		withExtra, err := sjson.SetBytes(proto.Content, strings.ReplaceAll(key, ".", `\.`), value)
+		if err != nil {
+			return nil, err
+		}
+		proto.Content = withExtra
+	}
 
 	identity := &fclient.SigningIdentity{
 		ServerName: senderDomain,
@@ -477,6 +496,7 @@ func buildMembershipEvent(
 	membership, roomID string, isDirect bool,
 	cfg *config.ClientAPI, evTime time.Time,
 	rsAPI roomserverAPI.ClientRoomserverAPI, asAPI appserviceAPI.AppServiceInternalAPI,
+	extraContent map[string]any,
 ) (*types.HeaderedEvent, error) {
 	profile, err := loadProfile(ctx, targetUserID, cfg, profileAPI, asAPI)
 	if err != nil {
@@ -515,7 +535,7 @@ func buildMembershipEvent(
 	}
 
 	return buildMembershipEventDirect(ctx, *targetSenderID, reason, profile.DisplayName, profile.AvatarURL,
-		*senderID, device.UserDomain(), membership, roomID, isDirect, identity.KeyID, identity.PrivateKey, evTime, rsAPI)
+		*senderID, device.UserDomain(), membership, roomID, isDirect, identity.KeyID, identity.PrivateKey, evTime, rsAPI, extraContent)
 }
 
 // loadProfile lookups the profile of a given user from the database and returns
