@@ -4,7 +4,9 @@
 // Please see LICENSE files in the repository root for full details.
 
 // Package livekit issues access tokens for LiveKit SFUs, as MSC4195 asks
-// homeservers to do for the MatrixRTC LiveKit transport.
+// homeservers to do for the MatrixRTC LiveKit transport, and manages the
+// participants of those SFUs: it removes those who leave the Matrix room,
+// checks who is connected, and verifies the SFUs' webhooks.
 package livekit
 
 import (
@@ -14,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,6 +79,7 @@ type videoGrant struct {
 	Room                 string `json:"room,omitempty"`
 	RoomCreate           bool   `json:"roomCreate"`
 	RoomJoin             bool   `json:"roomJoin,omitempty"`
+	RoomAdmin            bool   `json:"roomAdmin,omitempty"`
 	CanPublish           *bool  `json:"canPublish,omitempty"`
 	CanSubscribe         *bool  `json:"canSubscribe,omitempty"`
 	CanUpdateOwnMetadata *bool  `json:"canUpdateOwnMetadata,omitempty"`
@@ -114,6 +118,8 @@ type Issuer struct {
 	created map[string]time.Time
 	// The rate limiters of the requesters, such as servers over federation.
 	limiters map[string]*rate.Limiter
+	// The participants that tokens were issued to.
+	participants participants
 }
 
 // NewIssuer returns an issuer for the SFUs of the foci that issue tokens.
@@ -121,6 +127,7 @@ func NewIssuer(foci []config.RTCFocus) *Issuer {
 	return &Issuer{
 		foci: foci, client: &http.Client{Timeout: requestTimeout}, now: time.Now,
 		created: make(map[string]time.Time), limiters: make(map[string]*rate.Limiter),
+		participants: newParticipants(),
 	}
 }
 
@@ -160,7 +167,9 @@ func (i *Issuer) SFU(url string) *config.RTCFocus {
 
 // Token creates the LiveKit room of a MatrixRTC slot on the focus's SFU, if
 // it does not exist yet, and returns a token that lets a member join it.
-// Tokens never let their holder create or delete rooms, or hide.
+// Tokens never let their holder create or delete rooms, or hide. The issuer
+// remembers the participant until the token expires, so that it can remove
+// them from the SFU when they leave the Matrix room.
 func (i *Issuer) Token(ctx context.Context, focus *config.RTCFocus, roomID, slotID, userID, memberID string, canPublish bool) (string, error) {
 	room := RoomName(roomID, slotID)
 	if err := i.createRoom(ctx, focus, room); err != nil {
@@ -168,9 +177,10 @@ func (i *Issuer) Token(ctx context.Context, focus *config.RTCFocus, roomID, slot
 	}
 	now := i.now()
 	subscribe, noMetadata := true, false
-	return sign(focus.LiveKitAPISecret, claims{
+	identity := ParticipantIdentity(userID, memberID)
+	jwt, err := sign(focus.LiveKitAPISecret, claims{
 		Issuer:    focus.LiveKitAPIKey,
-		Subject:   ParticipantIdentity(userID, memberID),
+		Subject:   identity,
 		NotBefore: now.Unix(),
 		Expires:   now.Add(tokenLifetime).Unix(),
 		Video: videoGrant{
@@ -178,6 +188,11 @@ func (i *Issuer) Token(ctx context.Context, focus *config.RTCFocus, roomID, slot
 			CanPublish: &canPublish, CanSubscribe: &subscribe, CanUpdateOwnMetadata: &noMetadata,
 		},
 	})
+	if err != nil {
+		return "", err
+	}
+	i.participants.add(Participant{Focus: focus, Room: room, Identity: identity}, roomID, userID, now.Add(tokenLifetime), now)
+	return jwt, nil
 }
 
 // createRoom creates a room on the SFU through LiveKit's RoomService API,
@@ -196,20 +211,37 @@ func (i *Issuer) createRoom(ctx context.Context, focus *config.RTCFocus, room st
 		}
 	}
 	i.mu.Unlock()
+	if err := i.call(ctx, focus, "CreateRoom", videoGrant{RoomCreate: true}, map[string]string{"name": room}); err != nil {
+		return fmt.Errorf("creating the LiveKit room: %w", err)
+	}
+	i.mu.Lock()
+	i.created[key] = now
+	i.mu.Unlock()
+	return nil
+}
+
+// errNotFound is the error of a RoomService call whose room or participant
+// does not exist.
+var errNotFound = errors.New("not found on the SFU")
+
+// call calls a method of the SFU's RoomService API with a short-lived token
+// of the given grant. A Twirp not_found error is errNotFound.
+func (i *Issuer) call(ctx context.Context, focus *config.RTCFocus, method string, grant videoGrant, request any) error {
+	now := i.now()
 	admin, err := sign(focus.LiveKitAPISecret, claims{
 		Issuer:    focus.LiveKitAPIKey,
 		NotBefore: now.Unix(),
 		Expires:   now.Add(adminTokenLifetime).Unix(),
-		Video:     videoGrant{RoomCreate: true},
+		Video:     grant,
 	})
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(map[string]string{"name": room})
+	body, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(focus)+"/twirp/livekit.RoomService/CreateRoom", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL(focus)+"/twirp/livekit.RoomService/"+method, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -217,17 +249,23 @@ func (i *Issuer) createRoom(ctx context.Context, focus *config.RTCFocus, room st
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := i.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("creating the LiveKit room: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("creating the LiveKit room: the SFU answered %d", resp.StatusCode)
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return err
 	}
-	i.mu.Lock()
-	i.created[key] = now
-	i.mu.Unlock()
-	return nil
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	var twirpErr struct {
+		Code string `json:"code"`
+	}
+	if resp.StatusCode == http.StatusNotFound && json.Unmarshal(answer, &twirpErr) == nil && twirpErr.Code == "not_found" {
+		return errNotFound
+	}
+	return fmt.Errorf("the SFU answered %d to %s", resp.StatusCode, method)
 }
 
 // apiURL returns the SFU's HTTP API: livekit_api_url, or the WebSocket URL

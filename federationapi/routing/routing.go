@@ -301,7 +301,7 @@ func Setup(
 
 	// MSC4195: tokens for this server's LiveKit SFUs, for users of other
 	// servers in MatrixRTC sessions. Served only when Zendrite issues them.
-	if issuer := livekit.NewIssuer(zendriteCfg.Global.RTCFoci); issuer.Enabled() {
+	if issuer := livekit.For(cfg.Matrix); issuer.Enabled() {
 		liveKitToken := MakeFedAPI(
 			"federation_livekit_get_token", cfg.Matrix.ServerName, cfg.Matrix.IsLocalServerName, keys, wakeup,
 			func(httpReq *http.Request, request *fclient.FederationRequest, vars map[string]string) util.JSONResponse {

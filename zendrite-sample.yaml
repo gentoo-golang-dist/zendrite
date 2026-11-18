@@ -105,7 +105,9 @@ global:
   #  - type: livekit
   #    livekit_service_url: "https://matrix.example.com/livekit/jwt"
   # Or let Zendrite issue the LiveKit tokens itself (MSC4195), with the SFU's
-  # WebSocket URL and API key. The key and secret are never advertised.
+  # WebSocket URL and API key. The key and secret are never advertised. Point
+  # the SFU's webhooks at /_zendrite/livekit/webhook to remove members who
+  # left the room and to follow delegated delayed leave events at once.
   #  - type: livekit
   #    url: "wss://livekit.example.com"
   #    livekit_api_key: "APIxxxxxxxx"

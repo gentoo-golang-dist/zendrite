@@ -105,7 +105,7 @@ func Setup(
 		"org.matrix.msc4143.stable":     true, // MSC4143: GET /v1/rtc/transports, always served
 		// MSC4195: LiveKit tokens issued by the homeserver, when it holds the
 		// API key of an SFU.
-		"org.matrix.msc4195.stable": livekit.NewIssuer(cfg.Matrix.RTCFoci).Enabled(),
+		"org.matrix.msc4195.stable": livekit.For(cfg.Matrix).Enabled(),
 		"org.matrix.msc4262":        true, // MSC4262: sliding sync profile updates
 		"org.matrix.msc4429":        true, // MSC4429: profile updates in /sync
 		"org.matrix.msc4354":        true, // MSC4354: sticky events
@@ -605,7 +605,7 @@ func Setup(
 	// MSC4195: tokens for LiveKit SFUs, issued by Zendrite for its own SFUs
 	// and fetched from the other server for theirs, which works without an
 	// SFU of its own. Open to guests, as the MSC asks, and to call guests.
-	liveKitIssuer := livekit.NewIssuer(cfg.Matrix.RTCFoci)
+	liveKitIssuer := livekit.For(cfg.Matrix)
 	liveKitToken := httputil.MakeAuthAPI("rtc_livekit_get_token", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 		if r := rateLimits.Limit(req, device); r != nil {
 			return *r
@@ -614,6 +614,26 @@ func Setup(
 	}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests())
 	v1mux.Handle("/rtc/livekit/get_token", liveKitToken).Methods(http.MethodPost, http.MethodOptions)
 	unstableMux.Handle("/io.element.msc4195/rtc/livekit/get_token", liveKitToken).Methods(http.MethodPost, http.MethodOptions)
+	// MSC4195: delayed leave events delegated to Zendrite, which follows the
+	// participants on its SFUs through polling and the SFUs' webhooks. Both
+	// need Zendrite to hold an SFU's API key, and delegation needs delayed
+	// events.
+	if liveKitIssuer.Enabled() {
+		delegations := newLiveKitDelegations(ctx, liveKitIssuer, delayedEvents, rsAPI)
+		delegate := httputil.MakeAuthAPI("rtc_livekit_delegate_delayed_leave", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+			if r := rateLimits.Limit(req, device); r != nil {
+				return *r
+			}
+			return delegations.Delegate(req, device)
+		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests())
+		if cfg.DelayedEvents.Enabled() {
+			v1mux.Handle("/rtc/livekit/delegate_delayed_leave", delegate).Methods(http.MethodPost, http.MethodOptions)
+			unstableMux.Handle("/io.element.msc4195/rtc/livekit/delegate_delayed_leave", delegate).Methods(http.MethodPost, http.MethodOptions)
+		}
+		zendriteAdminRouter.Handle("/livekit/webhook",
+			httputil.MakeExternalAPI("livekit_webhook", delegations.Webhook),
+		).Methods(http.MethodPost)
+	}
 
 	// Room Summary API (Matrix v1.15, previously MSC3266).
 	// Supports both authenticated and unauthenticated requests.

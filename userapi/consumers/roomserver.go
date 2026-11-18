@@ -18,6 +18,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
+	"codefloe.com/pat-s/zendrite/internal/livekit"
 	"codefloe.com/pat-s/zendrite/internal/pushgateway"
 	"codefloe.com/pat-s/zendrite/internal/pushrules"
 	"codefloe.com/pat-s/zendrite/internal/receipts"
@@ -162,6 +163,7 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 			if event != nil {
 				s.cancelDelayedStateEvents(ctx, output.NewRoomEvent)
 				s.forgetLeftDeviceLists(ctx, output.NewRoomEvent)
+				s.removeFromLiveKit(ctx, output.NewRoomEvent)
 			}
 		} else {
 			event = output.NewInviteEvent.Event
@@ -198,6 +200,36 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 	return true
 }
 
+// removeFromLiveKit removes a user who left or was banned from a room from
+// the LiveKit rooms of its MatrixRTC sessions that Zendrite issued them
+// tokens for (MSC4195).
+func (s *OutputRoomEventConsumer) removeFromLiveKit(ctx context.Context, output *rsapi.OutputNewRoomEvent) {
+	if !endsMembership(output) {
+		return
+	}
+	event := output.Event
+	userID, err := spec.NewUserID(*event.StateKey(), true)
+	if err != nil {
+		// In rooms with pseudo IDs, the state key is the member's sender ID.
+		if userID, err = s.rsAPI.QueryUserIDForSender(ctx, event.RoomID(), spec.SenderID(*event.StateKey())); err != nil || userID == nil {
+			return
+		}
+	}
+	livekit.For(s.cfg.Matrix).MembershipEnded(ctx, event.RoomID().String(), userID.String())
+}
+
+// endsMembership reports whether a new room event is a leave or ban that
+// changed the room's state.
+func endsMembership(output *rsapi.OutputNewRoomEvent) bool {
+	event := output.Event
+	if event.Type() != spec.MRoomMember || event.StateKey() == nil ||
+		!slices.Contains(output.AddsStateEventIDs, event.EventID()) {
+		return false
+	}
+	membership, err := event.Membership()
+	return err == nil && (membership == spec.Leave || membership == spec.Ban)
+}
+
 // forgetLeftDeviceLists drops the device lists kept of the remote users who
 // share no room with this server any more after a membership left a room:
 // their servers no longer send their updates, so the lists would go stale,
@@ -206,12 +238,7 @@ func (s *OutputRoomEventConsumer) onMessage(ctx context.Context, msgs []*nats.Ms
 // room's remote members.
 func (s *OutputRoomEventConsumer) forgetLeftDeviceLists(ctx context.Context, output *rsapi.OutputNewRoomEvent) {
 	event := output.Event
-	if s.forgetUntracked == nil || event.Type() != spec.MRoomMember || event.StateKey() == nil ||
-		!slices.Contains(output.AddsStateEventIDs, event.EventID()) {
-		return
-	}
-	membership, err := event.Membership()
-	if err != nil || (membership != spec.Leave && membership != spec.Ban) {
+	if s.forgetUntracked == nil || !endsMembership(output) {
 		return
 	}
 	target, err := spec.NewUserID(*event.StateKey(), true)

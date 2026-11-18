@@ -58,7 +58,53 @@ Whether or not it holds a key, Zendrite asks the other server, over federation, 
 Tokens last an hour, may publish and subscribe, and cannot create, delete or hide in rooms.
 A room created on the SFU is not created again for a minute.
 LiveKit room names and participant identities are hashes of the Matrix room and slot, and of the user and member ID, so the SFU does not learn them.
-Zendrite does not yet remove participants from the SFU when they leave the Matrix room, nor handle delegated delayed leave events (`delegate_delayed_leave`), which the MSC recommends and makes optional.
+
+### Removing members who leave
+
+When a user leaves or is banned from a Matrix room, Zendrite removes them from the LiveKit rooms of that room's calls that it issued them tokens for, local and remote users alike, as MSC4195 recommends.
+The removal also revokes the tokens issued until then, which only LiveKit Cloud and LiveKit versions with token revocation honor.
+A self-hosted SFU without it lets the removed participant rejoin with their token until it expires, so Zendrite checks again whenever the SFU reports a participant joining, and removes them if they are no longer joined to the Matrix room.
+For that, point the SFU's webhooks at Zendrite (see [SFU webhooks](#sfu-webhooks)).
+
+Zendrite remembers the participants it issued tokens to in memory, for the hour the tokens last.
+After a restart, or an HA failover, it cannot remove the holders of tokens it issued before; those tokens still expire within the hour.
+Participants who got their token from lk-jwt-service or another server are not Zendrite's to remove.
+
+### Delegated delayed leave events
+
+Element Call can hand its delayed leave event to the homeserver with `POST /_matrix/client/v1/rtc/livekit/delegate_delayed_leave` (and `/_matrix/client/unstable/io.element.msc4195/rtc/livekit/delegate_delayed_leave`), so that the leave is sent as soon as the client drops off the SFU instead of when the delay runs out.
+Zendrite serves the endpoint with an API key and with [delayed events](#delayed-events) enabled, rate limited and open to guests and call guests.
+It works only for Zendrite's own SFUs, as the MSC says.
+
+The `delay_id` must be a delayed event that the user has scheduled in `room_id`, with a delay of at least 10 seconds, and `url` one of Zendrite's SFUs; otherwise the request fails with `M_INVALID_PARAM`.
+Element Call delegates a delay of an hour.
+A new delegation for the same member, or for the same delayed event, replaces the earlier one.
+Zendrite then:
+
+- restarts the delayed event once half its delay has passed, and at the latest at three quarters of it, while the participant is connected or still expected.
+- asks the SFU every 15 seconds, or sooner for short delays, whether the participant is connected, and follows the SFU's webhooks in between.
+- sends the leave event once the participant has disconnected, or has not connected within two minutes.
+  A disconnect that a webhook reports is confirmed with the SFU first, since webhooks may arrive late, and a connection that replaced an older one of the same participant is not a disconnect.
+- stops when the delayed event is sent, canceled or no longer scheduled, and leaves it to its own delay when the SFU has not answered for two minutes.
+
+Delegations are kept in memory.
+After a restart or an HA failover, each delayed event is sent when its own delay runs out, as without delegation, and Element Call keeps restarting it too.
+
+### SFU webhooks
+
+Zendrite accepts LiveKit webhooks at `POST /_zendrite/livekit/webhook`, signed with the API key and secret of one of its SFUs and with an expiry, and refuses others with 401.
+They make removals and delegated leaves react at once instead of at the next check.
+Configure them in the SFU's `livekit.yaml` with the same key that Zendrite holds:
+
+```yaml
+webhook:
+  api_key: "APIxxxxxxxx"
+  urls:
+    - "https://matrix.example.com/_zendrite/livekit/webhook"
+```
+
+The URL may also be an address on the internal network, since only the SFU calls it.
+Without webhooks, delegated leave events still work through the checks every 15 seconds, but a participant removed from a self-hosted SFU can rejoin with their token unnoticed.
 
 ## What clients see
 
