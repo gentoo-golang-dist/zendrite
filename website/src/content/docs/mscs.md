@@ -843,6 +843,9 @@ Some spec MSCs need no server support beyond storing events, account data, media
 [MSC4287](https://github.com/matrix-org/matrix-spec-proposals/pull/4287) (key backup preference, 1.19)
 and [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268) (encrypted history sharing, 1.19).
 
+[MSC4095](https://github.com/matrix-org/matrix-spec-proposals/pull/4095) (bundled URL previews, accepted but not in a spec release) is client-only too: the sending client puts the preview data in the event content under `m.url_previews` (unstable `com.beeper.linkpreviews`), and receiving clients read it from there.
+`/preview_url` stays available for clients that ask the server instead.
+
 ## Opt-in MSCs
 
 The following MSCs are not enabled by default and must be activated in the `mscs` section of the config file:
