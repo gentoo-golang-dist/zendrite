@@ -9,6 +9,7 @@ package routing
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -20,6 +21,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
 	"codefloe.com/pat-s/zendrite/clientapi/producers"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/setup/jetstream"
 	"codefloe.com/pat-s/zendrite/syncapi/types"
@@ -63,6 +65,15 @@ func SetPresence(
 			Code: http.StatusBadRequest,
 			JSON: spec.InvalidParam(fmt.Sprintf("Unknown presence '%s'.", presence.Presence)),
 		}
+	}
+	// The presence goes to remote servers in an EDU, which may not be larger
+	// than 64 KiB (MSC4514).
+	// The estimate takes the longest values the other fields can have.
+	if eventutil.EDUTooLarge(spec.MPresence, device.UserDomain(), map[string]any{"push": []any{map[string]any{
+		"user_id": userID, "presence": presence.Presence, "status_msg": presence.StatusMsg,
+		"last_active_ago": int64(math.MaxInt64), "currently_active": false,
+	}}}) {
+		return eventutil.EDUTooLargeResponse("The status message")
 	}
 	err := producer.SendPresence(req.Context(), userID, presenceStatus, presence.StatusMsg)
 	if err != nil {

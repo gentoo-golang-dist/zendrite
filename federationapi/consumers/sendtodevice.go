@@ -19,6 +19,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/federationapi/queue"
 	"codefloe.com/pat-s/zendrite/federationapi/storage"
+	"codefloe.com/pat-s/zendrite/federationapi/types"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/setup/jetstream"
 	"codefloe.com/pat-s/zendrite/setup/process"
@@ -106,7 +107,7 @@ func (t *OutputSendToDeviceConsumer) onMessage(ctx context.Context, msgs []*nats
 	tdm := gomatrixserverlib.ToDeviceMessage{
 		Sender:    ote.Sender,
 		Type:      ote.Type,
-		MessageID: util.RandomString(32), //nolint:mnd
+		MessageID: util.RandomString(types.ToDeviceMessageIDLength),
 		Messages: map[string]map[string]json.RawMessage{
 			ote.UserID: {
 				ote.DeviceID: ote.Content,

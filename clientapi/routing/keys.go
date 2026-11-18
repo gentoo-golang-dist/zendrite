@@ -19,6 +19,7 @@ import (
 	"github.com/matrix-org/util"
 
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
 
@@ -40,6 +41,14 @@ func UploadKeys(req *http.Request, keyAPI api.ClientKeyAPI, device *api.Device) 
 			Code: http.StatusBadRequest,
 			JSON: spec.BadJSON("Invalid device_keys: " + err.Error()),
 		}
+	}
+	// The device keys go to remote servers in a device list update EDU,
+	// which may not be larger than 64 KiB (MSC4514).
+	if r.DeviceKeys != nil && eventutil.EDUTooLarge(spec.MDeviceListUpdate, device.UserDomain(), map[string]any{
+		"user_id": device.UserID, "device_id": device.ID, "keys": r.DeviceKeys,
+		"stream_id": int64(0), "prev_id": []int64{}, "deleted": false,
+	}) {
+		return eventutil.EDUTooLargeResponse("The device keys")
 	}
 	if err := validateKeyIDs(r.OneTimeKeys); err != nil {
 		return util.JSONResponse{

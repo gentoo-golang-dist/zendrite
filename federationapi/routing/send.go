@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -19,9 +20,11 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
+	"github.com/sirupsen/logrus"
 
 	"codefloe.com/pat-s/zendrite/federationapi/producers"
 	"codefloe.com/pat-s/zendrite/internal"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	userAPI "codefloe.com/pat-s/zendrite/userapi/api"
@@ -98,6 +101,8 @@ func Send(
 		}
 	}
 
+	txn.EDUs = dropOversizedEDUs(httpReq.Context(), request.Origin(), txn.EDUs)
+
 	// First we should check if this origin has already submitted this
 	// transaction to us and it is still being worked on. If so, the new
 	// request waits for it to complete rather than creating more work.
@@ -136,6 +141,20 @@ func Send(
 	defer inFlightTxnsPerOrigin.Delete(index)
 	inFlight.res = processTransaction(httpReq, request, txnID, txn, cfg, rsAPI, keyAPI, keys, mu, producer)
 	return inFlight.res
+}
+
+// dropOversizedEDUs removes the EDUs larger than 64 KiB, which no EDU may be
+// (MSC4514), so that the rest of the transaction is still processed.
+func dropOversizedEDUs(ctx context.Context, origin spec.ServerName, edus []gomatrixserverlib.EDU) []gomatrixserverlib.EDU {
+	return slices.DeleteFunc(edus, func(edu gomatrixserverlib.EDU) bool {
+		if !eventutil.EDUTooLarge(edu.Type, origin, edu.Content) {
+			return false
+		}
+		util.GetLogger(ctx).WithFields(logrus.Fields{
+			"origin": origin, "edu_type": edu.Type,
+		}).Warn("Dropping an EDU larger than 64 KiB")
+		return true
+	})
 }
 
 // digest identifies a transaction's content, ignoring fields such as

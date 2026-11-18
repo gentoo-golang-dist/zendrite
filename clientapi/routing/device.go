@@ -19,6 +19,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	internalhttputil "codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
@@ -128,6 +129,15 @@ func UpdateDeviceByID(
 
 	if resErr := httputil.UnmarshalJSONRequest(req, &payload); resErr != nil {
 		return *resErr
+	}
+	// The display name goes to remote servers in a device list update EDU,
+	// which may not be larger than 64 KiB (MSC4514). The device's keys are
+	// added later, so this is a lower bound.
+	if payload.DisplayName != nil && eventutil.EDUTooLarge(spec.MDeviceListUpdate, device.UserDomain(), map[string]any{
+		"user_id": device.UserID, "device_id": deviceID, "device_display_name": *payload.DisplayName,
+		"stream_id": int64(0), "prev_id": []int64{}, "deleted": false,
+	}) {
+		return eventutil.EDUTooLargeResponse("The device display name")
 	}
 
 	var performRes api.PerformDeviceUpdateResponse

@@ -8,20 +8,25 @@ package routing
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
 	"codefloe.com/pat-s/zendrite/clientapi/producers"
+	fedTypes "codefloe.com/pat-s/zendrite/federationapi/types"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/internal/transactions"
+	"codefloe.com/pat-s/zendrite/setup/config"
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
 // SendToDevice handles PUT /_matrix/client/r0/sendToDevice/{eventType}/{txnId}
 // sends the device events to the syncapi & federationsender.
 func SendToDevice(
-	req *http.Request, device *userapi.Device,
+	req *http.Request, cfg *config.ClientAPI, device *userapi.Device,
 	syncProducer *producers.SyncAPIProducer,
 	txnCache *transactions.Cache,
 	eventType string, txnID *string,
@@ -38,6 +43,24 @@ func SendToDevice(
 	resErr := httputil.UnmarshalJSONRequest(req, &httpReq)
 	if resErr != nil {
 		return *resErr
+	}
+
+	// Each message for a remote user goes to its server in an EDU of its
+	// own, which may not be larger than 64 KiB (MSC4514). Check them all
+	// before sending any.
+	for userID, byUser := range httpReq.Messages {
+		_, domain, err := gomatrixserverlib.SplitID('@', userID)
+		if err != nil || cfg.Matrix.IsLocalServerName(domain) {
+			continue
+		}
+		for deviceID, message := range byUser {
+			if eventutil.EDUTooLarge(spec.MDirectToDevice, device.UserDomain(), gomatrixserverlib.ToDeviceMessage{
+				Sender: device.UserID, Type: eventType, MessageID: strings.Repeat("x", fedTypes.ToDeviceMessageIDLength),
+				Messages: map[string]map[string]json.RawMessage{userID: {deviceID: message}},
+			}) {
+				return eventutil.EDUTooLargeResponse("A to-device message")
+			}
+		}
 	}
 
 	for userID, byUser := range httpReq.Messages {

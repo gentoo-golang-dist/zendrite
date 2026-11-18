@@ -23,6 +23,7 @@ import (
 	"codefloe.com/pat-s/zendrite/federationapi/statistics"
 	"codefloe.com/pat-s/zendrite/federationapi/storage"
 	"codefloe.com/pat-s/zendrite/federationapi/storage/shared/receipt"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/setup/process"
 )
@@ -296,6 +297,15 @@ func (oqs *OutgoingQueues) SendEDU(
 
 	// If there are no remaining destinations then give up.
 	if len(destmap) == 0 {
+		return nil
+	}
+
+	// No EDU may be larger than 64 KiB (MSC4514). The client endpoints
+	// that make EDUs refuse content that would be, so this only drops what
+	// they cannot check in advance, such as device keys added to a device
+	// list update.
+	if eventutil.EDUTooLarge(e.Type, origin, e.Content) {
+		log.WithFields(log.Fields{"edu_type": e.Type, "destinations": len(destmap)}).Error("Not sending an EDU larger than 64 KiB")
 		return nil
 	}
 

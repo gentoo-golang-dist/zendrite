@@ -22,6 +22,8 @@ import (
 	"codefloe.com/pat-s/zendrite/clientapi/auth"
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/clientapi/httputil"
+	fedTypes "codefloe.com/pat-s/zendrite/federationapi/types"
+	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/setup/config"
 	"codefloe.com/pat-s/zendrite/userapi/api"
 )
@@ -48,6 +50,13 @@ func UploadCrossSigningDeviceKeys(
 	resErr := httputil.UnmarshalJSONRequest(req, &uploadReq)
 	if resErr != nil {
 		return *resErr
+	}
+	// The master and self-signing keys go to remote servers in an EDU,
+	// which may not be larger than 64 KiB (MSC4514).
+	if eventutil.EDUTooLarge(fedTypes.MSigningKeyUpdate, device.UserDomain(), map[string]any{
+		"user_id": device.UserID, "master_key": uploadReq.MasterKey, "self_signing_key": uploadReq.SelfSigningKey,
+	}) {
+		return eventutil.EDUTooLargeResponse("The cross-signing keys")
 	}
 
 	// Query existing keys to determine if UIA is required
@@ -255,6 +264,18 @@ func UploadCrossSigningDeviceSignatures(req *http.Request, keyserverAPI api.Clie
 
 	if err := httputil.UnmarshalJSONRequest(req, &uploadReq.Signatures); err != nil {
 		return *err
+	}
+	// Each signed key goes to remote servers in a device list or signing key
+	// update EDU, which may not be larger than 64 KiB (MSC4514).
+	for userID, byKey := range uploadReq.Signatures {
+		for keyID, signed := range byKey {
+			if eventutil.EDUTooLarge(spec.MDeviceListUpdate, device.UserDomain(), map[string]any{
+				"user_id": userID, "device_id": keyID, "keys": signed,
+				"stream_id": int64(0), "prev_id": []int64{}, "deleted": false,
+			}) {
+				return eventutil.EDUTooLargeResponse("A signed key")
+			}
+		}
 	}
 
 	uploadReq.UserID = device.UserID

@@ -33,6 +33,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/httputil"
 	"codefloe.com/pat-s/zendrite/internal/pushrules"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
+	"codefloe.com/pat-s/zendrite/internal/transactions"
 	"codefloe.com/pat-s/zendrite/roomserver"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/version"
@@ -826,6 +827,85 @@ func TestQueryProfiles(t *testing.T) {
 				assert.Equal(t, tc.wantErrCode, gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
 			})
 		}
+	})
+}
+
+// MSC4514: requests whose EDU would be larger than 64 KiB fail with 413.
+func TestEDUSizeLimit(t *testing.T) {
+	alice := test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+		cfg.ClientAPI.RateLimiting.Enabled = false
+		cfg.Global.Presence.EnableOutbound = true
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		routers := httputil.NewRouters()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+		userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+		AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, nil, transactions.New(processCtx.Context()), nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+		accessTokens := map[*test.User]userDevice{alice: {}}
+		createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+		do := func(method, path, body string) *httptest.ResponseRecorder {
+			t.Helper()
+			req := httptest.NewRequest(method, path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+accessTokens[alice].accessToken)
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			return rec
+		}
+		huge := strings.Repeat("a", 65536)
+
+		for _, tc := range []struct {
+			name, method, path, body string
+		}{
+			{
+				"to-device message", http.MethodPut, "/_matrix/client/v3/sendToDevice/m.test/txn1",
+				`{"messages":{"@bob:remote.example":{"DEVICE":{"padding":"` + huge + `"}}}}`,
+			},
+			{
+				"status message", http.MethodPut, "/_matrix/client/v3/presence/" + alice.ID + "/status",
+				`{"presence":"online","status_msg":"` + huge + `"}`,
+			},
+			{
+				"device display name", http.MethodPut, "/_matrix/client/v3/devices/" + accessTokens[alice].deviceID,
+				`{"display_name":"` + huge + `"}`,
+			},
+			{
+				"cross-signing keys", http.MethodPost, "/_matrix/client/v3/keys/device_signing/upload",
+				`{"master_key":{"user_id":"` + alice.ID + `","usage":["master"],"keys":{"ed25519:a":"` + huge + `"}}}`,
+			},
+			{
+				"device keys", http.MethodPost, "/_matrix/client/v3/keys/upload",
+				`{"device_keys":{"user_id":"` + alice.ID + `","device_id":"` + accessTokens[alice].deviceID + `","algorithms":[],"keys":{},` +
+					`"signatures":{"` + alice.ID + `":{"ed25519:x":"` + huge + `"}}}}`,
+			},
+			{
+				"signed key", http.MethodPost, "/_matrix/client/v3/keys/signatures/upload",
+				`{"` + alice.ID + `":{"DEVICE":{"user_id":"` + alice.ID + `","device_id":"DEVICE","algorithms":[],"keys":{},` +
+					`"signatures":{"` + alice.ID + `":{"ed25519:x":"` + huge + `"}}}}}`,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				rec := do(tc.method, tc.path, tc.body)
+				assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+				assert.Equal(t, "M_TOO_LARGE", gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
+			})
+		}
+
+		// Ordinary requests still work, and so do large messages for local
+		// users, which never become EDUs.
+		rec := do(http.MethodPut, "/_matrix/client/v3/sendToDevice/m.test/txn2", `{"messages":{"@bob:remote.example":{"DEVICE":{"body":"hi"}}}}`)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		rec = do(http.MethodPut, "/_matrix/client/v3/sendToDevice/m.test/txn3", `{"messages":{"`+alice.ID+`":{"DEVICE":{"padding":"`+huge+`"}}}}`)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		rec = do(http.MethodPut, "/_matrix/client/v3/devices/"+accessTokens[alice].deviceID, `{"display_name":"Phone"}`)
+		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	})
 }
 

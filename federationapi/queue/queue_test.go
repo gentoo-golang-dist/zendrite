@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1126,4 +1127,23 @@ func TestUnreachableDestinationIsRetriedBeforeBackoff(t *testing.T) {
 		require.Eventually(t, backedOff(stats), 5*time.Second, time.Millisecond)
 		require.Equal(t, 1, fc.count())
 	})
+}
+
+// No EDU larger than 64 KiB is sent or stored (MSC4514).
+func TestSendEDUTooLargeIsDropped(t *testing.T) {
+	t.Parallel()
+	destination := spec.ServerName("remotehost")
+	db, _, queues, pc, close := testSetup(16, 17, true, false, t, test.DBTypeSQLite, false)
+	defer close()
+	defer func() {
+		pc.ShutdownZendrite()
+		<-pc.WaitForShutdown()
+	}()
+
+	ev := &gomatrixserverlib.EDU{Type: spec.MDirectToDevice, Content: spec.RawJSON(`{"padding":"` + strings.Repeat("a", 65536) + `"}`)}
+	assert.NoError(t, queues.SendEDU(ev, "localhost", []spec.ServerName{destination}))
+	// SendEDU stores what it queues before it returns.
+	data, err := db.GetPendingEDUs(pc.Context(), destination, 100)
+	assert.NoError(t, err)
+	assert.Empty(t, data)
 }

@@ -1106,7 +1106,7 @@ func Setup(
 				return util.ErrorResponse(err)
 			}
 			txnID := vars["txnID"]
-			return SendToDevice(req, device, syncProducer, transactionsCache, vars["eventType"], &txnID)
+			return SendToDevice(req, cfg, device, syncProducer, transactionsCache, vars["eventType"], &txnID)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 
@@ -1120,7 +1120,7 @@ func Setup(
 				return util.ErrorResponse(err)
 			}
 			txnID := vars["txnID"]
-			return SendToDevice(req, device, syncProducer, transactionsCache, vars["eventType"], &txnID)
+			return SendToDevice(req, cfg, device, syncProducer, transactionsCache, vars["eventType"], &txnID)
 		}, httputil.WithAllowGuests(), httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 

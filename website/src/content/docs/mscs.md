@@ -531,6 +531,22 @@ Previews are cached in memory per URL for `cache_duration` (default `1h`), concu
 | [MSC2753](https://github.com/matrix-org/matrix-spec-proposals/pull/2753) | Peeking via `/sync` | N/A | Opt-in (`msc2753`) |
 | [MSC3821](https://github.com/matrix-org/matrix-spec-proposals/pull/3821) | Update redaction rules, again | 1.8 | Implemented: from room version 11, redacting an `m.room.member` event keeps `content.third_party_invite.signed`, so redacted events hash to the same event ID as on other servers |
 | [MSC4311](https://github.com/matrix-org/matrix-spec-proposals/pull/4311) | Create event in invite and knock stripped state | 1.16 | Implemented: `invite_room_state` and `knock_room_state` are sent as full PDUs including `m.room.create`. From room version 12, invites whose state holds PDUs that fail validation are rejected with `M_MISSING_PARAM`. Missing or stripped-only state is accepted with a warning, per the MSC's migration section, as are all failures in earlier room versions. Knock state entries that fail validation are dropped |
+| [MSC4514](https://github.com/matrix-org/matrix-spec-proposals/pull/4514) | EDU size limit | N/A | Implemented: see [EDU size limit](#edu-size-limit) |
+
+### EDU size limit
+
+No EDU may be larger than 65536 bytes in canonical JSON ([MSC4514](https://github.com/matrix-org/matrix-spec-proposals/pull/4514)), the limit that events have.
+Client requests that would make a larger EDU fail with 413 `M_TOO_LARGE` before anything is sent:
+
+- `PUT /sendToDevice`, for a message to a remote user that would not fit in the EDU that carries it; every message is checked before any is sent, and messages to local users are not limited.
+- `PUT /presence/{userId}/status`, for a status message.
+- `PUT /devices/{deviceId}`, for a display name.
+- `POST /keys/upload`, for device keys.
+- `POST /keys/device_signing/upload` and `POST /keys/signatures/upload`, for keys or signatures.
+
+Some of these checks cannot see everything the EDU will hold, such as the keys sent along with a device's display name or the signatures a key already has.
+An EDU that still ends up over the limit is not sent, and the error is logged.
+EDUs over the limit in an incoming transaction are dropped with a warning, and the rest of the transaction is processed.
 
 ### Policy servers
 

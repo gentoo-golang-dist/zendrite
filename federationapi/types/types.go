@@ -10,6 +10,10 @@ import "codefloe.com/pat-s/gomatrixserverlib/spec"
 
 const MSigningKeyUpdate = "m.signing_key_update" // TODO: move to gomatrixserverlib
 
+// ToDeviceMessageIDLength is the length of the message IDs of the to-device
+// EDUs that Zendrite sends. The client API checks their size with it.
+const ToDeviceMessageIDLength = 32
+
 // A JoinedHost is a server that is joined to a matrix room.
 type JoinedHost struct {
 	// The MemberEventID of a m.room.member join event.
