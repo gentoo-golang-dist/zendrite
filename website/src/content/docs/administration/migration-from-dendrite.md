@@ -63,6 +63,7 @@ The old name is still accepted for backwards compatibility.
 
 ## Database
 
+Make sure your `zendrite.yaml` config file contains the previous database user, password, and database name you used for Dendrite.
 The database schema is automatically migrated on first startup.
 Zendrite renames the internal `dendrite_version` column in the `db_migrations` table to `zendrite_version` — no manual intervention is required.
 
