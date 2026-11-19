@@ -24,7 +24,7 @@ RUN --mount=target=. \
     sh -c 'USERARCH=$(go env GOARCH); \
     if [ "$TARGETARCH" = "$USERARCH" ]; then CGO=1; else CGO=0; fi; \
     GOARCH="$TARGETARCH" GOOS="linux" CGO_ENABLED="$CGO" \
-    go build -tags goolm,nodynamic -v -trimpath \
+    go build -tags nodynamic -v -trimpath \
     -ldflags "-X codefloe.com/pat-s/zendrite/internal.version='"$VERSION"'" \
     -o /out/ ./cmd/...'
 

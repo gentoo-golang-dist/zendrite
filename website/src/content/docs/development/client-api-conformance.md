@@ -307,7 +307,7 @@ The existing `TestMSC3861_VersionsAdvertisesMSC2965` additionally covers discove
 
 ```sh
 # Run discovery regression tests.
-go test -tags goolm ./clientapi/routing -run 'TestVersions|TestMSC3861_VersionsAdvertisesMSC2965' -count=1
+go test ./clientapi/routing -run 'TestVersions|TestMSC3861_VersionsAdvertisesMSC2965' -count=1
 ```
 
 Before raising the ceiling, fix any remaining blockers and add behavioral tests for newly required endpoints.

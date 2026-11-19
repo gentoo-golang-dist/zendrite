@@ -38,11 +38,11 @@ test-pkg pkg:
 
 # Build all binaries
 build:
-    go build -tags goolm -trimpath -v -o bin/ ./cmd/...
+    go build -trimpath -v -o bin/ ./cmd/...
 
 # Build a specific binary
 build-bin name:
-    go build -tags goolm -trimpath -v -o bin/{{name}} ./cmd/{{name}}
+    go build -trimpath -v -o bin/{{name}} ./cmd/{{name}}
 
 # Run both lint and tests
 check: lint test

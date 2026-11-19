@@ -117,12 +117,12 @@ log "working directory: ${WORKDIR}"
 # --- Generate Zendrite key and config --------------------------------------
 
 log "generating Zendrite signing key"
-go run -tags goolm ./cmd/generate-keys -private-key "${WORKDIR}/matrix_key.pem" >/dev/null
+go run ./cmd/generate-keys -private-key "${WORKDIR}/matrix_key.pem" >/dev/null
 
 log "generating Zendrite config"
 # The -dir paths become absolute paths inside the Zendrite container, where
 # the workdir is mounted at /data.
-go run -tags goolm ./cmd/generate-config -ci -server "localhost" -dir /data >"${WORKDIR}/zendrite.yaml"
+go run ./cmd/generate-config -ci -server "localhost" -dir /data >"${WORKDIR}/zendrite.yaml"
 
 ADMIN_TOKEN="$(openssl rand -hex 32)"
 CLIENT_SECRET="$(openssl rand -hex 32)"
@@ -315,7 +315,7 @@ x86_64 | amd64) GOARCH=amd64 ;;
 *) fail "unsupported container architecture ${GOARCH}" ;;
 esac
 # WebP's dynamic backend requires a libc loader even with CGO disabled.
-CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -tags goolm,nodynamic -o "${WORKDIR}/zendrite" ./cmd/zendrite
+CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -tags nodynamic -o "${WORKDIR}/zendrite" ./cmd/zendrite
 
 log "starting MAS"
 docker run -d --name ${MAS_CONTAINER} --network "${NETWORK}" \

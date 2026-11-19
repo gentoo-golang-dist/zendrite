@@ -97,6 +97,7 @@ We also have unit tests which we run via:
 go test -tags goolm -race ./...
 ```
 
+The `goolm` tag selects the pure-Go Olm implementation for the end-to-end encryption tests; without it they need the C `libolm` library.
 This runs both SQLite and PostgreSQL tests.
 If you wish to execute Postgres tests, you'll either need to have Postgres installed locally (`createdb` will be used) or have a remote/containerized Postgres instance available.
 

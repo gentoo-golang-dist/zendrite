@@ -104,10 +104,10 @@ if [[ "$phase" != run ]]; then
   mkdir -p "$bin"
   contract="codefloe.com/pat-s/zendrite/setup/ha.contractOverride"
   version="codefloe.com/pat-s/zendrite/internal.version"
-  go build -tags goolm -trimpath -buildvcs=false -o "$bin/zendrite" ./cmd/zendrite
-  go build -tags goolm -trimpath -buildvcs=false -ldflags "-X $version=hachaos-next -X $contract=adjacent" -o "$bin/zendrite-next" ./cmd/zendrite
-  go build -tags goolm -trimpath -buildvcs=false -ldflags "-X $version=hachaos-unadmitted -X $contract=unadmitted" -o "$bin/zendrite-unadmitted" ./cmd/zendrite
-  go test -c -tags goolm -trimpath -buildvcs=false -o "$bin/hachaos.test" ./test/hachaos/
+  go build -trimpath -buildvcs=false -o "$bin/zendrite" ./cmd/zendrite
+  go build -trimpath -buildvcs=false -ldflags "-X $version=hachaos-next -X $contract=adjacent" -o "$bin/zendrite-next" ./cmd/zendrite
+  go build -trimpath -buildvcs=false -ldflags "-X $version=hachaos-unadmitted -X $contract=unadmitted" -o "$bin/zendrite-unadmitted" ./cmd/zendrite
+  go test -c -trimpath -buildvcs=false -o "$bin/hachaos.test" ./test/hachaos/
   echo "HA qualification: binaries built in $((SECONDS - started))s"
 fi
 [[ "$phase" != build ]] || exit 0

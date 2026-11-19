@@ -14,8 +14,8 @@ ARG CGO=1
 RUN --mount=target=. \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=${CGO} go build -tags goolm,nodynamic -o /zendrite ./cmd/generate-config ./cmd/generate-keys ./cmd/zendrite && \
-    CGO_ENABLED=${CGO} go build -tags goolm,nodynamic -cover -covermode=atomic -o /zendrite/zendrite-cover -coverpkg "codefloe.com/pat-s/zendrite/..." ./cmd/zendrite && \
+    CGO_ENABLED=${CGO} go build -tags nodynamic -o /zendrite ./cmd/generate-config ./cmd/generate-keys ./cmd/zendrite && \
+    CGO_ENABLED=${CGO} go build -tags nodynamic -cover -covermode=atomic -o /zendrite/zendrite-cover -coverpkg "codefloe.com/pat-s/zendrite/..." ./cmd/zendrite && \
     cp build/scripts/complement-cmd.sh /complement-cmd.sh
 
 WORKDIR /zendrite

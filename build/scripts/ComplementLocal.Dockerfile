@@ -24,8 +24,8 @@ RUN echo '\
     exit 0 \n\
     fi \n\
     cd /zendrite \n\
-    go build -tags goolm,nodynamic -v -o /runtime /zendrite/cmd/zendrite \n\
-    go build -tags goolm,nodynamic -cover -covermode=atomic -o /runtime/zendrite-cover -coverpkg "codefloe.com/pat-s/zendrite/..." /zendrite/cmd/zendrite \n\
+    go build -tags nodynamic -v -o /runtime /zendrite/cmd/zendrite \n\
+    go build -tags nodynamic -cover -covermode=atomic -o /runtime/zendrite-cover -coverpkg "codefloe.com/pat-s/zendrite/..." /zendrite/cmd/zendrite \n\
     ' > compile.sh && chmod +x compile.sh
 
 # This script runs Zendrite for us. Must be run in the /runtime directory.
@@ -47,7 +47,7 @@ WORKDIR /cache
 RUN --mount=target=. \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -tags goolm,nodynamic -o /runtime ./cmd/generate-config ./cmd/generate-keys
+    go build -tags nodynamic -o /runtime ./cmd/generate-config ./cmd/generate-keys
 
 
 WORKDIR /runtime

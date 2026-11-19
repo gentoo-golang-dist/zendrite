@@ -10,7 +10,7 @@ cd "$(dirname "$0")/../.."
 # When `go build` is given multiple packages it won't output anything, and just
 # checks that everything builds.
 echo "Checking that it builds..."
-go build -tags goolm ./cmd/...
+go build ./cmd/...
 
 prek run golangci-lint --all-files
 
