@@ -502,7 +502,10 @@ func (rp *RequestPool) bundleTimeline(
 		err = bundler.UpTo(upTo).Bundle(ctx, headered, clients, synctypes.FormatSync)
 	}
 	if err != nil {
-		logrus.WithError(err).WithField("user_id", userID).Warn("Failed to bundle relations, serving the timeline without them")
+		// The client has gone, so nothing will read this timeline.
+		if !requestEnded(ctx, err) {
+			logrus.WithError(err).WithField("user_id", userID).Warn("Failed to bundle relations, serving the timeline without them")
+		}
 		_ = syncinternal.StripRelations(clients)
 	}
 }
