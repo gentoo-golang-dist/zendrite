@@ -16,8 +16,10 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 
+	"codefloe.com/pat-s/zendrite/internal/retention"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
+	"codefloe.com/pat-s/zendrite/setup/config"
 )
 
 // GetEvent returns the requested event.
@@ -27,6 +29,7 @@ func GetEvent(
 	rsAPI api.FederationRoomserverAPI,
 	eventID string,
 	origin spec.ServerName,
+	retentionCfg *config.Retention,
 ) util.JSONResponse {
 	// /_matrix/federation/v1/event/{eventId} doesn't have a roomID, we use an empty string,
 	// which results in `QueryEventsByID` to first get the event and use that to determine the roomID.
@@ -41,6 +44,18 @@ func GetEvent(
 	}
 	if !allowed {
 		return util.MessageResponse(http.StatusForbidden, "server not allowed to see event")
+	}
+	// An expired event is answered as if it had been purged already
+	// (MSC1763).
+	withheld, visErr := retention.NewRooms(retentionCfg, rsAPI).Withheld(ctx, event)
+	if visErr != nil {
+		return util.ErrorResponse(visErr)
+	}
+	if withheld {
+		return util.JSONResponse{
+			Code: http.StatusNotFound,
+			JSON: spec.NotFound("Event not found"),
+		}
 	}
 	// The sender is erased and the server had no member in the room when
 	// the event was sent (MSC4025).

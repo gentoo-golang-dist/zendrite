@@ -336,7 +336,7 @@ Read receipts (`m.read`, `m.read.private`) still replace the previous receipt ev
 | [MSC2666](https://github.com/matrix-org/matrix-spec-proposals/pull/2666) | Mutual rooms | 1.19 | Implemented: `GET /_matrix/client/v1/mutual_rooms` lists the rooms the caller shares with a user, with signed pagination tokens. Also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable` |
 | [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
 | [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
-| [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): expired events are no longer served, and purge jobs delete them. See [message retention policies](#message-retention-policies) |
+| [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): expired events are no longer served to clients or other servers, and purge jobs delete them. See [message retention policies](#message-retention-policies) |
 | [MSC4242](https://github.com/matrix-org/matrix-spec-proposals/pull/4242) | State DAGs (room version `org.matrix.msc4242.12`) | N/A | Not supported: the room version is not listed in `/capabilities`, `createRoom` and room upgrades refuse it with `M_UNSUPPORTED_ROOM_VERSION`, and joins and federation invites into such rooms fail with `M_INCOMPATIBLE_ROOM_VERSION` |
 
 ### Message retention policies
@@ -383,7 +383,14 @@ global:
   It keeps the room's latest event of the kinds that order rooms by activity in sliding sync, so the room keeps its place in room lists.
   An expired event whose stream entry also records a change to the room's state, which happens when state resolution changes the state at a message, keeps its entry with its content redacted, so incremental syncs across it still get the state change.
 - Media that expired events refer to is kept, as in Synapse; configure media retention separately.
-- Federation still serves expired events until they are purged, and `/notifications` keeps listing the notifications they caused.
+- Other servers are not served expired events either: `/event` answers 404, and `/backfill` and `/get_missing_events` leave them out, as if they had been purged already.
+  The MSC asks for this ("an expired event is not shared with clients and federated servers"); Synapse does not filter these endpoints.
+  The room's forward extremities are still served, as the purge keeps them, so a server that receives a new event can fetch its `prev_events`.
+  Endpoints that only return state, such as `/state`, `/state_ids`, `/event_auth` and `/send_join`, are unchanged, since state events never expire.
+  A server that cannot get an expired event falls back to asking for the room state at the gap, as it does once the event is purged.
+  Events already queued for a server that has been unreachable for longer than the room's `max_lifetime` are still delivered.
+- `/notifications` leaves out the notifications of expired events and fills each page from later notifications, reading up to ten pages for one response.
+  The stored notifications themselves are deleted by the existing cleanup, after a day, or a month for highlights; unread counts still include them until then.
 - With [high availability](/installation/manual/high-availability/), the jobs only run in the activation that owns the homeserver, and stop at the next batch once ownership is lost.
   The roomserver and the sync API each purge their own tables, without waiting on a message from the other, and every batch only deletes what has expired, so a pass cut short by a takeover leaves consistent storage and the successor's first pass carries on.
 - Zendrite refuses an `m.room.retention` event sent by a local user, from `/state`, `/send` or `createRoom`'s `initial_state`, unless `min_lifetime` and `max_lifetime` are each absent, `null` or an integer between 0 and 2^53 - 1, and `min_lifetime` is not greater than `max_lifetime`.

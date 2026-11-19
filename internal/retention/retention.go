@@ -114,9 +114,15 @@ func (p Policy) Cutoff(now time.Time) (int64, bool) {
 // Expired reports whether ev is past the room's max_lifetime at now and
 // must no longer be served. State events never expire.
 func (p Policy) Expired(ev gomatrixserverlib.PDU, now time.Time) bool {
-	if !p.enforced || ev.StateKey() != nil {
+	if ev.StateKey() != nil {
 		return false
 	}
-	cutoff, _ := p.Cutoff(now)
-	return int64(ev.OriginServerTS()) < cutoff
+	return p.expiredAt(int64(ev.OriginServerTS()), now)
+}
+
+// expiredAt reports whether a non-state event sent at originServerTS is
+// past the room's max_lifetime at now.
+func (p Policy) expiredAt(originServerTS int64, now time.Time) bool {
+	cutoff, ok := p.Cutoff(now)
+	return ok && originServerTS < cutoff
 }

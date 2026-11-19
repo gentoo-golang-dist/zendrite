@@ -17,6 +17,7 @@ import (
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
 	"github.com/matrix-org/util"
 
+	"codefloe.com/pat-s/zendrite/internal/retention"
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -102,12 +103,25 @@ func Backfill(
 		}
 	}
 
-	// Filter any event that's not from the requested room out.
+	// Filter any event that's not from the requested room out, and the
+	// expired events (MSC1763).
+	rooms := retention.NewRooms(&cfg.Matrix.Retention, rsAPI)
 	evs := make([]gomatrixserverlib.PDU, 0)
 
 	var ev *types.HeaderedEvent
 	for _, ev = range res.Events {
-		if ev.RoomID().String() == roomID {
+		if ev.RoomID().String() != roomID {
+			continue
+		}
+		withheld, withheldErr := rooms.Withheld(httpReq.Context(), ev.PDU)
+		if withheldErr != nil {
+			util.GetLogger(httpReq.Context()).WithError(withheldErr).Error("rooms.Withheld failed")
+			return util.JSONResponse{
+				Code: http.StatusInternalServerError,
+				JSON: spec.InternalServerError{},
+			}
+		}
+		if !withheld {
 			evs = append(evs, ev.PDU)
 		}
 	}

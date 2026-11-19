@@ -15,6 +15,7 @@ import (
 
 	"codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/roomserver/types"
+	"codefloe.com/pat-s/zendrite/setup/config"
 )
 
 type getMissingEventRequest struct {
@@ -31,6 +32,7 @@ func GetMissingEvents(
 	request *fclient.FederationRequest,
 	rsAPI api.FederationRoomserverAPI,
 	roomID string,
+	retentionCfg *config.Retention,
 ) util.JSONResponse {
 	var gme getMissingEventRequest
 	if err := json.Unmarshal(request.Content(), &gme); err != nil {
@@ -64,6 +66,15 @@ func GetMissingEvents(
 	}
 
 	eventsResponse.Events = filterEvents(eventsResponse.Events, roomID)
+	events, err := dropWithheldEvents(httpReq.Context(), retentionCfg, rsAPI, eventsResponse.Events)
+	if err != nil {
+		util.GetLogger(httpReq.Context()).WithError(err).Error("dropWithheldEvents failed")
+		return util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	eventsResponse.Events = events
 
 	resp := fclient.RespMissingEvents{
 		Events: types.NewEventJSONsFromHeaderedEvents(eventsResponse.Events),

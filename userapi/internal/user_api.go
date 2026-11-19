@@ -34,6 +34,7 @@ import (
 	"codefloe.com/pat-s/zendrite/internal/eventutil"
 	"codefloe.com/pat-s/zendrite/internal/pushgateway"
 	"codefloe.com/pat-s/zendrite/internal/pushrules"
+	"codefloe.com/pat-s/zendrite/internal/retention"
 	"codefloe.com/pat-s/zendrite/internal/sqlutil"
 	rsapi "codefloe.com/pat-s/zendrite/roomserver/api"
 	"codefloe.com/pat-s/zendrite/setup/config"
@@ -1074,7 +1075,7 @@ func (a *UserInternalAPI) QueryNotifications(ctx context.Context, req *api.Query
 	if req.Only == "highlight" {
 		filter = tables.HighlightNotifications
 	}
-	notifs, lastID, err := a.DB.GetNotifications(ctx, req.Localpart, req.ServerName, fromID, req.Limit, filter)
+	notifs, lastID, err := a.queryUnexpiredNotifications(ctx, req.Localpart, req.ServerName, fromID, req.Limit, filter)
 	if err != nil {
 		return err
 	}
@@ -1088,6 +1089,54 @@ func (a *UserInternalAPI) QueryNotifications(ctx context.Context, req *api.Query
 		res.NextToken = strconv.FormatInt(lastID, 10)
 	}
 	return nil
+}
+
+// notificationPagesMax bounds how many pages QueryNotifications reads to
+// fill one response when retention policies leave notifications out.
+const notificationPagesMax = 10
+
+// queryUnexpiredNotifications returns up to limit notifications after
+// fromID, leaving out those of events past their room's retention policy
+// (MSC1763), and the ID to continue after, -1 if it read none. While a
+// page loses notifications, it reads more, up to notificationPagesMax
+// pages, so that a response is only short at the end of the list.
+func (a *UserInternalAPI) queryUnexpiredNotifications(
+	ctx context.Context, localpart string, serverName spec.ServerName,
+	fromID int64, limit int, filter tables.NotificationFilter,
+) ([]*api.Notification, int64, error) {
+	var rooms *retention.Rooms
+	if a.Config != nil && a.Config.Matrix != nil {
+		rooms = retention.NewRooms(&a.Config.Matrix.Retention, a.RSAPI)
+	}
+	if rooms == nil {
+		return a.DB.GetNotifications(ctx, localpart, serverName, fromID, limit, filter)
+	}
+	var kept []*api.Notification
+	lastID := int64(-1)
+	for page := 0; page < notificationPagesMax && len(kept) < limit; page++ {
+		want := limit - len(kept)
+		notifs, pageLastID, err := a.DB.GetNotifications(ctx, localpart, serverName, fromID, want, filter)
+		if err != nil {
+			return nil, 0, err
+		}
+		if pageLastID < 0 {
+			break
+		}
+		lastID, fromID = pageLastID, pageLastID
+		for _, n := range notifs {
+			expired, err := rooms.Expired(ctx, n.RoomID, n.Event.OriginServerTS, n.Event.StateKey != nil)
+			if err != nil {
+				return nil, 0, err
+			}
+			if !expired {
+				kept = append(kept, n)
+			}
+		}
+		if len(notifs) < want {
+			break
+		}
+	}
+	return kept, lastID, nil
 }
 
 func (a *UserInternalAPI) PerformPusherSet(ctx context.Context, req *api.PerformPusherSetRequest, res *struct{}) error {

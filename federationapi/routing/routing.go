@@ -254,7 +254,7 @@ func Setup(
 		"federation_get_event", cfg.Matrix.ServerName, cfg.Matrix.IsLocalServerName, keys, wakeup,
 		func(httpReq *http.Request, request *fclient.FederationRequest, vars map[string]string) util.JSONResponse {
 			return GetEvent(
-				httpReq.Context(), request, rsAPI, vars["eventID"], cfg.Matrix.ServerName,
+				httpReq.Context(), request, rsAPI, vars["eventID"], cfg.Matrix.ServerName, &cfg.Matrix.Retention,
 			)
 		},
 	)).Methods(http.MethodGet)
@@ -647,7 +647,7 @@ func Setup(
 					JSON: spec.Forbidden("Forbidden by server ACLs"),
 				}
 			}
-			return GetMissingEvents(httpReq, request, rsAPI, vars["roomID"])
+			return GetMissingEvents(httpReq, request, rsAPI, vars["roomID"], &cfg.Matrix.Retention)
 		},
 	)).Methods(http.MethodPost)
 
