@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"codefloe.com/pat-s/zendrite/roomserver/api"
+	"codefloe.com/pat-s/zendrite/roomserver/types"
 	"codefloe.com/pat-s/zendrite/test"
 )
 
@@ -26,27 +27,37 @@ func TestQueryUnredactedEventsBySender(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		alice := test.NewUser(t)
 		bob := test.NewUser(t)
-		rsAPI, _ := redactedContentHarness(t, dbType, 0)
+		rsAPI, db := redactedContentHarness(t, dbType, 0)
 		ctx := context.Background()
 
 		room := test.NewRoom(t, alice, test.RoomPreset(test.PresetPublicChat))
 		join := room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(bob.ID))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
 		bobEvents := []string{join.EventID()}
+		roomInfo, err := db.RoomInfo(ctx, room.ID)
+		require.NoError(t, err)
+		messageTypeNID, err := db.GetOrCreateEventTypeNID(ctx, "m.room.message")
+		require.NoError(t, err)
 		// Bob's messages are spread over more than one batch of 500
 		// candidates, between messages of alice that mention him and so
-		// contain his ID.
-		for i := range 1200 {
-			if i%200 == 0 {
-				msg := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"msgtype": "m.text", "body": fmt.Sprint(i)})
-				bobEvents = append(bobEvents, msg.EventID())
-				continue
+		// contain his ID. Alice's messages are written to the database
+		// directly, where the search reads them like any other event, since
+		// processing over a thousand events takes minutes under the race
+		// detector on CI.
+		for i := range 6 {
+			msg := room.CreateAndInsert(t, bob, "m.room.message", map[string]any{"msgtype": "m.text", "body": fmt.Sprint(i)})
+			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{msg}, "test", "test", "test", nil, false))
+			bobEvents = append(bobEvents, msg.EventID())
+			for j := range 199 {
+				mention := room.CreateEvent(t, alice, "m.room.message", map[string]any{
+					"msgtype": "m.text", "body": fmt.Sprintf("ping %s %d/%d", bob.ID, i, j), "sender": bob.ID,
+				})
+				_, _, err = db.StoreEvent(ctx, mention.PDU, roomInfo, messageTypeNID, 0, nil, false, true)
+				require.NoError(t, err)
 			}
-			room.CreateAndInsert(t, alice, "m.room.message", map[string]any{
-				"msgtype": "m.text", "body": "ping " + bob.ID, "sender": bob.ID,
-			})
 		}
-		room.CreateAndInsert(t, alice, spec.MRoomRedaction, map[string]any{}, test.WithRedacts(bobEvents[1]))
-		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
+		redaction := room.CreateAndInsert(t, alice, spec.MRoomRedaction, map[string]any{}, test.WithRedacts(bobEvents[1]))
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{redaction}, "test", "test", "test", nil, false))
 		roomID, err := spec.NewRoomID(room.ID)
 		require.NoError(t, err)
 
