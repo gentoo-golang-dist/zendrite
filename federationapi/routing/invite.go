@@ -86,6 +86,7 @@ func InviteV3(
 			return spec.SenderIDFromPseudoIDKey(key), key, nil
 		},
 	}
+	input.RejectIncompleteStrippedState = rejectIncompleteInviteState
 	event, jsonErr := handleInviteV3(httpReq.Context(), input, rsAPI)
 	if jsonErr != nil {
 		return *jsonErr
@@ -177,6 +178,7 @@ func InviteV2(
 			return rsAPI.QueryUserIDForSender(httpReq.Context(), roomID, senderID)
 		},
 	}
+	input.RejectIncompleteStrippedState = rejectIncompleteInviteState
 	event, jsonErr := handleInvite(httpReq.Context(), input, rsAPI)
 	if jsonErr != nil {
 		return *jsonErr
@@ -186,6 +188,18 @@ func InviteV2(
 		JSON: fclient.RespInviteV2{Event: event.JSON()},
 	}
 }
+
+// rejectIncompleteInviteState makes invites to room versions 12 and later
+// (those with domainless room IDs) fail with 400 M_MISSING_PARAM when their
+// invite_room_state lacks m.room.create or holds entries which are not PDUs,
+// not only when entries fail validation. The spec (v1.16, "Inviting to a
+// room") let servers only warn about such state while migrating to MSC4311,
+// suggesting the migration end by January 2026, and says invites to these
+// room versions which fail validation SHOULD result in an error. Room
+// versions 1 through 11, and unstable variants of them, keep warning, as
+// gomatrixserverlib.StrippedStateRejectsInvite never rejects them. The v1
+// invite endpoint only carries room version 1 invites, so it is unaffected.
+const rejectIncompleteInviteState = true
 
 // refuseUnsupportedInviteVersion answers 400 M_INCOMPATIBLE_ROOM_VERSION when
 // the invite is for a room version this server knows but does not implement,

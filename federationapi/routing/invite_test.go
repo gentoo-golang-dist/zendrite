@@ -178,17 +178,17 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 			state:    inviteState(t, v12State, false),
 			wantCode: http.StatusOK,
 		},
-		// MSC4311's migration section: state which is missing or still in
-		// stripped form only warns, so servers predating MSC4311 can invite.
+		// MSC4311's migration period has ended, so from room version 12
+		// state which is missing or still in stripped form is rejected.
 		"v12 with stripped state": {
 			room: v12Room, invite: v12Invite,
 			state:    inviteState(t, v12State, true),
-			wantCode: http.StatusOK,
+			wantCode: http.StatusBadRequest, wantErrCode: spec.ErrorMissingParam,
 		},
 		"v12 without create event": {
 			room: v12Room, invite: v12Invite,
 			state:    inviteState(t, v12State[1:], false),
-			wantCode: http.StatusOK,
+			wantCode: http.StatusBadRequest, wantErrCode: spec.ErrorMissingParam,
 		},
 		"v12 with another room's create event": {
 			room: v12Room, invite: v12Invite,
@@ -197,7 +197,13 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 		},
 		"v12 without state": {
 			room: v12Room, invite: v12Invite,
-			wantCode: http.StatusOK,
+			wantCode: http.StatusBadRequest, wantErrCode: spec.ErrorMissingParam,
+		},
+		// Complement's TestMSC4311RejectInvalidStrippedStateFederation.
+		"v12 with empty state": {
+			room: v12Room, invite: v12Invite,
+			state:    []json.RawMessage{},
+			wantCode: http.StatusBadRequest, wantErrCode: spec.ErrorMissingParam,
 		},
 		"v10 with PDU state": {
 			room: v10Room, invite: v10Invite,
@@ -208,6 +214,16 @@ func TestInviteV2ValidatesInviteRoomState(t *testing.T) {
 		"v10 with stripped state": {
 			room: v10Room, invite: v10Invite,
 			state:    inviteState(t, v10State, true),
+			wantCode: http.StatusOK,
+		},
+		"v10 without create event": {
+			room: v10Room, invite: v10Invite,
+			state:    inviteState(t, v10State[1:], false),
+			wantCode: http.StatusOK,
+		},
+		"v10 with empty state": {
+			room: v10Room, invite: v10Invite,
+			state:    []json.RawMessage{},
 			wantCode: http.StatusOK,
 		},
 	}

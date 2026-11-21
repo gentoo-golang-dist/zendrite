@@ -31,7 +31,8 @@ tests/TestInboundCanReturnMissingEvents
 tests/TestInboundFederationKeys
 tests/TestInboundFederationProfile
 tests/TestInboundFederationRejectsEventsWithRejectedAuthEvents
-tests/TestIsDirectFlagFederation
+# tests/TestIsDirectFlagFederation sends an empty invite_room_state into a room of the default version, 12.
+# Spec v1.16 says such invites SHOULD be rejected, so it fails until Complement sends m.room.create or pins a room version from 1 to 11.
 tests/TestIsDirectFlagLocal
 tests/TestJoinFederatedRoomFailOver
 tests/TestJoinFederatedRoomFromApplicationServiceBridgeUser
@@ -59,6 +60,7 @@ tests/TestMSC4291RoomIDAsHashOfCreateEvent_UpgradedRooms
 tests/TestMSC4297StateResolutionV2_1_includes_conflicted_subgraph
 tests/TestMSC4297StateResolutionV2_1_starts_from_empty_set
 tests/TestMSC4311FullEventsOnStrippedStateFederation
+tests/TestMSC4311RejectInvalidStrippedStateFederation
 tests/TestMSC4311StrippedStateClientAPI
 tests/TestMediaFilenames
 tests/TestMediaWithoutFileName
