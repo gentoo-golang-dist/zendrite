@@ -773,6 +773,9 @@ func (d *Database) PurgeRoom(ctx context.Context, roomID string) error {
 		if err := d.EventLabels.PurgeEventLabels(ctx, txn, roomID); err != nil {
 			return fmt.Errorf("failed to purge event labels: %w", err)
 		}
+		if err := d.UnPartialStatedRooms.PurgeUnPartialStatedRooms(ctx, txn, roomID); err != nil {
+			return fmt.Errorf("failed to purge un-partial-stated rooms: %w", err)
+		}
 		return nil
 	})
 }
@@ -944,6 +947,14 @@ func (d *DatabaseTransaction) UnPartialStatedRoomsInRange(
 ) ([]string, error) {
 	roomIDs, _, err := d.UnPartialStatedRooms.SelectUnPartialStatedRoomsInRange(ctx, d.txn, userID, r)
 	return roomIDs, err
+}
+
+// PartialStateRooms returns the rooms that a sync of the user up to the given
+// position still sees with partial state (MSC3706).
+func (d *DatabaseTransaction) PartialStateRooms(
+	ctx context.Context, userID string, to types.StreamPosition,
+) ([]string, error) {
+	return d.UnPartialStatedRooms.SelectPartialStateRooms(ctx, d.txn, userID, to)
 }
 
 // ThreadRelations returns a bounded batch of thread replies in topology order.

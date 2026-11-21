@@ -1102,15 +1102,35 @@ func (d *Database) WriteSlidingSyncRoomMetadata(ctx context.Context, f func(txn 
 	return d.Writer.Do(d.DB, nil, f)
 }
 
-// InsertUnPartialStatedRoom records that a room has completed its partial state resync (MSC3706).
-func (d *Database) InsertUnPartialStatedRoom(ctx context.Context, roomID, userID string) (types.StreamPosition, error) {
-	var pos types.StreamPosition
-	var err error
-	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
-		pos, err = d.UnPartialStatedRooms.InsertUnPartialStatedRoom(ctx, txn, roomID, userID)
-		return err
+// SetPartialStateJoin records whether a local user's join, which replaced the
+// room's state, was made with partial state (MSC3706).
+func (d *Database) SetPartialStateJoin(ctx context.Context, roomID string, partial bool) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		if partial {
+			return d.UnPartialStatedRooms.InsertPartialStateJoin(ctx, txn, roomID)
+		}
+		return d.UnPartialStatedRooms.DeletePartialStateJoin(ctx, txn, roomID)
 	})
-	return pos, err
+}
+
+// InsertUnPartialStatedRooms records that a room has completed its partial
+// state resync for each of the local users (MSC3706). It settles the room's
+// partial-state join in the same transaction, so that a sync sees either the
+// pending join or the records.
+func (d *Database) InsertUnPartialStatedRooms(ctx context.Context, roomID string, userIDs []string) (types.StreamPosition, error) {
+	var lastPos types.StreamPosition
+	err := d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		lastPos = 0
+		for _, userID := range userIDs {
+			pos, err := d.UnPartialStatedRooms.InsertUnPartialStatedRoom(ctx, txn, roomID, userID)
+			if err != nil {
+				return fmt.Errorf("insert un-partial-stated room for %s: %w", userID, err)
+			}
+			lastPos = pos
+		}
+		return d.UnPartialStatedRooms.DeletePartialStateJoin(ctx, txn, roomID)
+	})
+	return lastPos, err
 }
 
 // PopulateRoomStateAfterResync populates the sync API's current_room_state table after a

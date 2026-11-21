@@ -839,9 +839,16 @@ func (rp *RequestPool) processAccountDataExtension(
 	for _, dataType := range dataTypes[globalAccountDataScope] {
 		changedGlobal[dataType] = true
 	}
+	// fullRooms are the rooms new to this connection, whose account data is
+	// all sent. Other rooms get the types deleted since they were last served
+	// with empty content (MSC3391).
+	fullRooms := make(map[string]bool)
 	for floor, rooms := range gapFloors {
 		for _, roomID := range rooms {
 			roomPositions[roomID] = floor
+			if floor == 0 {
+				fullRooms[roomID] = true
+			}
 		}
 		gapTypes, gapLastPos, gapErr := snapshot.GetAccountDataInRange(ctx, userID, types.Range{
 			From: floor,
@@ -915,8 +922,14 @@ func (rp *RequestPool) processAccountDataExtension(
 					})
 				}
 			} else {
-				// Per-room account data
-				if roomData, ok := dataRes.RoomAccountData[roomID][dataType]; ok {
+				// Per-room account data. Like global account data, an entry
+				// that no longer exists was deleted (MSC3391), unless all of
+				// the room's account data is sent.
+				roomData, ok := dataRes.RoomAccountData[roomID][dataType]
+				if !ok && from > 0 && !fullRooms[roomID] {
+					roomData, ok = []byte("{}"), true
+				}
+				if ok {
 					if resp.Rooms[roomID] == nil {
 						resp.Rooms[roomID] = []synctypes.ClientEvent{}
 					}

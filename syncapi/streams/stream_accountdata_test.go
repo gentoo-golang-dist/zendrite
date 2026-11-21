@@ -31,12 +31,17 @@ func (s accountDataSnapshot) GetAccountDataInRange(context.Context, string, type
 type accountDataUserAPI struct {
 	userapi.SyncUserAPI
 	global map[string]json.RawMessage
+	rooms  map[string]map[string]json.RawMessage
 }
 
 func (u accountDataUserAPI) QueryAccountData(_ context.Context, req *userapi.QueryAccountDataRequest, res *userapi.QueryAccountDataResponse) error {
 	res.GlobalAccountData = map[string]json.RawMessage{}
 	if data, ok := u.global[req.DataType]; ok && req.RoomID == "" {
 		res.GlobalAccountData[req.DataType] = data
+	}
+	res.RoomAccountData = map[string]map[string]json.RawMessage{}
+	if data, ok := u.rooms[req.RoomID][req.DataType]; ok && req.RoomID != "" {
+		res.RoomAccountData[req.RoomID] = map[string]json.RawMessage{req.DataType: data}
 	}
 	return nil
 }
@@ -74,4 +79,26 @@ func TestAccountDataSyncReportsDeletedGlobalData(t *testing.T) {
 			require.JSONEq(t, `{}`, content)
 		})
 	}
+}
+
+// TestAccountDataSyncReportsDeletedRoomData checks that room account data
+// deleted with MSC3391 reaches incremental syncs with empty content.
+func TestAccountDataSyncReportsDeletedRoomData(t *testing.T) {
+	const roomID = "!r:test"
+	snapshot := accountDataSnapshot{changed: map[string][]string{roomID: {"org.example.deleted", "m.tag"}}}
+	provider := &AccountDataStreamProvider{userAPI: accountDataUserAPI{
+		rooms: map[string]map[string]json.RawMessage{roomID: {"m.tag": json.RawMessage(`{"tags":{}}`)}},
+	}}
+	req := &types.SyncRequest{
+		Device:   &userapi.Device{UserID: "@alice:test"},
+		Response: types.NewResponse(),
+		Log:      logrus.NewEntry(logrus.StandardLogger()),
+	}
+	require.Equal(t, types.StreamPosition(10), provider.IncrementalSync(t.Context(), snapshot, req, 5, 10))
+	got := map[string]string{}
+	for _, ev := range req.Response.Rooms.Join[roomID].AccountData.Events {
+		got[ev.Type] = string(ev.Content)
+	}
+	require.JSONEq(t, `{"tags":{}}`, got["m.tag"])
+	require.JSONEq(t, `{}`, got["org.example.deleted"])
 }

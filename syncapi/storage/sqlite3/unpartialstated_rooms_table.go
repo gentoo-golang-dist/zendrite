@@ -33,6 +33,20 @@ CREATE TABLE IF NOT EXISTS syncapi_unpartialstated_rooms (
 );
 CREATE INDEX IF NOT EXISTS syncapi_unpartialstated_rooms_user_id_idx ON syncapi_unpartialstated_rooms(user_id);
 CREATE INDEX IF NOT EXISTS syncapi_unpartialstated_rooms_room_id_idx ON syncapi_unpartialstated_rooms(room_id);
+
+-- Rooms that a local user joined with partial state and whose un-partial-stated
+-- records are not written yet (MSC3706). The roomserver says a room has its
+-- full state before this component has stored it, so eager syncs leave these
+-- rooms out too: otherwise a sync in between would send the room, and the
+-- un-partial-stated record would send it again as newly joined.
+CREATE TABLE IF NOT EXISTS syncapi_partial_state_joins (
+	room_id TEXT PRIMARY KEY,
+	-- A position of the PDU stream taken when the join was recorded. An
+	-- un-partial-stated record of the room after it settles the join even if
+	-- the row is still here, as it is when an older build, which does not know
+	-- this table, wrote the records.
+	pos INTEGER NOT NULL
+);
 `
 
 const insertUnPartialStatedRoomSQL = "" +
@@ -49,6 +63,25 @@ const selectMaxUnPartialStatedRoomIDSQL = "" +
 const purgeUnPartialStatedRoomsSQL = "" +
 	"DELETE FROM syncapi_unpartialstated_rooms WHERE room_id = $1"
 
+const insertPartialStateJoinSQL = "" +
+	"INSERT INTO syncapi_partial_state_joins (room_id, pos) VALUES ($1, $2)" +
+	" ON CONFLICT (room_id) DO UPDATE SET pos = excluded.pos"
+
+const deletePartialStateJoinSQL = "" +
+	"DELETE FROM syncapi_partial_state_joins WHERE room_id = $1"
+
+// A room is still partial for a user's sync up to a position while its
+// partial-state join is pending, or until the sync reaches the user's
+// un-partial-stated record. A join is no longer pending once the room has an
+// un-partial-stated record after it: this build deletes the join in the same
+// transaction, but an older one writes the records and leaves the join behind,
+// which would otherwise keep the room out of eager syncs for good.
+const selectPartialStateRoomsSQL = "" +
+	"SELECT j.room_id FROM syncapi_partial_state_joins j" +
+	" WHERE NOT EXISTS (SELECT 1 FROM syncapi_unpartialstated_rooms u" +
+	" WHERE u.room_id = j.room_id AND u.id > j.pos)" +
+	" UNION SELECT room_id FROM syncapi_unpartialstated_rooms WHERE user_id = $1 AND id > $2"
+
 type unPartialStatedRoomsStatements struct {
 	db                                 *sql.DB
 	streamIDStatements                 *StreamIDStatements
@@ -56,6 +89,9 @@ type unPartialStatedRoomsStatements struct {
 	selectUnPartialStatedRoomsInRange  *sql.Stmt
 	selectMaxUnPartialStatedRoomIDStmt *sql.Stmt
 	purgeUnPartialStatedRoomsStmt      *sql.Stmt
+	insertPartialStateJoinStmt         *sql.Stmt
+	deletePartialStateJoinStmt         *sql.Stmt
+	selectPartialStateRoomsStmt        *sql.Stmt
 }
 
 func NewSqliteUnPartialStatedRoomsTable(db *sql.DB, streamID *StreamIDStatements) (tables.UnPartialStatedRooms, error) {
@@ -72,6 +108,9 @@ func NewSqliteUnPartialStatedRoomsTable(db *sql.DB, streamID *StreamIDStatements
 		{&s.selectUnPartialStatedRoomsInRange, selectUnPartialStatedRoomsInRangeSQL},
 		{&s.selectMaxUnPartialStatedRoomIDStmt, selectMaxUnPartialStatedRoomIDSQL},
 		{&s.purgeUnPartialStatedRoomsStmt, purgeUnPartialStatedRoomsSQL},
+		{&s.insertPartialStateJoinStmt, insertPartialStateJoinSQL},
+		{&s.deletePartialStateJoinStmt, deletePartialStateJoinSQL},
+		{&s.selectPartialStateRoomsStmt, selectPartialStateRoomsSQL},
 	}.Prepare(db)
 }
 
@@ -130,6 +169,46 @@ func (s *unPartialStatedRoomsStatements) PurgeUnPartialStatedRooms(
 	ctx context.Context, txn *sql.Tx, roomID string,
 ) error {
 	purgeUnPartialStatedRoomsStmt := sqlutil.TxStmt(txn, s.purgeUnPartialStatedRoomsStmt)
-	_, err := purgeUnPartialStatedRoomsStmt.ExecContext(ctx, roomID)
+	if _, err := purgeUnPartialStatedRoomsStmt.ExecContext(ctx, roomID); err != nil {
+		return err
+	}
+	return s.DeletePartialStateJoin(ctx, txn, roomID)
+}
+
+func (s *unPartialStatedRoomsStatements) InsertPartialStateJoin(
+	ctx context.Context, txn *sql.Tx, roomID string,
+) error {
+	// The position is one of the PDU stream, as are those of the records.
+	pos, err := s.streamIDStatements.nextPDUID(ctx, txn)
+	if err != nil {
+		return err
+	}
+	_, err = sqlutil.TxStmt(txn, s.insertPartialStateJoinStmt).ExecContext(ctx, roomID, pos)
 	return err
+}
+
+func (s *unPartialStatedRoomsStatements) DeletePartialStateJoin(
+	ctx context.Context, txn *sql.Tx, roomID string,
+) error {
+	_, err := sqlutil.TxStmt(txn, s.deletePartialStateJoinStmt).ExecContext(ctx, roomID)
+	return err
+}
+
+func (s *unPartialStatedRoomsStatements) SelectPartialStateRooms(
+	ctx context.Context, txn *sql.Tx, userID string, to types.StreamPosition,
+) ([]string, error) {
+	rows, err := sqlutil.TxStmt(txn, s.selectPartialStateRoomsStmt).QueryContext(ctx, userID, to)
+	if err != nil {
+		return nil, fmt.Errorf("unable to query partial state rooms: %w", err)
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectPartialStateRooms: rows.close() failed")
+	var roomIDs []string
+	for rows.Next() {
+		var roomID string
+		if err = rows.Scan(&roomID); err != nil {
+			return nil, fmt.Errorf("unable to scan row: %w", err)
+		}
+		roomIDs = append(roomIDs, roomID)
+	}
+	return roomIDs, rows.Err()
 }

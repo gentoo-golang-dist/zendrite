@@ -621,8 +621,10 @@ func (r *RoomserverInternalAPI) notifyUnPartialStated(roomID string, deviceListS
 	}
 	membershipsRes := &api.QueryMembershipsForRoomResponse{}
 	if err := r.QueryMembershipsForRoom(ctx, membershipsReq, membershipsRes); err != nil {
+		// Tell downstream components all the same: the sync API keeps the
+		// room out of eager syncs until it hears of the resync.
 		logrus.WithError(err).WithField("room_id", roomID).Error("Failed to query memberships for un-partial-stated room")
-		return
+		membershipsRes.JoinEvents = nil
 	}
 
 	// Extract user IDs from membership events

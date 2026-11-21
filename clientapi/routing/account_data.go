@@ -24,9 +24,10 @@ import (
 )
 
 // GetAccountData implements GET /user/{userId}/[rooms/{roomid}/]account_data/{type}.
+// With msc3391, entries with empty content count as deleted, as in Synapse.
 func GetAccountData(
 	req *http.Request, userAPI api.ClientUserAPI, device *api.Device,
-	userID string, roomID string, dataType string,
+	userID string, roomID string, dataType string, msc3391 bool,
 ) util.JSONResponse {
 	if userID != device.UserID {
 		return util.JSONResponse{
@@ -53,7 +54,7 @@ func GetAccountData(
 	} else {
 		data, ok = dataRes.GlobalAccountData[dataType]
 	}
-	if ok {
+	if ok && (!msc3391 || !isEmptyJSONObject(data)) {
 		return util.JSONResponse{
 			Code: http.StatusOK,
 			JSON: data,
@@ -67,9 +68,11 @@ func GetAccountData(
 }
 
 // SaveAccountData implements PUT /user/{userId}/[rooms/{roomId}/]account_data/{type}.
+// With msc3391, empty content ({}) deletes the entry, as in Synapse.
 func SaveAccountData(
 	req *http.Request, userAPI api.ClientUserAPI, device *api.Device,
 	userID string, roomID string, dataType string, syncProducer *producers.SyncAPIProducer,
+	msc3391 bool,
 ) util.JSONResponse {
 	if userID != device.UserID {
 		return util.JSONResponse{
@@ -87,19 +90,8 @@ func SaveAccountData(
 		}
 	}
 
-	// The spec reserves these types for the server: a 405 with M_BAD_JSON
-	// rejects them for both global and room account data (MSC4010).
-	if dataType == "m.fully_read" || dataType == "m.push_rules" {
-		return util.JSONResponse{
-			Code: http.StatusMethodNotAllowed,
-			JSON: spec.BadJSON(fmt.Sprintf("Cannot set %s through this API.", dataType)),
-		}
-	}
-	if strings.HasPrefix(dataType, threePIDBindingPrefix) {
-		return util.JSONResponse{
-			Code: http.StatusForbidden,
-			JSON: spec.Forbidden(fmt.Sprintf("Unable to modify %q using this API", dataType)),
-		}
+	if resErr := checkSettableAccountDataType(dataType); resErr != nil {
+		return *resErr
 	}
 
 	body, err := io.ReadAll(req.Body)
@@ -118,6 +110,10 @@ func SaveAccountData(
 		}
 	}
 
+	if msc3391 && isEmptyJSONObject(body) {
+		return removeAccountData(req, userAPI, userID, roomID, dataType)
+	}
+
 	dataReq := api.InputAccountDataRequest{
 		UserID:      userID,
 		DataType:    dataType,
@@ -134,6 +130,69 @@ func SaveAccountData(
 		Code: http.StatusOK,
 		JSON: struct{}{},
 	}
+}
+
+// DeleteAccountData implements MSC3391's
+// DELETE /unstable/org.matrix.msc3391/user/{userId}/[rooms/{roomId}/]account_data/{type}.
+// Deleting an entry that does not exist succeeds, as in Synapse.
+func DeleteAccountData(
+	req *http.Request, userAPI api.ClientUserAPI, device *api.Device,
+	userID string, roomID string, dataType string,
+) util.JSONResponse {
+	if userID != device.UserID {
+		return util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden("Cannot delete account data for other users."),
+		}
+	}
+	if resErr := checkSettableAccountDataType(dataType); resErr != nil {
+		return *resErr
+	}
+	return removeAccountData(req, userAPI, userID, roomID, dataType)
+}
+
+// checkSettableAccountDataType refuses the account data types that clients
+// may not set or delete through the account data endpoints.
+func checkSettableAccountDataType(dataType string) *util.JSONResponse {
+	// The spec reserves these types for the server: a 405 with M_BAD_JSON
+	// rejects them for both global and room account data (MSC4010).
+	if dataType == "m.fully_read" || dataType == "m.push_rules" {
+		return &util.JSONResponse{
+			Code: http.StatusMethodNotAllowed,
+			JSON: spec.BadJSON(fmt.Sprintf("Cannot set %s through this API.", dataType)),
+		}
+	}
+	if strings.HasPrefix(dataType, threePIDBindingPrefix) {
+		return &util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden(fmt.Sprintf("Unable to modify %q using this API", dataType)),
+		}
+	}
+	return nil
+}
+
+func removeAccountData(
+	req *http.Request, userAPI api.ClientUserAPI, userID, roomID, dataType string,
+) util.JSONResponse {
+	removeReq := api.PerformAccountDataRemovalRequest{
+		UserID:   userID,
+		RoomID:   roomID,
+		DataType: dataType,
+	}
+	if err := userAPI.PerformAccountDataRemoval(req.Context(), &removeReq, &api.PerformAccountDataRemovalResponse{}); err != nil {
+		util.GetLogger(req.Context()).WithError(err).Error("userAPI.PerformAccountDataRemoval failed")
+		return util.ErrorResponse(err)
+	}
+	return util.JSONResponse{
+		Code: http.StatusOK,
+		JSON: struct{}{},
+	}
+}
+
+// isEmptyJSONObject reports whether data is a JSON object without keys.
+func isEmptyJSONObject(data []byte) bool {
+	var obj map[string]json.RawMessage
+	return json.Unmarshal(data, &obj) == nil && obj != nil && len(obj) == 0
 }
 
 type fullyReadEvent struct {

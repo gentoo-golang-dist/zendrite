@@ -82,9 +82,11 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // events of rooms joined with partial state and the device list updates
 // kept during it, and announces events the resync rejects (MSC3902), level
 // 34 indexes the roomserver's events by room for redacting a user's events
-// (MSC4194), and level 35 records the sliding sync position whose response
-// delivered each receipt (MSC4551).
-const releaseLevel = 35
+// (MSC4194), level 35 records the sliding sync position whose response
+// delivered each receipt (MSC4551), and level 36 records the sync API's
+// pending partial-state joins, so that eager syncs do not receive the room
+// twice (MSC3902).
+const releaseLevel = 36
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades

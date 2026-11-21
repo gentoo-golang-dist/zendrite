@@ -33,7 +33,7 @@ func TestPartialStateResyncStorage(t *testing.T) {
 		positions := MustWriteEvents(t, db, room.Events())
 		before := positions[len(positions)-1]
 
-		pos, err := db.InsertUnPartialStatedRoom(ctx, room.ID, alice.ID)
+		pos, err := db.InsertUnPartialStatedRooms(ctx, room.ID, []string{alice.ID})
 		require.NoError(t, err)
 		assert.Greater(t, pos, before, "the resync takes a position of the PDU stream")
 
@@ -64,6 +64,57 @@ func TestPartialStateResyncStorage(t *testing.T) {
 			sawCreate = sawCreate || ev.Type() == spec.MRoomCreate
 		}
 		assert.True(t, sawCreate, "the rest of the state is kept")
+	})
+}
+
+// TestPartialStateJoinPending checks which rooms a sync sees with partial
+// state (MSC3706): a room joined with partial state until the sync API writes
+// its un-partial-stated records, then until the sync reaches the user's record,
+// whatever the roomserver says in between.
+func TestPartialStateJoinPending(t *testing.T) {
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		alice := test.NewUser(t)
+		bob := test.NewUser(t)
+		room := test.NewRoom(t, alice)
+		other := test.NewRoom(t, alice)
+		db, closeDB := MustCreateDatabase(t, dbType)
+		defer closeDB()
+		positions := MustWriteEvents(t, db, room.Events())
+		joined := positions[len(positions)-1]
+
+		partialRooms := func(userID string, to types.StreamPosition) []string {
+			t.Helper()
+			snapshot, err := db.NewDatabaseSnapshot(ctx)
+			require.NoError(t, err)
+			defer snapshot.Rollback() //nolint:errcheck
+			roomIDs, err := snapshot.PartialStateRooms(ctx, userID, to)
+			require.NoError(t, err)
+			return roomIDs
+		}
+
+		require.NoError(t, db.SetPartialStateJoin(ctx, room.ID, true))
+		require.NoError(t, db.SetPartialStateJoin(ctx, room.ID, true), "a second partial join keeps the room pending")
+		require.NoError(t, db.SetPartialStateJoin(ctx, other.ID, true))
+		require.NoError(t, db.SetPartialStateJoin(ctx, other.ID, false), "a full join ends what a partial one left")
+		assert.Equal(t, []string{room.ID}, partialRooms(alice.ID, joined))
+		assert.Equal(t, []string{room.ID}, partialRooms(bob.ID, joined))
+
+		pos, err := db.InsertUnPartialStatedRooms(ctx, room.ID, []string{alice.ID, bob.ID})
+		require.NoError(t, err)
+		assert.Equal(t, []string{room.ID}, partialRooms(alice.ID, joined), "until the sync reaches the user's record")
+		assert.Empty(t, partialRooms(alice.ID, pos))
+		assert.Empty(t, partialRooms(bob.ID, pos))
+
+		// No local user is left: the join is settled all the same.
+		require.NoError(t, db.SetPartialStateJoin(ctx, other.ID, true))
+		last, err := db.InsertUnPartialStatedRooms(ctx, other.ID, nil)
+		require.NoError(t, err)
+		assert.Zero(t, last)
+		assert.Empty(t, partialRooms(alice.ID, pos))
+
+		require.NoError(t, db.SetPartialStateJoin(ctx, room.ID, true))
+		require.NoError(t, db.PurgeRoom(ctx, room.ID))
+		assert.Empty(t, partialRooms(alice.ID, 0), "purging the room forgets it")
 	})
 }
 

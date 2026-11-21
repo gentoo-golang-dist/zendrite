@@ -165,6 +165,11 @@ type DatabaseTransaction interface {
 	// UnPartialStatedRoomsInRange returns room IDs that became fully-stated (completed
 	// partial state resync) for a user in the given range. MSC3706 faster joins.
 	UnPartialStatedRoomsInRange(ctx context.Context, userID string, r types.Range) ([]string, error)
+	// PartialStateRooms returns the rooms that a sync of the user up to the
+	// given position still sees with partial state (MSC3706): those whose
+	// partial-state join this component has not settled yet, and those whose
+	// un-partial-stated record for the user comes after the position.
+	PartialStateRooms(ctx context.Context, userID string, to types.StreamPosition) ([]string, error)
 }
 
 type Database interface {
@@ -260,8 +265,14 @@ type Database interface {
 		roomID string, pos types.TopologyToken,
 		membership, notMembership *string,
 	) (eventIDs []string, err error)
-	// InsertUnPartialStatedRoom records that a room has completed its partial state resync (MSC3706).
-	InsertUnPartialStatedRoom(ctx context.Context, roomID, userID string) (types.StreamPosition, error)
+	// SetPartialStateJoin records whether a local user's join, which replaced
+	// the room's state, was made with partial state (MSC3706).
+	SetPartialStateJoin(ctx context.Context, roomID string, partial bool) error
+	// InsertUnPartialStatedRooms records, for each of the local users, that a
+	// room has completed its partial state resync (MSC3706), and settles the
+	// room's partial-state join in the same transaction. It returns the last
+	// position written, or 0 for no users.
+	InsertUnPartialStatedRooms(ctx context.Context, roomID string, userIDs []string) (types.StreamPosition, error)
 	// PopulateRoomStateAfterResync populates the sync API's current_room_state table after a
 	// partial state resync completes (MSC3706). This is needed because state events stored as
 	// outliers don't go through the normal WriteEvent flow that populates this table.

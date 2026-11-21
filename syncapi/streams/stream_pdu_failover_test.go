@@ -55,6 +55,10 @@ func (s failoverSnapshot) StreamEventsToEvents(_ context.Context, _ *userapi.Dev
 	return out
 }
 
+func (s failoverSnapshot) PartialStateRooms(context.Context, string, types.StreamPosition) ([]string, error) {
+	return nil, nil
+}
+
 func (s failoverSnapshot) UnPartialStatedRoomsInRange(context.Context, string, types.Range) ([]string, error) {
 	return nil, fmt.Errorf("unable to query un-partial-stated rooms: %w", driver.ErrBadConn)
 }

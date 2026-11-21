@@ -17,6 +17,7 @@ type MSCs struct {
 	// 'msc2444': Peeking over federation - https://github.com/matrix-org/matrix-doc/pull/2444
 	// 'msc2753': Peeking via /sync - https://github.com/matrix-org/matrix-doc/pull/2753
 	// 'msc2836': Threading - https://github.com/matrix-org/matrix-doc/pull/2836
+	// 'msc3391': Removing account data - https://github.com/matrix-org/matrix-spec-proposals/pull/3391
 	// 'msc3664': Push rules for related events - https://github.com/matrix-org/matrix-spec-proposals/pull/3664
 	// 'msc3814': Dehydrated devices v2 - https://github.com/matrix-org/matrix-spec-proposals/pull/3814
 	// 'msc3848': Specific errcodes for refused event sends and membership changes - https://github.com/matrix-org/matrix-spec-proposals/pull/3848

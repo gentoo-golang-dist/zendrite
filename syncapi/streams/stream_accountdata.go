@@ -83,8 +83,8 @@ func (p *AccountDataStreamProvider) IncrementalSync(
 				globalData, ok := dataRes.GlobalAccountData[dataType]
 				if !ok && from > 0 {
 					// The entry changed in this range but no longer exists:
-					// it was deleted (e.g. MSC3890 local notification
-					// settings of a removed device). Like Synapse, tell
+					// it was deleted (e.g. with MSC3391, or MSC3890 local
+					// notification settings of a removed device). Like Synapse, tell
 					// incremental syncs with empty content (MSC3391).
 					globalData, ok = []byte("{}"), true
 				}
@@ -98,7 +98,13 @@ func (p *AccountDataStreamProvider) IncrementalSync(
 					)
 				}
 			} else {
-				if roomData, ok := dataRes.RoomAccountData[roomID][dataType]; ok {
+				roomData, ok := dataRes.RoomAccountData[roomID][dataType]
+				if !ok && from > 0 {
+					// Deleted room account data, as for global account
+					// data above (MSC3391).
+					roomData, ok = []byte("{}"), true
+				}
+				if ok {
 					joinData, ok := req.Response.Rooms.Join[roomID]
 					if !ok {
 						joinData = types.NewJoinResponse()

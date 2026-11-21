@@ -451,6 +451,13 @@ func (s *OutputRoomEventConsumer) onNewRoomEvent(
 		if err = s.db.PurgeRoomState(ctx, ev.RoomID().String()); err != nil {
 			return fmt.Errorf("s.db.PurgeRoom: %w", err)
 		}
+		// Eager syncs leave a room joined with partial state out until its
+		// un-partial-stated records are written, even once the roomserver
+		// has the full state, which it has before this component does
+		// (MSC3706). Record it before the join is written.
+		if err = s.db.SetPartialStateJoin(ctx, ev.RoomID().String(), len(msg.PartialStateServers) > 0); err != nil {
+			return fmt.Errorf("s.db.SetPartialStateJoin: %w", err)
+		}
 	}
 
 	userID, err := s.rsAPI.QueryUserIDForSender(ctx, ev.RoomID(), ev.SenderID())
@@ -902,15 +909,12 @@ func (s *OutputRoomEventConsumer) onUnPartialStatedRoom(
 		}
 	}
 
-	// Record the un-partial-stated completion for each local user
-	var lastPos types.StreamPosition
-	for _, userID := range msg.JoinedUserIDs {
-		pos, err := s.db.InsertUnPartialStatedRoom(ctx, msg.RoomID, userID)
-		if err != nil {
-			logger.WithField("user_id", userID).WithError(err).Error("Failed to insert un-partial-stated room record")
-			return err
-		}
-		lastPos = pos
+	// Record the un-partial-stated completion for each local user, which
+	// ends the room's partial-state join for eager syncs.
+	lastPos, err := s.db.InsertUnPartialStatedRooms(ctx, msg.RoomID, msg.JoinedUserIDs)
+	if err != nil {
+		logger.WithError(err).Error("Failed to insert un-partial-stated room records")
+		return err
 	}
 
 	// Requests that waited for the room's full state can go on.

@@ -1726,13 +1726,38 @@ func Setup(
 		}),
 	).Methods(http.MethodGet, http.MethodOptions)
 
+	// MSC3391: removing account data, with Synapse's unstable endpoints. As
+	// in Synapse, PUT with empty content deletes too, and GET treats empty
+	// content as deleted.
+	msc3391 := mscCfg.Enabled("msc3391")
+	if msc3391 {
+		unstableMux.Handle("/org.matrix.msc3391/user/{userID}/account_data/{type}",
+			httputil.MakeAuthAPI("user_account_data", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+				vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+				if err != nil {
+					return util.ErrorResponse(err)
+				}
+				return DeleteAccountData(req, userAPI, device, vars["userID"], "", vars["type"])
+			}, httputil.WithAllowCallGuests()),
+		).Methods(http.MethodDelete, http.MethodOptions)
+		unstableMux.Handle("/org.matrix.msc3391/user/{userID}/rooms/{roomID}/account_data/{type}",
+			httputil.MakeAuthAPI("user_account_data", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
+				vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
+				if err != nil {
+					return util.ErrorResponse(err)
+				}
+				return DeleteAccountData(req, userAPI, device, vars["userID"], vars["roomID"], vars["type"])
+			}, httputil.WithAllowCallGuests()),
+		).Methods(http.MethodDelete, http.MethodOptions)
+	}
+
 	v3mux.Handle("/user/{userID}/account_data/{type}",
 		httputil.MakeAuthAPI("user_account_data", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 			vars, err := httputil.URLDecodeMapValues(httputil.Vars(req))
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return SaveAccountData(req, userAPI, device, vars["userID"], "", vars["type"], syncProducer)
+			return SaveAccountData(req, userAPI, device, vars["userID"], "", vars["type"], syncProducer, msc3391)
 		}, httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 
@@ -1742,7 +1767,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return SaveAccountData(req, userAPI, device, vars["userID"], vars["roomID"], vars["type"], syncProducer)
+			return SaveAccountData(req, userAPI, device, vars["userID"], vars["roomID"], vars["type"], syncProducer, msc3391)
 		}, httputil.WithAllowCallGuests()),
 	).Methods(http.MethodPut, http.MethodOptions)
 
@@ -1752,7 +1777,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return GetAccountData(req, userAPI, device, vars["userID"], "", vars["type"])
+			return GetAccountData(req, userAPI, device, vars["userID"], "", vars["type"], msc3391)
 		}, httputil.WithAllowCallGuests()),
 	).Methods(http.MethodGet)
 
@@ -1762,7 +1787,7 @@ func Setup(
 			if err != nil {
 				return util.ErrorResponse(err)
 			}
-			return GetAccountData(req, userAPI, device, vars["userID"], vars["roomID"], vars["type"])
+			return GetAccountData(req, userAPI, device, vars["userID"], vars["roomID"], vars["type"], msc3391)
 		}, httputil.WithAllowCallGuests()),
 	).Methods(http.MethodGet)
 

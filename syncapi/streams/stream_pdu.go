@@ -130,14 +130,10 @@ func (p *PDUStreamProvider) CompleteSync(
 	// Partial state rooms may have incomplete state which can cause issues for clients
 	// expecting full room state. Lazy-load syncs can include partial state rooms.
 	if !stateFilter.LazyLoadMembers && !req.IncludePartialState {
-		partialStateRoomIDs, partialErr := p.rsAPI.GetPartialStateRoomIDs(ctx)
+		partialStateRooms, partialErr := p.partialStateRooms(ctx, snapshot, req, to)
 		if partialErr != nil {
 			req.Log.WithError(partialErr).Warn("Failed to get partial state rooms")
-		} else if len(partialStateRoomIDs) > 0 {
-			partialStateRooms := make(map[string]bool, len(partialStateRoomIDs))
-			for _, roomID := range partialStateRoomIDs {
-				partialStateRooms[roomID] = true
-			}
+		} else if len(partialStateRooms) > 0 {
 			filteredRoomIDs := make([]string, 0, len(joinedRoomIDs))
 			for _, roomID := range joinedRoomIDs {
 				if !partialStateRooms[roomID] {
@@ -377,14 +373,10 @@ func (p *PDUStreamProvider) IncrementalSync(
 
 	// MSC3706: Filter out partial state rooms for non-lazy syncs
 	if !stateFilter.LazyLoadMembers && !req.IncludePartialState && len(stateDeltas) > 0 {
-		partialStateRoomIDs, partialErr := p.rsAPI.GetPartialStateRoomIDs(ctx)
+		partialStateRooms, partialErr := p.partialStateRooms(ctx, snapshot, req, r.High())
 		if partialErr != nil {
 			req.Log.WithError(partialErr).Warn("Failed to get partial state rooms")
-		} else if len(partialStateRoomIDs) > 0 {
-			partialStateRooms := make(map[string]bool, len(partialStateRoomIDs))
-			for _, roomID := range partialStateRoomIDs {
-				partialStateRooms[roomID] = true
-			}
+		} else if len(partialStateRooms) > 0 {
 			filteredDeltas := make([]types.StateDelta, 0, len(stateDeltas))
 			filteredJoinedRooms := make([]string, 0, len(syncJoinedRooms))
 			for _, delta := range stateDeltas {
@@ -1294,6 +1286,30 @@ func (p *PDUStreamProvider) partialStateMemberships(
 		result = append(result, ev)
 	}
 	return result
+}
+
+// partialStateRooms returns the rooms that an eager sync up to the position
+// leaves out for their partial state (MSC3706): those the roomserver has
+// partial state for, and those whose full state the sync API has not stored by
+// then. The roomserver has the full state first, and a sync in between would
+// send the room, which the un-partial-stated record then sends again as newly
+// joined, with every member in device_lists.changed once more.
+func (p *PDUStreamProvider) partialStateRooms(
+	ctx context.Context, snapshot storage.DatabaseTransaction, req *types.SyncRequest, to types.StreamPosition,
+) (map[string]bool, error) {
+	roomIDs, err := p.rsAPI.GetPartialStateRoomIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := snapshot.PartialStateRooms(ctx, req.Device.UserID, to)
+	if err != nil {
+		return nil, err
+	}
+	partial := make(map[string]bool, len(roomIDs)+len(pending))
+	for _, roomID := range append(roomIDs, pending...) {
+		partial[roomID] = true
+	}
+	return partial, nil
 }
 
 // addUnPartialStatedRooms marks the deltas of the joined rooms whose

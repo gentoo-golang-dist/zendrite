@@ -351,42 +351,42 @@ func TestJoinResponse_MarshalJSON(t *testing.T) {
 			fields: fields{
 				State: &ClientEvents{},
 			},
-			want: []byte(`{"ephemeral":{"events":[]}}`),
+			want: []byte(`{"ephemeral":{"events":[]},"account_data":{"events":[]}}`),
 		},
 		{
-			name: "empty accountdata is removed",
+			name: "empty account data keeps an empty events array",
 			fields: fields{
 				AccountData: &ClientEvents{},
 			},
-			want: []byte(`{"ephemeral":{"events":[]}}`),
+			want: []byte(`{"ephemeral":{"events":[]},"account_data":{"events":[]}}`),
 		},
 		{
 			name: "empty ephemeral keeps an empty events array",
 			fields: fields{
 				Ephemeral: &ClientEvents{},
 			},
-			want: []byte(`{"ephemeral":{"events":[]}}`),
+			want: []byte(`{"ephemeral":{"events":[]},"account_data":{"events":[]}}`),
 		},
 		{
 			name: "empty timeline is removed",
 			fields: fields{
 				Timeline: &Timeline{},
 			},
-			want: []byte(`{"ephemeral":{"events":[]}}`),
+			want: []byte(`{"ephemeral":{"events":[]},"account_data":{"events":[]}}`),
 		},
 		{
 			name: "empty summary is removed",
 			fields: fields{
 				Summary: &Summary{},
 			},
-			want: []byte(`{"ephemeral":{"events":[]}}`),
+			want: []byte(`{"ephemeral":{"events":[]},"account_data":{"events":[]}}`),
 		},
 		{
 			name: "unread notifications are removed, if everything else is empty",
 			fields: fields{
 				UnreadNotifications: &UnreadNotifications{},
 			},
-			want: []byte(`{"ephemeral":{"events":[]}}`),
+			want: []byte(`{"ephemeral":{"events":[]},"account_data":{"events":[]}}`),
 		},
 		{
 			name: "unread notifications are NOT removed, if state is set",
@@ -394,7 +394,7 @@ func TestJoinResponse_MarshalJSON(t *testing.T) {
 				State:               &ClientEvents{Events: []synctypes.ClientEvent{{Content: []byte("{}")}}},
 				UnreadNotifications: &UnreadNotifications{NotificationCount: 1},
 			},
-			want: []byte(`{"state":{"events":[{"content":{},"type":""}]},"unread_notifications":{"highlight_count":0,"notification_count":1},"ephemeral":{"events":[]}}`),
+			want: []byte(`{"state":{"events":[{"content":{},"type":""}]},"unread_notifications":{"highlight_count":0,"notification_count":1},"ephemeral":{"events":[]},"account_data":{"events":[]}}`),
 		},
 		{
 			name: "roomID is removed from EDUs",
@@ -405,7 +405,7 @@ func TestJoinResponse_MarshalJSON(t *testing.T) {
 					},
 				},
 			},
-			want: []byte(`{"ephemeral":{"events":[{"content":{},"type":""}]}}`),
+			want: []byte(`{"ephemeral":{"events":[{"content":{},"type":""}]},"account_data":{"events":[]}}`),
 		},
 	}
 	for _, tt := range tests {
@@ -489,8 +489,8 @@ func TestResponseMoveStateToStateAfter(t *testing.T) {
 
 			for roomID, want := range map[string]string{
 				"!joined:test": `{` + tt.want + `:{"events":[{"content":{},"type":"m.room.topic"}]},` +
-					`"unread_notifications":{"highlight_count":0,"notification_count":0},"ephemeral":{"events":[]}}`,
-				"!typing:test": `{` + tt.want + `:{"events":[]},"ephemeral":{"events":[]}}`,
+					`"unread_notifications":{"highlight_count":0,"notification_count":0},"ephemeral":{"events":[]},"account_data":{"events":[]}}`,
+				"!typing:test": `{` + tt.want + `:{"events":[]},"ephemeral":{"events":[]},"account_data":{"events":[]}}`,
 			} {
 				got, err := json.Marshal(res.Rooms.Join[roomID])
 				if err != nil {

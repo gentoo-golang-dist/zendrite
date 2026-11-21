@@ -319,8 +319,19 @@ type UnPartialStatedRooms interface {
 	SelectUnPartialStatedRoomsInRange(ctx context.Context, txn *sql.Tx, userID string, r types.Range) (roomIDs []string, pos types.StreamPosition, err error)
 	// SelectMaxUnPartialStatedRoomID returns the maximum stream position ID.
 	SelectMaxUnPartialStatedRoomID(ctx context.Context, txn *sql.Tx) (id int64, err error)
-	// PurgeUnPartialStatedRooms deletes all un-partial-stated records for a room.
+	// PurgeUnPartialStatedRooms deletes all un-partial-stated records for a room,
+	// and its pending partial-state join.
 	PurgeUnPartialStatedRooms(ctx context.Context, txn *sql.Tx, roomID string) error
+	// InsertPartialStateJoin records that a local user joined the room with
+	// partial state, which its un-partial-stated records have not settled yet,
+	// at a new position of the PDU stream.
+	InsertPartialStateJoin(ctx context.Context, txn *sql.Tx, roomID string) error
+	// DeletePartialStateJoin settles the room's pending partial-state join.
+	DeletePartialStateJoin(ctx context.Context, txn *sql.Tx, roomID string) error
+	// SelectPartialStateRooms returns the rooms whose partial-state join is
+	// pending, or whose un-partial-stated record for the user comes after to.
+	// An un-partial-stated record of the room after the join settles it.
+	SelectPartialStateRooms(ctx context.Context, txn *sql.Tx, userID string, to types.StreamPosition) ([]string, error)
 }
 
 // ProfileUpdates is the stream of changes to local users' profiles, one row

@@ -175,3 +175,41 @@ func TestProcessAccountDataExtension_GlobalOnFirstEnable(t *testing.T) {
 	require.Len(t, resp.Global, 1)
 	assert.Equal(t, deletedSincePos, resp.Global[0].Type)
 }
+
+// TestProcessAccountDataExtension_DeletedRoomAccountData checks that room
+// account data deleted with MSC3391 is sent with empty content on
+// incremental responses, and left out for a room new to the connection,
+// whose account data is all sent.
+func TestProcessAccountDataExtension_DeletedRoomAccountData(t *testing.T) {
+	t.Parallel()
+	const (
+		roomID  = "!room:localhost"
+		deleted = "org.example.deleted"
+	)
+
+	snapshot := newMockSnapshot()
+	snapshot.SetAccountDataChange(roomID, deleted, 95)
+	rp := &RequestPool{db: newMockStreamStateDB(), userAPI: &mockUserAPI{}}
+	fromPos := &types.StreamingToken{AccountDataPosition: 90}
+	toPos := types.StreamingToken{AccountDataPosition: 200}
+	subscriptions := map[string]bool{roomID: true}
+
+	resp, _, err := rp.processAccountDataExtension(
+		context.Background(), snapshot, nil, "@alice:localhost",
+		nil, nil, fromPos, toPos, nil, subscriptions,
+	)
+	require.NoError(t, err)
+	require.Len(t, resp.Rooms[roomID], 1)
+	assert.Equal(t, deleted, resp.Rooms[roomID][0].Type)
+	assert.JSONEq(t, `{}`, string(resp.Rooms[roomID][0].Content))
+
+	// The room is new to this connection: its account data is read from the
+	// start, without what was deleted.
+	connState := &V4ConnectionState{ConnectionKey: 1, ConnectionPosition: 42, PreviousStreamStates: map[string]map[string]*types.SlidingSyncStreamState{}}
+	resp, _, err = rp.processAccountDataExtension(
+		context.Background(), snapshot, connState, "@alice:localhost",
+		nil, nil, fromPos, toPos, nil, subscriptions,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, resp.Rooms[roomID], "a room new to the connection leaves deleted account data out")
+}

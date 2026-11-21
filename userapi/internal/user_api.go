@@ -143,6 +143,45 @@ func (a *UserInternalAPI) InputAccountData(ctx context.Context, req *api.InputAc
 	return nil
 }
 
+// PerformAccountDataRemoval implements MSC3391: it deletes one global or room
+// account data entry and, when there was one, tells the sync API, which sends
+// the type with empty content to incremental syncs.
+func (a *UserInternalAPI) PerformAccountDataRemoval(
+	ctx context.Context, req *api.PerformAccountDataRemovalRequest, res *api.PerformAccountDataRemovalResponse,
+) error {
+	local, domain, err := gomatrixserverlib.SplitID('@', req.UserID)
+	if err != nil {
+		return err
+	}
+	if !a.Config.Matrix.IsLocalServerName(domain) {
+		return fmt.Errorf("cannot remove account data of remote users (server name %s)", domain)
+	}
+	if req.DataType == "" {
+		return fmt.Errorf("data type must not be empty")
+	}
+	deleted, err := a.DB.RemoveAccountDataByType(ctx, local, domain, req.RoomID, req.DataType)
+	if err != nil {
+		return fmt.Errorf("failed to remove account data: %w", err)
+	}
+	res.Deleted = deleted
+	if !deleted {
+		return nil
+	}
+	var ignoredUsers *synctypes.IgnoredUsers
+	if req.RoomID == "" && req.DataType == "m.ignored_user_list" {
+		// Without the list, nobody is ignored any more.
+		ignoredUsers = &synctypes.IgnoredUsers{List: map[string]any{}}
+	}
+	if err = a.SyncProducer.SendAccountData(req.UserID, eventutil.AccountData{
+		RoomID:       req.RoomID,
+		Type:         req.DataType,
+		IgnoredUsers: ignoredUsers,
+	}); err != nil {
+		return fmt.Errorf("failed to send account data to output: %w", err)
+	}
+	return nil
+}
+
 func (a *UserInternalAPI) setFullyRead(ctx context.Context, req *api.InputAccountDataRequest) error {
 	var output eventutil.ReadMarkerJSON
 

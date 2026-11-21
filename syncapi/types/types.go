@@ -599,9 +599,13 @@ func (jr JoinResponse) MarshalJSON() ([]byte, error) {
 			jr.Ephemeral.Events[i].RoomID = ""
 		}
 	}
-	if jr.AccountData != nil && len(jr.AccountData.Events) == 0 {
-		a.AccountData = nil
+	// Account data is always written too, as Synapse does: clients check
+	// that a type deleted with MSC3391 is absent from it.
+	accountData := &joinEphemeral{Events: []synctypes.ClientEvent{}}
+	if jr.AccountData != nil && len(jr.AccountData.Events) > 0 {
+		accountData.Events = jr.AccountData.Events
 	}
+	a.AccountData = nil
 	if jr.Timeline != nil && len(jr.Timeline.Events) == 0 {
 		a.Timeline = nil
 	}
@@ -616,20 +620,22 @@ func (jr JoinResponse) MarshalJSON() ([]byte, error) {
 	if jr.UnreadNotifications != nil && !jr.NotificationsChanged {
 		// if everything else is nil, also remove UnreadNotifications
 		if a.State == nil && a.StateAfter.isEmpty() && a.UnstableStateAfter.isEmpty() &&
-			len(ephemeral.Events) == 0 && a.AccountData == nil && a.Timeline == nil && a.Summary == nil && a.MSC4354Sticky == nil {
+			len(ephemeral.Events) == 0 && len(accountData.Events) == 0 && a.Timeline == nil && a.Summary == nil && a.MSC4354Sticky == nil {
 			a.UnreadNotifications = nil
 			a.UnreadThreadNotifications = nil
 		}
 	}
-	// The outer Ephemeral field shadows the alias's, which is nil.
+	// The outer Ephemeral and AccountData fields shadow the alias's, which
+	// are nil.
 	return json.Marshal(struct {
 		alias
-		Ephemeral *joinEphemeral `json:"ephemeral"`
-	}{alias: a, Ephemeral: ephemeral})
+		Ephemeral   *joinEphemeral `json:"ephemeral"`
+		AccountData *joinEphemeral `json:"account_data"`
+	}{alias: a, Ephemeral: ephemeral, AccountData: accountData})
 }
 
-// joinEphemeral is the ephemeral section of a joined room, whose events
-// array is written even when empty.
+// joinEphemeral is the ephemeral or account data section of a joined room,
+// whose events array is written even when empty.
 type joinEphemeral struct {
 	Events []synctypes.ClientEvent `json:"events"`
 }

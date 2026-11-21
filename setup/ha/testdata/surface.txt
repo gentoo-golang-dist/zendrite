@@ -281,6 +281,8 @@ column syncapi_output_room_events_topology | event_id | text | NO |
 column syncapi_output_room_events_topology | room_id | text | NO |
 column syncapi_output_room_events_topology | stream_position | bigint | NO |
 column syncapi_output_room_events_topology | topological_position | bigint | NO |
+column syncapi_partial_state_joins | pos | bigint | NO |
+column syncapi_partial_state_joins | room_id | text | NO |
 column syncapi_peeks | creation_ts | bigint | NO |
 column syncapi_peeks | deleted | boolean | NO | false
 column syncapi_peeks | device_id | text | NO |
@@ -674,6 +676,7 @@ index syncapi_output_room_events | syncapi_output_room_events_type_idx | CREATE 
 index syncapi_output_room_events_topology | syncapi_event_topological_position_idx | CREATE UNIQUE INDEX syncapi_event_topological_position_idx ON public.syncapi_output_room_events_topology USING btree (topological_position, stream_position, room_id)
 index syncapi_output_room_events_topology | syncapi_event_topology_room_idx | CREATE INDEX syncapi_event_topology_room_idx ON public.syncapi_output_room_events_topology USING btree (room_id, topological_position, stream_position)
 index syncapi_output_room_events_topology | syncapi_output_room_events_topology_pkey | CREATE UNIQUE INDEX syncapi_output_room_events_topology_pkey ON public.syncapi_output_room_events_topology USING btree (event_id)
+index syncapi_partial_state_joins | syncapi_partial_state_joins_pkey | CREATE UNIQUE INDEX syncapi_partial_state_joins_pkey ON public.syncapi_partial_state_joins USING btree (room_id)
 index syncapi_peeks | syncapi_peeks_room_id_idx | CREATE INDEX syncapi_peeks_room_id_idx ON public.syncapi_peeks USING btree (room_id)
 index syncapi_peeks | syncapi_peeks_room_id_user_id_device_id_key | CREATE UNIQUE INDEX syncapi_peeks_room_id_user_id_device_id_key ON public.syncapi_peeks USING btree (room_id, user_id, device_id)
 index syncapi_peeks | syncapi_peeks_user_id_device_id_idx | CREATE INDEX syncapi_peeks_user_id_device_id_idx ON public.syncapi_peeks USING btree (user_id, device_id)
@@ -1107,6 +1110,9 @@ constraint syncapi_output_room_events_topology | syncapi_output_room_events_topo
 constraint syncapi_output_room_events_topology | syncapi_output_room_events_topology_pkey | PRIMARY KEY (event_id)
 constraint syncapi_output_room_events_topology | syncapi_output_room_events_topology_room_id_not_null | NOT NULL room_id
 constraint syncapi_output_room_events_topology | syncapi_output_room_events_topology_stream_position_not_null | NOT NULL stream_position
+constraint syncapi_partial_state_joins | syncapi_partial_state_joins_pkey | PRIMARY KEY (room_id)
+constraint syncapi_partial_state_joins | syncapi_partial_state_joins_pos_not_null | NOT NULL pos
+constraint syncapi_partial_state_joins | syncapi_partial_state_joins_room_id_not_null | NOT NULL room_id
 constraint syncapi_peeks | syncapi_peeks_creation_ts_not_null | NOT NULL creation_ts
 constraint syncapi_peeks | syncapi_peeks_deleted_not_null | NOT NULL deleted
 constraint syncapi_peeks | syncapi_peeks_device_id_not_null | NOT NULL device_id

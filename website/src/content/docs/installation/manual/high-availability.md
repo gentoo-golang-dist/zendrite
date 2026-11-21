@@ -13,13 +13,14 @@ These checks add storage and recovery prerequisites to that qualification.
 
 - Configure one global PostgreSQL database and leave component connection strings empty or identical to the global connection string.
   Separate component databases and SQLite are not supported in HA mode.
-- Enable only the experimental MSCs qualified for HA: `msc1763`, `msc2444`, `msc2753`, `msc2836`, `msc3664`, `msc3848`, `msc3861`, `msc3983`, `msc3984`, `msc4194`, `msc4263`, `msc4293`, `msc4370`, and `msc4512`.
+- Enable only the experimental MSCs qualified for HA: `msc1763`, `msc2444`, `msc2753`, `msc2836`, `msc3391`, `msc3664`, `msc3848`, `msc3861`, `msc3983`, `msc3984`, `msc4194`, `msc4263`, `msc4293`, `msc4370`, and `msc4512`.
   Startup refuses any other MSC, including `msc3814`.
   With `msc2836`, leave `mscs.database.connection_string` empty or identical to the global connection string, so the relationship index is fenced like every other table.
   With `msc3861` (delegated authentication, for example through MAS), accounts, devices, external ID mappings and login tokens it provisions are stored in the global database like every other write.
   What it keeps in process memory is lost on takeover, and the client retries; see [Delegated authentication](/administration/oidc/#high-availability).
   With `msc4194`, every redaction it makes is a roomserver write to the global database; a request cut short by a takeover keeps the redactions it made, and the client's next request carries on; see [MSC4194](/mscs/#msc4194-redacting-a-users-events).
   With `msc3664`, the reply rule is added to the stored push rules when they are read, and related events are read from the roomserver, so it keeps no state of its own.
+  With `msc3391`, deletions are user API writes to the global database, so it keeps no state of its own.
   With `msc3848`, each refused request reads the roomserver's current state, so it keeps no state of its own.
   With `msc3983` and `msc3984`, key claims and queries ask the application service on each request and keep nothing of their own.
   With `msc4263`, each key query only reads the roomserver memberships, so it keeps no state of its own.

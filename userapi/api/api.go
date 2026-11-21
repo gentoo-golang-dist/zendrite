@@ -133,6 +133,9 @@ type ClientUserAPI interface {
 	PerformOpenIDTokenCreation(ctx context.Context, req *PerformOpenIDTokenCreationRequest, res *PerformOpenIDTokenCreationResponse) error
 	QueryNotifications(ctx context.Context, req *QueryNotificationsRequest, res *QueryNotificationsResponse) error
 	InputAccountData(ctx context.Context, req *InputAccountDataRequest, res *InputAccountDataResponse) error
+	// PerformAccountDataRemoval deletes one global or room account data entry
+	// of a local user (MSC3391) and tells the sync API about it.
+	PerformAccountDataRemoval(ctx context.Context, req *PerformAccountDataRemovalRequest, res *PerformAccountDataRemovalResponse) error
 
 	QueryThreePIDsForLocalpart(ctx context.Context, req *QueryThreePIDsForLocalpartRequest, res *QueryThreePIDsForLocalpartResponse) error
 	QueryLocalpartForThreePID(ctx context.Context, req *QueryLocalpartForThreePIDRequest, res *QueryLocalpartForThreePIDResponse) error
@@ -276,6 +279,19 @@ type InputAccountDataRequest struct {
 
 // InputAccountDataResponse is the response for InputAccountData.
 type InputAccountDataResponse struct{}
+
+// PerformAccountDataRemovalRequest is the request for PerformAccountDataRemoval.
+type PerformAccountDataRemovalRequest struct {
+	UserID   string // required: the user to delete account data for
+	RoomID   string // optional: the room of room account data, empty for global account data
+	DataType string // required: the type of the account data to delete
+}
+
+// PerformAccountDataRemovalResponse is the response for PerformAccountDataRemoval.
+type PerformAccountDataRemovalResponse struct {
+	// Deleted is true when an entry existed and was deleted.
+	Deleted bool
+}
 
 type PerformDeviceUpdateRequest struct {
 	RequestingUserID string

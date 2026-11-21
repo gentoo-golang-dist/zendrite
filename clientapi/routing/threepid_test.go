@@ -374,7 +374,7 @@ func Test3PIDBindingMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, servers)
 	key := bindingDataType("email", "alice@example.com")
-	res := SaveAccountData(threePIDRequest(`{}`), userAPI, &api.Device{UserID: userID}, userID, "", key, nil)
+	res := SaveAccountData(threePIDRequest(`{}`), userAPI, &api.Device{UserID: userID}, userID, "", key, nil, false)
 	requireThreePIDResponse(t, res, 403, "M_FORBIDDEN")
 }
 

@@ -71,6 +71,9 @@ var haQualifiedMSCs = map[string]struct{}{
 	"msc2753": {},
 	// Threading; its relationship index lives in mscs.database.
 	"msc2836": {},
+	// Removing account data. It has no state of its own: entries are
+	// deleted from the user API database.
+	"msc3391": {},
 	// Push rules for related events. It has no state of its own: the reply
 	// rule is added to the stored rules when they are read, and related events
 	// are read from the roomserver.

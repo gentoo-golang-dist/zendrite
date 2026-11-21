@@ -1244,6 +1244,89 @@ func TestMSC3848Errcodes(t *testing.T) {
 	})
 }
 
+// TestMSC3391RemoveAccountData checks that with msc3391, global and room
+// account data can be deleted with the unstable DELETE endpoints or a PUT of
+// {}, after which GET returns 404, and that without it the DELETE endpoints
+// do not exist and {} is stored like any other content.
+func TestMSC3391RemoveAccountData(t *testing.T) {
+	alice, bob := test.NewUser(t), test.NewUser(t)
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		for _, enabled := range []bool{true, false} {
+			t.Run(fmt.Sprintf("enabled=%v", enabled), func(t *testing.T) {
+				cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+				defer closeDB()
+				cfg.ClientAPI.RateLimiting.Enabled = false
+				if enabled {
+					cfg.MSCs.MSCs = []string{"msc3391"}
+				}
+				caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+				routers := httputil.NewRouters()
+				cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+				natsInstance := &jetstream.NATSInstance{}
+				rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+				rsAPI.SetFederationAPI(nil, nil)
+				userAPI := userapi.NewInternalAPI(processCtx, cfg, cm, natsInstance, rsAPI, nil, caching.DisableMetrics, testIsBlacklistedOrBackingOff)
+				asPI := appservice.NewInternalAPI(processCtx, cfg, natsInstance, userAPI, rsAPI)
+				AddPublicRoutes(processCtx, routers, cfg, natsInstance, base.CreateFederationClient(cfg, nil), rsAPI, asPI, transactions.New(processCtx.Context()), nil, userAPI, nil, nil, nil, caching.DisableMetrics)
+
+				accessTokens := map[*test.User]userDevice{alice: {}, bob: {}}
+				createAccessTokens(t, accessTokens, userAPI, processCtx.Context(), routers)
+				do := func(method, path, body string, user *test.User) *httptest.ResponseRecorder {
+					t.Helper()
+					req := httptest.NewRequest(method, path, strings.NewReader(body))
+					req.Header.Set("Authorization", "Bearer "+accessTokens[user].accessToken)
+					rec := httptest.NewRecorder()
+					routers.Client.ServeHTTP(rec, req)
+					return rec
+				}
+
+				const roomID = "!room:test"
+				for _, scope := range []string{"/user/" + alice.ID, "/user/" + alice.ID + "/rooms/" + roomID} {
+					stable := "/_matrix/client/v3" + scope + "/account_data/"
+					unstable := "/_matrix/client/unstable/org.matrix.msc3391" + scope + "/account_data/"
+
+					rec := do(http.MethodPut, stable+"org.example.a", `{"a":1}`, alice)
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					rec = do(http.MethodDelete, unstable+"org.example.a", "", alice)
+					if !enabled {
+						assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+						rec = do(http.MethodPut, stable+"org.example.a", `{}`, alice)
+						require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+						rec = do(http.MethodGet, stable+"org.example.a", "", alice)
+						assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+						assert.JSONEq(t, `{}`, rec.Body.String())
+						continue
+					}
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					rec = do(http.MethodGet, stable+"org.example.a", "", alice)
+					assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+					assert.Equal(t, "M_NOT_FOUND", gjson.GetBytes(rec.Body.Bytes(), "errcode").Str)
+
+					// Deleting what does not exist succeeds, as in Synapse.
+					rec = do(http.MethodDelete, unstable+"org.example.a", "", alice)
+					assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+					// PUT with {} deletes too.
+					rec = do(http.MethodPut, stable+"org.example.b", `{"b":1}`, alice)
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					rec = do(http.MethodPut, stable+"org.example.b", `{}`, alice)
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					rec = do(http.MethodGet, stable+"org.example.b", "", alice)
+					assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+					// Types reserved for the server cannot be deleted either.
+					rec = do(http.MethodDelete, unstable+"m.push_rules", "", alice)
+					assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, rec.Body.String())
+					// Nor can other users' account data.
+					rec = do(http.MethodDelete, unstable+"org.example.a", "", bob)
+					assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+				}
+			})
+		}
+	})
+}
+
 // MSC1763: malformed m.room.retention events are refused, and the
 // configuration endpoint reports the server's policy.
 func TestRetentionPolicy(t *testing.T) {

@@ -485,6 +485,7 @@ Differences from Synapse:
 | [MSC3823](https://github.com/matrix-org/matrix-spec-proposals/pull/3823) | Account suspension | 1.13 | Implemented: see [account suspension](#account-suspension) |
 | [MSC4151](https://github.com/matrix-org/matrix-spec-proposals/pull/4151) | Reporting rooms | 1.13 | Implemented: `POST /_matrix/client/v3/rooms/{roomId}/report` stores a report with a `reason`, which may be empty, for rooms this server knows, whether or not the reporter is in them; unknown rooms return 404 `M_NOT_FOUND`. Administrators list reports with `GET /_synapse/admin/v1/room_reports` (see the [admin API](/administration/adminapi/)) |
 | [MSC4260](https://github.com/matrix-org/matrix-spec-proposals/pull/4260) | Reporting users | 1.14 | Implemented: `POST /_matrix/client/v3/users/{userId}/report` stores a report with a `reason`, which may be empty, whether or not the reporter shares a room with the user. Local users without an account return 404 `M_NOT_FOUND`; remote users cannot be checked, so any valid remote user ID is accepted. Administrators list reports with `GET /_synapse/admin/v1/user_reports` (see the [admin API](/administration/adminapi/)) |
+| [MSC3391](https://github.com/matrix-org/matrix-spec-proposals/pull/3391) | Removing account data | N/A | Opt-in (`msc3391`, unstable prefix): see [MSC3391](#msc3391-removing-account-data) |
 | [MSC3890](https://github.com/matrix-org/matrix-spec-proposals/pull/3890) | Remotely silence local notifications | N/A | Implemented (unstable prefix): see [local notification settings](#local-notification-settings) |
 | [MSC4323](https://github.com/matrix-org/matrix-spec-proposals/pull/4323) | User suspension and locking endpoints | 1.18 | Implemented: `GET` and `PUT /_matrix/client/v1/admin/lock/{userId}` and `/admin/suspend/{userId}`, and `/capabilities` reports `m.account_moderation` to administrators. With [MSC3861](#msc3861-oidc-delegated-authentication), only suspension is available (`lock: false`) |
 
@@ -520,7 +521,7 @@ Suspension also works with [MSC3861](#msc3861-oidc-delegated-authentication), si
 
 Clients store MSC3890 per-device notification settings as global account data of type `org.matrix.msc3890.local_notification_settings.<device_id>`; the server only stores them.
 When a device is deleted, with `DELETE /devices/{deviceId}`, `POST /delete_devices`, `POST /logout`, `POST /logout/all`, a password change or reset that logs out devices, MAS device deletion or deactivation, its settings entry is deleted as well, as in Synapse.
-`GET /user/{userId}/account_data/{type}` then returns 404 `M_NOT_FOUND`, and the next incremental `/sync` or sliding sync `account_data` extension response carries the type with empty content (`{}`), as Synapse does with MSC3391; initial syncs leave it out.
+`GET /user/{userId}/account_data/{type}` then returns 404 `M_NOT_FOUND`, and the next incremental `/sync` or sliding sync `account_data` extension response carries the type with empty content (`{}`), as for [MSC3391](#msc3391-removing-account-data) deletions; initial syncs leave it out.
 Unlike Synapse, this needs no experimental option.
 
 ## Profiles
@@ -965,6 +966,7 @@ mscs:
     - msc3984
     - msc2444
     - msc2753
+    - msc3391
     - msc3664
     - msc3814
     - msc3848
@@ -1043,6 +1045,23 @@ Zendrite follows Synapse, where it needs `msc3848_enabled`: `errcode` stays `M_F
 
 These are given by the endpoints the MSC lists: `PUT /rooms/{roomId}/send/{eventType}/{txnId}`, `PUT /rooms/{roomId}/state/{eventType}/{stateKey}`, `POST /rooms/{roomId}/invite`, `/kick`, `/ban` and `/unban`, and `POST /knock/{roomIdOrAlias}`.
 The errcode is worked out from the room's current state with the checks Synapse tags, in the same order; when another rule refuses the request, such as a join rule that does not allow knocking or a change to the power levels above the user's own, no errcode is added.
+
+### MSC3391: Removing account data
+
+With `msc3391`, clients can delete global and room account data.
+Zendrite follows Synapse, where it needs `msc3391_enabled`, and uses the unstable endpoints:
+
+- `DELETE /_matrix/client/unstable/org.matrix.msc3391/user/{userId}/account_data/{type}` deletes global account data, and `DELETE /_matrix/client/unstable/org.matrix.msc3391/user/{userId}/rooms/{roomId}/account_data/{type}` deletes room account data.
+  Deleting a type that is not set succeeds.
+  The types that `PUT` refuses, such as `m.push_rules` and `m.fully_read`, cannot be deleted either.
+- `PUT /user/{userId}/[rooms/{roomId}/]account_data/{type}` with empty content (`{}`) deletes the entry as well.
+- `GET /user/{userId}/[rooms/{roomId}/]account_data/{type}` returns 404 `M_NOT_FOUND` for a deleted type, and for one stored with empty content before the MSC was enabled.
+- The next incremental `/sync` or sliding sync `account_data` extension response carries a deleted type with empty content, so clients drop it; initial syncs leave it out.
+  As in Synapse, `/sync` writes `account_data` for every joined room, with an empty `events` array when there is none.
+- Deleting `m.ignored_user_list` stops ignoring every user.
+
+Like Synapse, Zendrite does not advertise the MSC in `unstable_features`.
+Without `msc3391`, the `DELETE` endpoints return 404 `M_UNRECOGNIZED` and empty content is stored like any other.
 
 ### MSC4028: Push all encrypted events
 
