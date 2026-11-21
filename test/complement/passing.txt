@@ -213,6 +213,8 @@ tests/msc3902/TestPartialStateJoin
 tests/msc3930/TestPollsLocalPushRules
 tests/msc3967/TestMSC3967
 tests/msc4140/TestDelayedEvents
+tests/msc4155/TestInviteFiltering
 tests/msc4222/TestSync
 tests/msc4306/TestMSC4308ThreadSubscriptionsSlidingSync
 tests/msc4306/TestThreadSubscriptions
+tests/msc4429/TestMSC4429ProfileUpdates

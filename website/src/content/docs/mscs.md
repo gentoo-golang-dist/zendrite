@@ -539,7 +539,9 @@ Unlike Synapse, this needs no experimental option.
 The same endpoints are served under `/_matrix/client/unstable/uk.tcpip.msc4133/`, and `/versions` advertises `uk.tcpip.msc4133` and `uk.tcpip.msc4133.stable`.
 `/capabilities` reports `m.profile_fields` (and `uk.tcpip.msc4133.profile_fields`) as enabled without restrictions, together with `m.set_displayname` and `m.set_avatar_url`.
 
-A custom field name is a namespaced identifier such as `org.example.job_title`, at most 255 bytes long, and its value can be any JSON.
+A custom field name follows the Common Namespaced Identifier Grammar: it starts with a lowercase letter, contains only lowercase letters, digits, `-`, `_` and `.`, and is at most 255 bytes long.
+Names should be namespaced in reverse-DNS form such as `org.example.job_title`, but this is not enforced.
+A field's value can be any JSON.
 A profile, including its display name and avatar URL, is limited to 64 KiB of canonical JSON; a change that would exceed this fails with `M_PROFILE_TOO_LARGE`.
 Only the display name and avatar URL are copied into membership events; deleting either one clears it.
 Guests may only change their display name.

@@ -202,3 +202,20 @@ func TestProfileInvalidUserID(t *testing.T) {
 		require.Equal(t, spec.ErrorInvalidParam, matrixErr.ErrCode)
 	}
 }
+
+func TestIsValidProfileKey(t *testing.T) {
+	valid := []string{
+		"displayname", "avatar_url", "m.tz", "org.example.job_title",
+		"complement.made-up-profile-field", "nodots", "a", "x-y_z.0", "a..b", "a.",
+	}
+	for _, key := range valid {
+		require.Truef(t, isValidProfileKey(key), "%q should be valid", key)
+	}
+	invalid := []string{
+		"", "0abc", ".abc", "-abc", "_abc", "Org.example", "org.Example",
+		"org example", "org/example", "org.example!", "über.field",
+	}
+	for _, key := range invalid {
+		require.Falsef(t, isValidProfileKey(key), "%q should be invalid", key)
+	}
+}

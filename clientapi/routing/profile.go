@@ -43,9 +43,12 @@ const maxProfileKeyLength = 255
 const profileFieldTimeZone = "m.tz"
 
 // customProfileKey is the grammar of custom profile field names in the
-// specification: a namespaced identifier such as "m.tz" or
-// "org.example.job_title".
-var customProfileKey = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
+// specification, the Common Namespaced Identifier Grammar: a lowercase letter
+// followed by lowercase letters, digits, "-", "_" and ".", such as "m.tz" or
+// "org.example.job_title". Reverse-DNS namespacing is only recommended, so a
+// name without a dot is accepted too. Callers check the 255-byte limit first,
+// to answer M_KEY_TOO_LARGE rather than M_INVALID_PARAM.
+var customProfileKey = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
 // GetProfile implements GET /profile/{userID}.
 func GetProfile(
