@@ -8,6 +8,7 @@ package routing
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -168,7 +169,10 @@ func TestRegisterTermsClosedRegistration(t *testing.T) {
 
 		step := func(session string, auth authDict) util.JSONResponse {
 			auth.Session = session
-			return registerStep(t, userAPI, &cfg.ClientAPI, registerRequest{Username: "closeduser", Password: "passwordpassword", Auth: auth})
+			// The backends run in parallel and share the registration
+			// sessions, so each needs its own username.
+			username := fmt.Sprintf("closeduser%d", dbType)
+			return registerStep(t, userAPI, &cfg.ClientAPI, registerRequest{Username: username, Password: "passwordpassword", Auth: auth})
 		}
 		// Closed registration refuses the terms stage without a token, also
 		// as the first request of a session.

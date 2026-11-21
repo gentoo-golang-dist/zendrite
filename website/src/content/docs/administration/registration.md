@@ -80,6 +80,14 @@ client_api:
   password_minimum_length: 8
 ```
 
+## Registration sessions
+
+Registration through `/register` uses user-interactive authentication.
+The first request returns a `session`, and the client must pass it back with each stage, such as `m.login.dummy` or a CAPTCHA.
+A stage that leaves out the session issued for the requested username, or names a session the server did not issue, is not completed: the server answers with HTTP 401 and a new session instead.
+A client that never received a session may still complete a single-stage flow, such as `m.login.dummy` or `m.login.registration_token`, in one request.
+Application service, shared secret and guest registration do not use sessions.
+
 ## Terms of service
 
 `client_api.registration_terms` lists policy documents, such as terms of service and a privacy policy, that new users must accept ([MSC1692](https://spec.matrix.org/v1.11/client-server-api/#terms-of-service-at-registration)).

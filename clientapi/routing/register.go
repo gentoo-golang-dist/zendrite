@@ -64,6 +64,15 @@ type sessionsDict struct {
 	// clients from completing the m.oauth stage with a session ID that was
 	// never issued, or one issued for a different user.
 	oauthSessions map[string]string
+	// usernameSessions maps a requested username to the registration
+	// session most recently issued for it, so that a request for that
+	// username which leaves out the session can be refused.
+	usernameSessions map[string]string
+}
+
+// usernameSessionKey identifies a requested username on a server name.
+func usernameSessionKey(r registerRequest) string {
+	return string(r.ServerName) + "\x00" + r.Username
 }
 
 // defaultTimeout is the timeout used to clean up sessions.
@@ -86,7 +95,23 @@ func (d *sessionsDict) addParams(sessionID string, r registerRequest) {
 	d.startTimer(defaultTimeOut, sessionID)
 	d.Lock()
 	defer d.Unlock()
+	d.releaseUsername(sessionID)
 	d.params[sessionID] = r
+	if r.Username != "" {
+		d.usernameSessions[usernameSessionKey(r)] = sessionID
+	}
+}
+
+// hasSessionForUsername reports whether a registration session was issued
+// for the username of r and has not expired yet.
+func (d *sessionsDict) hasSessionForUsername(r registerRequest) bool {
+	if r.Username == "" {
+		return false
+	}
+	d.RLock()
+	defer d.RUnlock()
+	_, ok := d.usernameSessions[usernameSessionKey(r)]
+	return ok
 }
 
 func (d *sessionsDict) getParams(sessionID string) (registerRequest, bool) {
@@ -101,6 +126,7 @@ func (d *sessionsDict) getParams(sessionID string) (registerRequest, bool) {
 func (d *sessionsDict) deleteSession(sessionID string) {
 	d.Lock()
 	defer d.Unlock()
+	d.releaseUsername(sessionID)
 	delete(d.params, sessionID)
 	delete(d.sessions, sessionID)
 	delete(d.deleteSessionToDeviceID, sessionID)
@@ -128,6 +154,7 @@ func newSessionsDict() *sessionsDict {
 		deleteSessionToDeviceID: make(map[string]string),
 		pendingTokens:           make(map[string]string),
 		oauthSessions:           make(map[string]string),
+		usernameSessions:        make(map[string]string),
 	}
 }
 
@@ -216,6 +243,16 @@ func (d *sessionsDict) addCompletedRegistration(sessionID string, response regis
 	d.Lock()
 	defer d.Unlock()
 	d.sessionCompletedResult[sessionID] = response
+	// The flow is over, so the username no longer waits for this session.
+	d.releaseUsername(sessionID)
+}
+
+// releaseUsername removes the username binding of a session, unless a newer
+// session holds it. The caller must hold the lock.
+func (d *sessionsDict) releaseUsername(sessionID string) {
+	if r, ok := d.params[sessionID]; ok && d.usernameSessions[usernameSessionKey(r)] == sessionID {
+		delete(d.usernameSessions, usernameSessionKey(r))
+	}
 }
 
 func (d *sessionsDict) getCompletedRegistration(sessionID string) (registerResponse, bool) {
@@ -527,11 +564,15 @@ func Register(
 	} else {
 		r.ServerName = cfg.Matrix.ServerName
 	}
-	sessionID := gjson.GetBytes(reqBody, "auth.session").String()
-	if sessionID == "" {
-		// Generate a new, random session ID
+	// Only a session this server issued in a UIA response continues a flow.
+	// A missing or unknown session starts a new one with a random ID, so a
+	// client cannot pick its own session ID.
+	clientSessionID := gjson.GetBytes(reqBody, "auth.session").String()
+	sessionID := clientSessionID
+	data, sessionIssued := sessions.getParams(sessionID)
+	if !sessionIssued {
 		sessionID = util.RandomString(sessionIDLength)
-	} else if data, ok := sessions.getParams(sessionID); ok {
+	} else {
 		// Use the parameters from the session as our defaults.
 		// Some of these might end up being overwritten if the
 		// values are specified again in the request body.
@@ -605,7 +646,7 @@ func Register(
 		"session_id": r.Auth.Session,
 	}).Info("Processing registration request")
 
-	return handleRegistrationFlow(req, r, sessionID, cfg, userAPI, accessToken, accessTokenErr)
+	return handleRegistrationFlow(req, r, sessionID, clientSessionID != "" && !sessionIssued, cfg, userAPI, accessToken, accessTokenErr)
 }
 
 // prepareRequestedUsername refuses a numeric username, generates a numeric
@@ -735,6 +776,7 @@ func handleRegistrationFlow(
 	req *http.Request,
 	r registerRequest,
 	sessionID string,
+	unknownSession bool,
 	cfg *config.ClientAPI,
 	userAPI userapi.ClientUserAPI,
 	accessToken string,
@@ -792,6 +834,21 @@ func handleRegistrationFlow(
 	if !callGuestRegistration(cfg, r.ServerName) {
 		if resErr := checkLocalpartAvailable(req.Context(), userAPI, r.Username, r.ServerName); resErr != nil {
 			return *resErr
+		}
+	}
+
+	// Once the server returns a session, the client must pass it back in
+	// every subsequent request. Refuse an auth stage that names a session
+	// the server did not issue, or that leaves out the session while one
+	// issued for this username is outstanding, and start a fresh flow
+	// without completing the stage. A client that never received a session
+	// may still complete a single-stage flow in one request.
+	if r.Auth.Type != "" && (unknownSession || (r.Auth.Session == "" && sessions.hasSessionForUsername(r))) {
+		sessions.addParams(sessionID, r)
+		return util.JSONResponse{
+			Code: http.StatusUnauthorized,
+			JSON: newUserInteractiveResponse(sessionID,
+				cfg.Derived.Registration.Flows, cfg.Derived.Registration.Params),
 		}
 	}
 

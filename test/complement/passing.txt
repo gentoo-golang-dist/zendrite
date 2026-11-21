@@ -152,6 +152,7 @@ tests/csapi/TestPushRuleCacheHealth
 tests/csapi/TestPushRuleRoomUpgrade
 tests/csapi/TestPushSync
 tests/csapi/TestRedact
+tests/csapi/TestRegistration
 tests/csapi/TestRelations
 tests/csapi/TestRelationsPagination
 tests/csapi/TestRelationsPaginationSync
