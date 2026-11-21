@@ -27,7 +27,9 @@ However be aware that this is only advisable on particularly powerful servers th
 
 ## PostgreSQL optimisation
 
-By default PostgreSQL is quite conservative of system resources, it can perform better if allowed to use more. Example configs could be generated using the https://pgtune.leopard.in.ua/ tool. Please consider the specific requirements of your setup (such as other software sharing the machine or PostgreSQL instance) before optimising settings.
+By default PostgreSQL is quite conservative of system resources, it can perform better if allowed to use more.
+Example configs could be generated using the [PGTune](https://pgtune.leopard.in.ua/) tool.
+Please consider the specific requirements of your setup (such as other software sharing the machine or PostgreSQL instance) before optimising settings.
 
 ## File descriptor limit
 

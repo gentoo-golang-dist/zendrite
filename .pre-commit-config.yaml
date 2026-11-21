@@ -34,6 +34,9 @@ repos:
     rev: v3.10.1
     hooks:
       - id: prettier
+        # Vendored upstream jQuery build served by the login fallback; keep it
+        # byte-identical to the release so its SRI hash stays verifiable.
+        exclude: ^setup/base/static/client/login/js/jquery-[0-9.]+\.min\.js$
   - repo: https://github.com/adrienverge/yamllint.git
     rev: v1.38.0
     hooks:
