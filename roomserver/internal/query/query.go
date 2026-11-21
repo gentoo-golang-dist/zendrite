@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
@@ -1040,12 +1041,119 @@ func (r *Queryer) QueryKnownUsers(ctx context.Context, req *api.QueryKnownUsersR
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	// Every room the user is joined to makes them known to themselves, but,
+	// as in Synapse, only a public room puts them in their own results.
+	includeSelf := false
+	if slices.Contains(users, req.UserID) {
+		if includeSelf, err = r.inPublicRoom(ctx, req.UserID); err != nil {
+			return err
+		}
+	}
+	var visibleRooms []string
 	for _, user := range users {
-		res.Users = append(res.Users, authtypes.FullyQualifiedProfile{
-			UserID: user,
-		})
+		if user == req.UserID && !includeSelf {
+			continue
+		}
+		profile := authtypes.FullyQualifiedProfile{UserID: user}
+		if _, domain, serr := gomatrixserverlib.SplitID('@', user); serr == nil && !r.IsLocalServerName(domain) {
+			if visibleRooms == nil {
+				if visibleRooms, err = r.knownUserRooms(ctx, req.UserID); err != nil {
+					return err
+				}
+			}
+			if err = r.fillRemoteProfile(ctx, visibleRooms, &profile); err != nil {
+				return err
+			}
+		}
+		res.Users = append(res.Users, profile)
 	}
 	return nil
+}
+
+// knownUserRooms returns the rooms in which the user directory finds users
+// for the given user: the rooms they are joined to, then the published ones.
+func (r *Queryer) knownUserRooms(ctx context.Context, userID string) ([]string, error) {
+	rooms := []string{}
+	if user, err := spec.NewUserID(userID, true); err == nil {
+		joined, jerr := r.DB.GetRoomsByMembership(ctx, *user, spec.Join)
+		if jerr != nil {
+			return nil, fmt.Errorf("r.DB.GetRoomsByMembership: %w", jerr)
+		}
+		rooms = append(rooms, joined...)
+	}
+	published, err := r.DB.GetPublishedRooms(ctx, "", true)
+	if err != nil {
+		return nil, fmt.Errorf("r.DB.GetPublishedRooms: %w", err)
+	}
+	for _, roomID := range published {
+		if !slices.Contains(rooms, roomID) {
+			rooms = append(rooms, roomID)
+		}
+	}
+	return rooms, nil
+}
+
+// fillRemoteProfile sets the display name and avatar of a remote user from
+// their join event in the first of the rooms they are joined to, as
+// Synapse's user directory does, instead of asking their server.
+func (r *Queryer) fillRemoteProfile(ctx context.Context, roomIDs []string, profile *authtypes.FullyQualifiedProfile) error {
+	for _, roomID := range roomIDs {
+		ev, err := r.DB.GetStateEvent(ctx, roomID, spec.MRoomMember, profile.UserID)
+		if err != nil {
+			return fmt.Errorf("r.DB.GetStateEvent: %w", err)
+		}
+		if ev == nil {
+			continue
+		}
+		content, err := gomatrixserverlib.NewMemberContentFromEvent(ev.PDU)
+		if err != nil || content.Membership != spec.Join {
+			continue
+		}
+		profile.DisplayName = content.DisplayName
+		profile.AvatarURL = content.AvatarURL
+		return nil
+	}
+	return nil
+}
+
+// inPublicRoom reports whether the user is joined to a room that Synapse's
+// user directory counts as public: one with a public join rule or
+// world-readable history, or one published in the room directory.
+func (r *Queryer) inPublicRoom(ctx context.Context, userID string) (bool, error) {
+	user, err := spec.NewUserID(userID, true)
+	if err != nil {
+		return false, nil
+	}
+	roomIDs, err := r.DB.GetRoomsByMembership(ctx, *user, spec.Join)
+	if err != nil {
+		return false, fmt.Errorf("r.DB.GetRoomsByMembership: %w", err)
+	}
+	if len(roomIDs) == 0 {
+		return false, nil
+	}
+	events, err := r.DB.GetBulkStateContent(ctx, roomIDs, []gomatrixserverlib.StateKeyTuple{
+		{EventType: spec.MRoomJoinRules, StateKey: ""},
+		{EventType: spec.MRoomHistoryVisibility, StateKey: ""},
+	}, false)
+	if err != nil {
+		return false, fmt.Errorf("r.DB.GetBulkStateContent: %w", err)
+	}
+	for _, ev := range events {
+		if (ev.EventType == spec.MRoomJoinRules && ev.ContentValue == string(spec.Public)) ||
+			(ev.EventType == spec.MRoomHistoryVisibility && ev.ContentValue == string(gomatrixserverlib.HistoryVisibilityWorldReadable)) {
+			return true, nil
+		}
+	}
+	for _, roomID := range roomIDs {
+		published, err := r.DB.GetPublishedRoom(ctx, roomID)
+		if err != nil {
+			return false, fmt.Errorf("r.DB.GetPublishedRoom: %w", err)
+		}
+		if published {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *Queryer) QueryUsersSharingRoom(ctx context.Context, userID string, otherUserIDs []string) ([]string, error) {

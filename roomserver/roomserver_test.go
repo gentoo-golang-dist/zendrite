@@ -2269,3 +2269,59 @@ func TestAutoPurgeSweepSkipsRoomsInCreation(t *testing.T) {
 		}
 	})
 }
+
+// TestQueryKnownUsers checks that, as in Synapse's user directory, a user
+// finds themselves only when they are in a public room: one with a public
+// join rule, or one published in the room directory; and that the profile of
+// a remote user comes from their join event.
+func TestQueryKnownUsers(t *testing.T) {
+	ctx := context.Background()
+	inPublic := test.NewUser(t)
+	inPrivate := test.NewUser(t)
+	inPublished := test.NewUser(t)
+	publicRoom := test.NewRoom(t, inPublic, test.RoomPreset(test.PresetPublicChat))
+	privateRoom := test.NewRoom(t, inPrivate, test.RoomPreset(test.PresetPrivateChat))
+	publishedRoom := test.NewRoom(t, inPublished, test.RoomPreset(test.PresetPrivateChat))
+	remote := test.NewUser(t, test.WithSigningServer("notlocalhost", "abc", test.PrivateKeyB))
+	publicRoom.CreateAndInsert(t, remote, spec.MRoomMember, map[string]any{
+		"membership":  spec.Join,
+		"displayname": "Remote Rita",
+		"avatar_url":  "mxc://notlocalhost/rita",
+	}, test.WithStateKey(remote.ID))
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
+		defer closeDB()
+
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		natsInstance := &jetstream.NATSInstance{}
+		caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		for _, room := range []*test.Room{publicRoom, privateRoom, publishedRoom} {
+			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
+		}
+		require.NoError(t, rsAPI.PerformPublish(ctx, &api.PerformPublishRequest{RoomID: publishedRoom.ID, Visibility: spec.Public}))
+
+		knownUsers := func(userID string) []string {
+			res := &api.QueryKnownUsersResponse{}
+			require.NoError(t, rsAPI.QueryKnownUsers(ctx, &api.QueryKnownUsersRequest{UserID: userID, Limit: 10}, res))
+			users := make([]string, 0, len(res.Users))
+			for _, u := range res.Users {
+				users = append(users, u.UserID)
+				if u.UserID == remote.ID {
+					assert.Equal(t, "Remote Rita", u.DisplayName)
+					assert.Equal(t, "mxc://notlocalhost/rita", u.AvatarURL)
+				}
+			}
+			return users
+		}
+
+		assert.Contains(t, knownUsers(inPublic.ID), inPublic.ID, "a member of a room with a public join rule finds themselves")
+		assert.NotContains(t, knownUsers(inPrivate.ID), inPrivate.ID, "a member of private rooms only does not find themselves")
+		assert.Contains(t, knownUsers(inPublished.ID), inPublished.ID, "a member of a published room finds themselves")
+		assert.Contains(t, knownUsers(inPublic.ID), remote.ID, "a remote member of a shared room is known")
+		assert.Contains(t, knownUsers(remote.ID), inPublic.ID, "a remote searcher knows the members of their rooms")
+	})
+}

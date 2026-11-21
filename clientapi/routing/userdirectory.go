@@ -15,9 +15,7 @@ import (
 	"strings"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
-	"codefloe.com/pat-s/gomatrixserverlib/fclient"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
-	"github.com/matrix-org/gomatrix"
 	"github.com/matrix-org/util"
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
@@ -37,7 +35,6 @@ func SearchUserDirectory(
 	provider userapi.QuerySearchProfilesAPI,
 	searchString string,
 	limit int,
-	federation fclient.FederationClient,
 	localServerName spec.ServerName,
 ) util.JSONResponse {
 	if limit < 10 { //nolint:mnd
@@ -73,10 +70,6 @@ knownUsersLoop:
 			break
 		}
 		userID := profile.UserID
-		// The requester is not part of their own search results.
-		if userID == device.UserID {
-			continue
-		}
 		// get the full profile of the local user
 		localpart, serverName, _ := gomatrixserverlib.SplitID('@', userID)
 		if serverName == localServerName {
@@ -103,35 +96,13 @@ knownUsersLoop:
 					}
 				}
 			}
-		} else {
-			// If the username already contains the search string, don't bother hitting federation.
-			// This will result in missing avatars and displaynames, but saves the federation roundtrip.
-			if matches(userID) {
-				results[userID] = profile
-				if len(results) == limit {
-					response.Limited = true
-					break knownUsersLoop
-				}
-				continue
-			}
-			// TODO: We should probably cache/store this
-			fedProfile, fedErr := federation.LookupProfile(ctx, localServerName, serverName, userID, "")
-			if fedErr != nil {
-				var x gomatrix.HTTPError
-				if errors.As(fedErr, &x) {
-					if x.Code == http.StatusNotFound {
-						continue
-					}
-				}
-			}
-			if matches(fedProfile.DisplayName) {
-				profile.DisplayName = fedProfile.DisplayName
-				profile.AvatarURL = fedProfile.AvatarURL
-				results[userID] = profile
-				if len(results) == limit {
-					response.Limited = true
-					break knownUsersLoop
-				}
+		} else if matches(userID) || matches(profile.DisplayName) {
+			// The roomserver takes the profile of a remote user from their
+			// membership event, as Synapse does, instead of asking their server.
+			results[userID] = profile
+			if len(results) == limit {
+				response.Limited = true
+				break knownUsersLoop
 			}
 		}
 	}

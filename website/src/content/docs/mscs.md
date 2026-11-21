@@ -718,6 +718,7 @@ Until then:
   It does not cache those of other users, and keeps the updates they send, to report them once a resync shows that they share the room.
 
 After the resync, the servers that local device list updates may have missed get them, and Zendrite drops the device lists of the remote users the full state shows were not in the room, unless they share another room with it.
+The user directory reads the room's memberships, so it finds the remote members that the partial state lacked once the resync is done, and no longer finds those that the full state shows were not in the room.
 It also drops the device list of a remote user who no longer shares a room with a local user, as their server stops sending updates, and fetches it again when they share one.
 
 ## Application services
