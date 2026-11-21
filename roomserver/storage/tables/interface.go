@@ -256,6 +256,14 @@ type ReportedUsers interface {
 	SelectReportedUsers(ctx context.Context, txn *sql.Tx, from, limit uint64, backwards bool, userID, targetUserID string) ([]api.QueryAdminUserReportsResponse, int64, error)
 }
 
+// JoinedMemberEvent is the m.room.member event that joined a user to a room.
+type JoinedMemberEvent struct {
+	RoomID      string
+	RoomVersion gomatrixserverlib.RoomVersion
+	UserID      string
+	EventJSON   []byte
+}
+
 type MembershipState int64
 
 const (
@@ -280,6 +288,9 @@ type Membership interface {
 	// of any kind in a room that userNID is joined or invited to, or in a room
 	// published in the room directory.
 	SelectUsersSharingRoom(ctx context.Context, txn *sql.Tx, userNID types.EventStateKeyNID, otherNIDs []types.EventStateKeyNID) ([]types.EventStateKeyNID, error)
+	// SelectJoinedMemberEvents returns the join events of those of userIDs
+	// whose current membership is join in those of roomIDs that exist.
+	SelectJoinedMemberEvents(ctx context.Context, txn *sql.Tx, roomIDs, userIDs []string) ([]JoinedMemberEvent, error)
 	UpdateForgetMembership(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, targetUserNID types.EventStateKeyNID, forget bool) error
 	SelectLocalServerInRoom(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) (bool, error)
 	SelectServerInRoom(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, serverName spec.ServerName) (bool, error)

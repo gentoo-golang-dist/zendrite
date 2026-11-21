@@ -1049,21 +1049,28 @@ func (r *Queryer) QueryKnownUsers(ctx context.Context, req *api.QueryKnownUsersR
 			return err
 		}
 	}
-	var visibleRooms []string
+	var remoteUsers []string
+	for _, user := range users {
+		if user == req.UserID && !includeSelf {
+			continue
+		}
+		if _, domain, serr := gomatrixserverlib.SplitID('@', user); serr == nil && !r.IsLocalServerName(domain) {
+			remoteUsers = append(remoteUsers, user)
+		}
+	}
+	var remoteProfiles map[string]authtypes.FullyQualifiedProfile
+	if len(remoteUsers) > 0 {
+		if remoteProfiles, err = r.remoteProfiles(ctx, req.UserID, remoteUsers); err != nil {
+			return err
+		}
+	}
 	for _, user := range users {
 		if user == req.UserID && !includeSelf {
 			continue
 		}
 		profile := authtypes.FullyQualifiedProfile{UserID: user}
-		if _, domain, serr := gomatrixserverlib.SplitID('@', user); serr == nil && !r.IsLocalServerName(domain) {
-			if visibleRooms == nil {
-				if visibleRooms, err = r.knownUserRooms(ctx, req.UserID); err != nil {
-					return err
-				}
-			}
-			if err = r.fillRemoteProfile(ctx, visibleRooms, &profile); err != nil {
-				return err
-			}
+		if remote, ok := remoteProfiles[user]; ok {
+			profile = remote
 		}
 		res.Users = append(res.Users, profile)
 	}
@@ -1093,27 +1100,67 @@ func (r *Queryer) knownUserRooms(ctx context.Context, userID string) ([]string, 
 	return rooms, nil
 }
 
-// fillRemoteProfile sets the display name and avatar of a remote user from
-// their join event in the first of the rooms they are joined to, as
-// Synapse's user directory does, instead of asking their server.
-func (r *Queryer) fillRemoteProfile(ctx context.Context, roomIDs []string, profile *authtypes.FullyQualifiedProfile) error {
-	for _, roomID := range roomIDs {
-		ev, err := r.DB.GetStateEvent(ctx, roomID, spec.MRoomMember, profile.UserID)
-		if err != nil {
-			return fmt.Errorf("r.DB.GetStateEvent: %w", err)
-		}
-		if ev == nil {
-			continue
-		}
-		content, err := gomatrixserverlib.NewMemberContentFromEvent(ev.PDU)
-		if err != nil || content.Membership != spec.Join {
-			continue
-		}
-		profile.DisplayName = content.DisplayName
-		profile.AvatarURL = content.AvatarURL
-		return nil
+// remoteProfiles returns the display names and avatars of the given remote
+// users, as known to the given user, from their join event in the first of
+// the rooms in which they are joined that knownUserRooms returns, as
+// Synapse's user directory does, instead of asking their servers.
+// It looks up the join events of all of them in all of the rooms at once.
+func (r *Queryer) remoteProfiles(ctx context.Context, userID string, remoteUsers []string) (map[string]authtypes.FullyQualifiedProfile, error) {
+	rooms, err := r.knownUserRooms(ctx, userID)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	joins, err := r.DB.GetJoinedMemberEvents(ctx, rooms, remoteUsers)
+	if err != nil {
+		return nil, fmt.Errorf("r.DB.GetJoinedMemberEvents: %w", err)
+	}
+	// The join events of each user, by room.
+	joined := make(map[string]map[string]tables.JoinedMemberEvent, len(remoteUsers))
+	for _, join := range joins {
+		if joined[join.UserID] == nil {
+			joined[join.UserID] = map[string]tables.JoinedMemberEvent{}
+		}
+		joined[join.UserID][join.RoomID] = join
+	}
+	profiles := make(map[string]authtypes.FullyQualifiedProfile, len(remoteUsers))
+	for _, user := range remoteUsers {
+		profile := authtypes.FullyQualifiedProfile{UserID: user}
+		if userJoins := joined[user]; userJoins != nil {
+			for _, roomID := range rooms {
+				join, ok := userJoins[roomID]
+				if !ok {
+					continue
+				}
+				content, ok := joinedMemberContent(join)
+				if !ok {
+					continue
+				}
+				profile.DisplayName = content.DisplayName
+				profile.AvatarURL = content.AvatarURL
+				break
+			}
+		}
+		profiles[user] = profile
+	}
+	return profiles, nil
+}
+
+// joinedMemberContent returns the content of the given join event, and
+// false if it cannot be read or is not a join.
+func joinedMemberContent(join tables.JoinedMemberEvent) (gomatrixserverlib.MemberContent, bool) {
+	verImpl, err := gomatrixserverlib.GetRoomVersion(join.RoomVersion)
+	if err != nil {
+		return gomatrixserverlib.MemberContent{}, false
+	}
+	ev, err := verImpl.NewEventFromTrustedJSON(join.EventJSON, false)
+	if err != nil {
+		return gomatrixserverlib.MemberContent{}, false
+	}
+	content, err := gomatrixserverlib.NewMemberContentFromEvent(ev)
+	if err != nil || content.Membership != spec.Join {
+		return gomatrixserverlib.MemberContent{}, false
+	}
+	return content, true
 }
 
 // inPublicRoom reports whether the user is joined to a room that Synapse's

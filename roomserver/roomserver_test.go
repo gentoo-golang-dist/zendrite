@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
+	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
 	"codefloe.com/pat-s/zendrite/federationapi"
 	"codefloe.com/pat-s/zendrite/federationapi/statistics"
 	"codefloe.com/pat-s/zendrite/internal/caching"
@@ -2279,15 +2280,41 @@ func TestQueryKnownUsers(t *testing.T) {
 	inPublic := test.NewUser(t)
 	inPrivate := test.NewUser(t)
 	inPublished := test.NewUser(t)
+	inHidden := test.NewUser(t)
 	publicRoom := test.NewRoom(t, inPublic, test.RoomPreset(test.PresetPublicChat))
 	privateRoom := test.NewRoom(t, inPrivate, test.RoomPreset(test.PresetPrivateChat))
 	publishedRoom := test.NewRoom(t, inPublished, test.RoomPreset(test.PresetPrivateChat))
-	remote := test.NewUser(t, test.WithSigningServer("notlocalhost", "abc", test.PrivateKeyB))
-	publicRoom.CreateAndInsert(t, remote, spec.MRoomMember, map[string]any{
-		"membership":  spec.Join,
-		"displayname": "Remote Rita",
-		"avatar_url":  "mxc://notlocalhost/rita",
-	}, test.WithStateKey(remote.ID))
+	hiddenRoom := test.NewRoom(t, inHidden, test.RoomPreset(test.PresetPrivateChat))
+	remoteUser := func() *test.User {
+		return test.NewUser(t, test.WithSigningServer("notlocalhost", "abc", test.PrivateKeyB))
+	}
+	// rita is only in the public room.
+	rita := remoteUser()
+	// ron is in the private and the published room under different names.
+	ron := remoteUser()
+	// sam left the private room and is still in the published one.
+	sam := remoteUser()
+	// hal is only in a private room that nobody else here can see.
+	hal := remoteUser()
+	member := func(room *test.Room, sender, target *test.User, membership, name string) {
+		content := map[string]any{"membership": membership}
+		if name != "" {
+			content["displayname"] = name
+			content["avatar_url"] = "mxc://notlocalhost/" + name
+		}
+		room.CreateAndInsert(t, sender, spec.MRoomMember, content, test.WithStateKey(target.ID))
+	}
+	join := func(room *test.Room, inviter, user *test.User, name string) {
+		member(room, inviter, user, spec.Invite, "")
+		member(room, user, user, spec.Join, name)
+	}
+	member(publicRoom, rita, rita, spec.Join, "Remote Rita")
+	join(privateRoom, inPrivate, ron, "Private Ron")
+	join(publishedRoom, inPublished, ron, "Published Ron")
+	join(privateRoom, inPrivate, sam, "Old Sam")
+	member(privateRoom, sam, sam, spec.Leave, "")
+	join(publishedRoom, inPublished, sam, "Sam")
+	join(hiddenRoom, inHidden, hal, "Hidden Hal")
 
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		cfg, processCtx, closeDB := testrig.CreateConfig(t, dbType)
@@ -2299,29 +2326,56 @@ func TestQueryKnownUsers(t *testing.T) {
 		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, natsInstance, caches, caching.DisableMetrics)
 		rsAPI.SetFederationAPI(nil, nil)
 
-		for _, room := range []*test.Room{publicRoom, privateRoom, publishedRoom} {
+		for _, room := range []*test.Room{publicRoom, privateRoom, publishedRoom, hiddenRoom} {
 			require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
 		}
 		require.NoError(t, rsAPI.PerformPublish(ctx, &api.PerformPublishRequest{RoomID: publishedRoom.ID, Visibility: spec.Public}))
 
-		knownUsers := func(userID string) []string {
+		knownUsers := func(userID string) map[string]authtypes.FullyQualifiedProfile {
 			res := &api.QueryKnownUsersResponse{}
 			require.NoError(t, rsAPI.QueryKnownUsers(ctx, &api.QueryKnownUsersRequest{UserID: userID, Limit: 10}, res))
-			users := make([]string, 0, len(res.Users))
+			users := make(map[string]authtypes.FullyQualifiedProfile, len(res.Users))
 			for _, u := range res.Users {
-				users = append(users, u.UserID)
-				if u.UserID == remote.ID {
-					assert.Equal(t, "Remote Rita", u.DisplayName)
-					assert.Equal(t, "mxc://notlocalhost/rita", u.AvatarURL)
-				}
+				users[u.UserID] = u
 			}
 			return users
+		}
+		assertProfile := func(users map[string]authtypes.FullyQualifiedProfile, user *test.User, name, msg string) {
+			t.Helper()
+			require.Contains(t, users, user.ID, msg)
+			assert.Equal(t, name, users[user.ID].DisplayName, msg)
+			assert.Equal(t, "mxc://notlocalhost/"+name, users[user.ID].AvatarURL, msg)
 		}
 
 		assert.Contains(t, knownUsers(inPublic.ID), inPublic.ID, "a member of a room with a public join rule finds themselves")
 		assert.NotContains(t, knownUsers(inPrivate.ID), inPrivate.ID, "a member of private rooms only does not find themselves")
 		assert.Contains(t, knownUsers(inPublished.ID), inPublished.ID, "a member of a published room finds themselves")
-		assert.Contains(t, knownUsers(inPublic.ID), remote.ID, "a remote member of a shared room is known")
-		assert.Contains(t, knownUsers(remote.ID), inPublic.ID, "a remote searcher knows the members of their rooms")
+		assert.Contains(t, knownUsers(rita.ID), inPublic.ID, "a remote searcher knows the members of their rooms")
+
+		users := knownUsers(inPublic.ID)
+		assertProfile(users, rita, "Remote Rita", "a remote member of a shared room has the profile of their join")
+		assertProfile(users, ron, "Published Ron", "a remote member of a published room has the profile of their join there")
+		assertProfile(users, sam, "Sam", "a remote member of a published room has the profile of their join there")
+		assert.NotContains(t, users, hal.ID, "a remote member of a hidden room is not known")
+
+		users = knownUsers(inPrivate.ID)
+		assertProfile(users, ron, "Private Ron", "the join in a room the searcher is in comes before one in a published room")
+		assertProfile(users, sam, "Sam", "a room the remote user left does not supply their profile")
+		assert.NotContains(t, users, rita.ID, "a remote member of an unpublished room the searcher is not in is not known")
+		assert.NotContains(t, users, hal.ID, "a remote member of a hidden room is not known")
+
+		assertProfile(knownUsers(inHidden.ID), hal, "Hidden Hal", "a remote member of a shared private room has the profile of their join")
+
+		db, err := storage.Open(processCtx.Context(), cm, &cfg.RoomServer.Database, caches) //nolint:contextcheck
+		require.NoError(t, err)
+		joins, err := db.GetJoinedMemberEvents(ctx,
+			[]string{publicRoom.ID, privateRoom.ID, publishedRoom.ID, "!unknown:notlocalhost"},
+			[]string{sam.ID, hal.ID, "@never:notlocalhost"},
+		)
+		require.NoError(t, err)
+		require.Len(t, joins, 1, "only the users' current joins in the given rooms are returned")
+		assert.Equal(t, publishedRoom.ID, joins[0].RoomID)
+		assert.Equal(t, sam.ID, joins[0].UserID)
+		assert.Equal(t, publishedRoom.Version, joins[0].RoomVersion)
 	})
 }

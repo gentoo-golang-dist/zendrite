@@ -150,6 +150,16 @@ var selectUsersSharingRoomSQL = "" +
 	" WHERE target_nid = $1 AND membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateInvite) +
 	" AND sender_nid = ANY($2)"
 
+// selectJoinedMemberEventsSQL finds the join events of the given users in
+// the given rooms in one go, for the user directory's remote profiles.
+var selectJoinedMemberEventsSQL = "" +
+	"SELECT r.room_id, r.room_version, k.event_state_key, j.event_json FROM roomserver_membership m" +
+	" INNER JOIN roomserver_rooms r ON r.room_nid = m.room_nid" +
+	" INNER JOIN roomserver_event_state_keys k ON k.event_state_key_nid = m.target_nid" +
+	" INNER JOIN roomserver_event_json j ON j.event_nid = m.event_nid" +
+	" WHERE r.room_id = ANY($1) AND k.event_state_key = ANY($2)" +
+	" AND m.membership_nid = " + fmt.Sprintf("%d", tables.MembershipStateJoin)
+
 // selectLocalServerInRoomSQL is an optimized case for checking if we, the local server,
 // are in the room by using the target_local column of the membership table. Normally when
 // we want to know if a server is in a room, we have to unmarshal the entire room state which
@@ -207,6 +217,7 @@ type membershipStatements struct {
 	selectJoinedUsersSetForRoomsStmt                *sql.Stmt
 	selectKnownUsersStmt                            *sql.Stmt
 	selectUsersSharingRoomStmt                      *sql.Stmt
+	selectJoinedMemberEventsStmt                    *sql.Stmt
 	updateMembershipForgetRoomStmt                  *sql.Stmt
 	selectLocalServerInRoomStmt                     *sql.Stmt
 	selectServerInRoomStmt                          *sql.Stmt
@@ -246,6 +257,7 @@ func PrepareMembershipTable(db *sql.DB) (tables.Membership, error) {
 		{&s.selectJoinedUsersSetForRoomsStmt, selectJoinedUsersSetForRoomsSQL},
 		{&s.selectKnownUsersStmt, selectKnownUsersSQL},
 		{&s.selectUsersSharingRoomStmt, selectUsersSharingRoomSQL},
+		{&s.selectJoinedMemberEventsStmt, selectJoinedMemberEventsSQL},
 		{&s.updateMembershipForgetRoomStmt, updateMembershipForgetRoom},
 		{&s.selectLocalServerInRoomStmt, selectLocalServerInRoomSQL},
 		{&s.selectServerInRoomStmt, selectServerInRoomSQL},
@@ -475,6 +487,28 @@ func (s *membershipStatements) SelectUsersSharingRoom(
 			return nil, err
 		}
 		result = append(result, nid)
+	}
+	return result, rows.Err()
+}
+
+func (s *membershipStatements) SelectJoinedMemberEvents(
+	ctx context.Context, txn *sql.Tx, roomIDs, userIDs []string,
+) ([]tables.JoinedMemberEvent, error) {
+	if len(roomIDs) == 0 || len(userIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := sqlutil.TxStmt(txn, s.selectJoinedMemberEventsStmt).QueryContext(ctx, roomIDs, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectJoinedMemberEvents: rows.close() failed")
+	var result []tables.JoinedMemberEvent
+	for rows.Next() {
+		var ev tables.JoinedMemberEvent
+		if err := rows.Scan(&ev.RoomID, &ev.RoomVersion, &ev.UserID, &ev.EventJSON); err != nil {
+			return nil, err
+		}
+		result = append(result, ev)
 	}
 	return result, rows.Err()
 }

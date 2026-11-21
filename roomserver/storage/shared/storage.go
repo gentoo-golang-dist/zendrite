@@ -1894,6 +1894,29 @@ func (d *Database) GetKnownUsers(ctx context.Context, userID, searchString strin
 	return d.MembershipTable.SelectKnownUsers(ctx, nil, stateKeyNID, searchString, limit)
 }
 
+// joinedMemberEventsBatch bounds the rooms and the users looked up at once,
+// so that both together stay below SQLite's limit on bound variables.
+const joinedMemberEventsBatch = 400
+
+// GetJoinedMemberEvents returns the join events of those of userIDs whose
+// current membership in those of roomIDs that exist is join, in one query
+// unless there are more rooms or users than fit in one.
+func (d *Database) GetJoinedMemberEvents(ctx context.Context, roomIDs, userIDs []string) ([]tables.JoinedMemberEvent, error) {
+	var result []tables.JoinedMemberEvent
+	for r := 0; r < len(roomIDs); r += joinedMemberEventsBatch {
+		rooms := roomIDs[r:min(r+joinedMemberEventsBatch, len(roomIDs))]
+		for u := 0; u < len(userIDs); u += joinedMemberEventsBatch {
+			users := userIDs[u:min(u+joinedMemberEventsBatch, len(userIDs))]
+			events, err := d.MembershipTable.SelectJoinedMemberEvents(ctx, nil, rooms, users)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, events...)
+		}
+	}
+	return result, nil
+}
+
 // usersSharingRoomBatch bounds the users looked up at once, below SQLite's
 // limit on bound variables.
 const usersSharingRoomBatch = 500

@@ -197,6 +197,9 @@ type Database interface {
 	GetServerInRoom(ctx context.Context, roomNID types.RoomNID, serverName spec.ServerName) (bool, error)
 	// GetKnownUsers searches all users that userID knows about.
 	GetKnownUsers(ctx context.Context, userID, searchString string, limit int) ([]string, error)
+	// GetJoinedMemberEvents returns the join events of those of userIDs whose
+	// current membership in those of roomIDs that exist is join.
+	GetJoinedMemberEvents(ctx context.Context, roomIDs, userIDs []string) ([]tables.JoinedMemberEvent, error)
 	// UsersSharingRoom returns those of otherUserIDs that have a membership of
 	// any kind in a room that userID is joined or invited to, or in a room
 	// published in the room directory (MSC4263).
