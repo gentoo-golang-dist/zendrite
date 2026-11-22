@@ -207,6 +207,7 @@ tests/msc3389/TestMSC3389RedactionPreservesPlainRelation
 tests/msc3389/TestMSC3389RedactionPreservesRelation
 tests/msc3389/TestMSC3389RedactionStripsRelationInOlderVersions
 tests/msc3391/TestRemovingAccountData
+tests/msc3757/TestMSC3757OwnedState
 tests/msc3757/TestWithoutOwnedState
 tests/msc3874/TestFilterMessagesByRelType
 tests/msc3890/TestDeletingDeviceRemovesDeviceLocalNotificationSettings

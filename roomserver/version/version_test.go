@@ -42,6 +42,8 @@ func TestUnimplementedRoomVersionsAreUnsupported(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, stateDAGs, impl.Version())
 
+	EnableMSCs([]string{"msc3757"})
+	t.Cleanup(func() { EnableMSCs(nil) })
 	for v := range RoomVersions() {
 		if v == stateDAGs {
 			continue
@@ -59,4 +61,34 @@ func TestUnimplementedRoomVersionsAreUnsupported(t *testing.T) {
 	var unknown UnknownVersionError
 	assert.True(t, errors.As(err, &unknown), "got %v", err)
 	assert.False(t, IsSupportedRoomVersion("org.example.nope"))
+}
+
+// The MSC3757 owned state room versions are offered only while msc3757 is
+// listed in the mscs config.
+func TestMSC3757RoomVersionsNeedTheMSC(t *testing.T) {
+	versions := []gomatrixserverlib.RoomVersion{gomatrixserverlib.RoomVersionMSC3757V10, gomatrixserverlib.RoomVersionMSC3757V11}
+	t.Cleanup(func() { EnableMSCs(nil) })
+
+	for _, mscs := range [][]string{nil, {"msc3391"}} {
+		EnableMSCs(mscs)
+		for _, v := range versions {
+			assert.False(t, IsSupportedRoomVersion(v), v)
+			assert.NotContains(t, SupportedRoomVersions(), v)
+			_, err := SupportedRoomVersion(v)
+			var unsupported UnsupportedVersionError
+			assert.True(t, errors.As(err, &unsupported), "got %v", err)
+			_, err = RoomVersion(v)
+			assert.NoError(t, err, v)
+		}
+	}
+
+	EnableMSCs([]string{"msc3391", "msc3757"})
+	for _, v := range versions {
+		assert.True(t, IsSupportedRoomVersion(v), v)
+		assert.Contains(t, SupportedRoomVersions(), v)
+		impl, err := SupportedRoomVersion(v)
+		require.NoError(t, err, v)
+		assert.False(t, impl.Stable())
+		assert.True(t, impl.OwnedState())
+	}
 }

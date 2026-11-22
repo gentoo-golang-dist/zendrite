@@ -8,6 +8,7 @@ package version
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 )
@@ -32,6 +33,46 @@ var unsupportedRoomVersions = map[gomatrixserverlib.RoomVersion]struct{}{
 	gomatrixserverlib.RoomVersionStateDAGs: {},
 }
 
+// experimentalRoomVersions maps unstable room versions to the MSC that must
+// be listed in the `mscs` config before this server offers them. Until then
+// they are treated like unsupportedRoomVersions.
+var experimentalRoomVersions = map[gomatrixserverlib.RoomVersion]string{
+	gomatrixserverlib.RoomVersionMSC3757V10: "msc3757",
+	gomatrixserverlib.RoomVersionMSC3757V11: "msc3757",
+}
+
+// enabledMSCs holds the MSCs from the `mscs` config, set by EnableMSCs.
+var enabledMSCs atomic.Pointer[map[string]struct{}]
+
+// EnableMSCs records the MSCs enabled in the `mscs` config, which offers the
+// experimental room versions that belong to them. Each call replaces the
+// previous set.
+func EnableMSCs(mscs []string) {
+	enabled := make(map[string]struct{}, len(mscs))
+	for _, msc := range mscs {
+		enabled[msc] = struct{}{}
+	}
+	enabledMSCs.Store(&enabled)
+}
+
+// disabled reports whether this server does not implement the room version,
+// or implements it behind an MSC that is not enabled.
+func disabled(version gomatrixserverlib.RoomVersion) bool {
+	if _, unsupported := unsupportedRoomVersions[version]; unsupported {
+		return true
+	}
+	msc, experimental := experimentalRoomVersions[version]
+	if !experimental {
+		return false
+	}
+	enabled := enabledMSCs.Load()
+	if enabled == nil {
+		return true
+	}
+	_, ok := (*enabled)[msc]
+	return !ok
+}
+
 // SupportedRoomVersions returns a map of descriptions for room
 // versions that are supported by this homeserver.
 func SupportedRoomVersions() map[gomatrixserverlib.RoomVersion]gomatrixserverlib.IRoomVersion {
@@ -51,8 +92,7 @@ func IsSupportedRoomVersion(version gomatrixserverlib.RoomVersion) bool {
 	if !gomatrixserverlib.KnownRoomVersion(version) {
 		return false
 	}
-	_, unsupported := unsupportedRoomVersions[version]
-	return !unsupported
+	return !disabled(version)
 }
 
 // RoomVersion returns information about a specific room version.
@@ -74,7 +114,7 @@ func SupportedRoomVersion(version gomatrixserverlib.RoomVersion) (gomatrixserver
 	if err != nil {
 		return nil, err
 	}
-	if _, unsupported := unsupportedRoomVersions[version]; unsupported {
+	if disabled(version) {
 		return nil, UnsupportedVersionError{version}
 	}
 	return impl, nil

@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"codefloe.com/pat-s/zendrite/clientapi/auth/authtypes"
+	"codefloe.com/pat-s/zendrite/roomserver/version"
 )
 
 // keyIDRegexp defines allowable characters in Key IDs.
@@ -366,6 +367,9 @@ func (c *Zendrite) Defaults(opts DefaultOpts) {
 }
 
 func (c *Zendrite) Verify(configErrs *ConfigErrors) {
+	// Offer the experimental room versions of enabled MSCs before the room
+	// server checks default_room_version.
+	version.EnableMSCs(c.MSCs.MSCs)
 	c.VerifyHAStorage(configErrs)
 	type verifiable interface {
 		Verify(configErrs *ConfigErrors)

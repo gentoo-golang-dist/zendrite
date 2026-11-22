@@ -95,7 +95,7 @@ func main() {
 				Enabled:          true,
 				IPRangeWhitelist: []string{"0.0.0.0/0", "::/0"},
 			}
-			cfg.MSCs.MSCs = []string{"msc2836", "msc2444", "msc2753", "msc3391"}
+			cfg.MSCs.MSCs = []string{"msc2836", "msc2444", "msc2753", "msc3391", "msc3757"}
 			cfg.Logging[0].Level = "trace"
 			cfg.Logging[0].Type = "std"
 			cfg.UserAPI.BCryptCost = bcrypt.MinCost

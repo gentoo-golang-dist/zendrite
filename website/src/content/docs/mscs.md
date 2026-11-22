@@ -426,6 +426,7 @@ Synapse ignores such receipts.
 | [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
 | [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution, and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
 | [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): Zendrite stops serving expired events to clients and other servers, and purge jobs delete them. See [message retention policies](#message-retention-policies) |
+| [MSC3757](https://github.com/matrix-org/matrix-spec-proposals/pull/3757) | Restricting who can overwrite a state event | N/A | Opt-in (`msc3757`, unstable room versions): see [MSC3757](#msc3757-owned-state) |
 | [MSC4242](https://github.com/matrix-org/matrix-spec-proposals/pull/4242) | State DAGs (room version `org.matrix.msc4242.12`) | N/A | Not supported: `/capabilities` does not list the room version, and `createRoom` and room upgrades refuse it with `M_UNSUPPORTED_ROOM_VERSION`. Joins and federation invites into such rooms fail with `M_INCOMPATIBLE_ROOM_VERSION` |
 
 ### Message retention policies
@@ -1189,6 +1190,7 @@ mscs:
     - msc2753
     - msc3391
     - msc3664
+    - msc3757
     - msc3814
     - msc3848
     - msc3861
@@ -1291,6 +1293,26 @@ Zendrite follows Synapse, where this needs `msc3391_enabled`, and uses the unsta
 
 Like Synapse, Zendrite does not advertise the MSC in `unstable_features`.
 Without `msc3391`, the `DELETE` endpoints return 404 `M_UNRECOGNIZED`, and empty content is stored like any other.
+
+### MSC3757 (owned state)
+
+With `msc3757`, Zendrite offers the unstable room versions `org.matrix.msc3757.10` and `org.matrix.msc3757.11`, which are room versions 10 and 11 with the owned state rules of MSC3757.
+They follow Synapse, where the same room versions exist.
+
+In these room versions, a state key that starts with `@` belongs to a user:
+
+- A state key that is a user ID, such as `@alice:example.org`, belongs to that user, as in every room version.
+- A state key that is a user ID followed by `_` and any suffix, such as `@alice:example.org_call`, also belongs to that user.
+  The suffix starts at the first `_` after the first `:`.
+- The owner may set the state, and so may any user whose power level is higher than the owner's, even when the owner is not in the room.
+- Any other state key that starts with `@` belongs to nobody, so nobody may set it.
+  `PUT /rooms/{roomId}/state/{eventType}/{stateKey}` answers such a state key with 400 `M_BAD_JSON`, as Synapse does, rather than 403 `M_FORBIDDEN`.
+  As in Synapse, only the sigil, the `:`, and the server name of the user ID are checked.
+
+`/capabilities` lists the room versions as `unstable`, and `createRoom` accepts them.
+They are never the default room version.
+Without `msc3757`, Zendrite treats them like a room version it does not implement: `/capabilities` does not list them, `createRoom` and room upgrades refuse them with `M_UNSUPPORTED_ROOM_VERSION`, and joins and federation invites into such rooms fail with `M_INCOMPATIBLE_ROOM_VERSION`.
+Turning the MSC off while the server is in such a room leaves the room in place, but Zendrite no longer joins new rooms of these versions.
 
 ### MSC4028 (push all encrypted events)
 

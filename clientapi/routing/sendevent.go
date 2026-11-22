@@ -592,6 +592,9 @@ func generateSendEvent(
 	if err = gomatrixserverlib.Allowed(e.PDU, provider, func(roomID spec.RoomID, senderID spec.SenderID) (*spec.UserID, error) {
 		return rsAPI.QueryUserIDForSender(ctx, *validRoomID, senderID)
 	}); err != nil {
+		if res := malformedOwnedStateKey(e.PDU); res != nil {
+			return nil, res
+		}
 		code := 403
 		var validationErr *gomatrixserverlib.EventValidationError
 		if errors.As(err, &validationErr) {
