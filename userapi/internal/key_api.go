@@ -224,7 +224,11 @@ func (a *UserInternalAPI) QueryOneTimeKeys(ctx context.Context, req *api.QueryOn
 }
 
 func (a *UserInternalAPI) QueryDeviceMessages(ctx context.Context, req *api.QueryDeviceMessagesRequest, res *api.QueryDeviceMessagesResponse) error {
-	msgs, err := a.KeyDatabase.DeviceKeysForUser(ctx, req.UserID, nil, false)
+	// A device without keys, such as one just created or deleted, still
+	// advanced the user's device list stream, so it counts towards the
+	// stream ID. Otherwise the stream ID sent to remote servers lags behind,
+	// and the prev_id of the user's next update names one they never saw.
+	msgs, err := a.KeyDatabase.DeviceKeysForUser(ctx, req.UserID, nil, true)
 	if err != nil {
 		res.Error = &api.KeyError{
 			Err: fmt.Sprintf("failed to query DB for device keys: %s", err),
@@ -232,7 +236,7 @@ func (a *UserInternalAPI) QueryDeviceMessages(ctx context.Context, req *api.Quer
 		return nil
 	}
 	maxStreamID := int64(0)
-	// remove deleted devices
+	// remove devices without keys
 	var result []api.DeviceMessage
 	for _, m := range msgs {
 		if m.StreamID > maxStreamID {

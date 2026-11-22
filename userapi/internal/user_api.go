@@ -268,6 +268,9 @@ func (a *UserInternalAPI) PerformAccountCreation(ctx context.Context, req *api.P
 	if !a.Config.Matrix.IsLocalServerName(serverName) {
 		return fmt.Errorf("server name %s is not local", serverName)
 	}
+	if req.UpgradeGuest {
+		return a.upgradeGuestAccount(ctx, req, serverName, res)
+	}
 	acc, err := a.DB.CreateAccount(ctx, req.Localpart, serverName, req.Password, req.AppServiceID, req.AccountType)
 	if err != nil {
 		// Any other failure leaves the account uncreated. Reporting it as an
@@ -322,6 +325,23 @@ func (a *UserInternalAPI) PerformAccountCreation(ctx context.Context, req *api.P
 
 	postRegisterJoinRooms(a.Config, acc, a.RSAPI) //nolint:contextcheck
 
+	res.AccountCreated = true
+	res.Account = acc
+	return nil
+}
+
+// upgradeGuestAccount turns a guest account into a user account, which keeps
+// the guest's user ID, devices, rooms and profile. Its access tokens become
+// those of the user account.
+func (a *UserInternalAPI) upgradeGuestAccount(ctx context.Context, req *api.PerformAccountCreationRequest, serverName spec.ServerName, res *api.PerformAccountCreationResponse) error {
+	acc, err := a.DB.UpgradeGuestAccount(ctx, req.Localpart, serverName, req.Password)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &api.ErrorConflict{Message: "there is no guest account to upgrade"}
+	}
+	if err != nil {
+		return fmt.Errorf("a.DB.UpgradeGuestAccount: %w", err)
+	}
+	postRegisterJoinRooms(a.Config, acc, a.RSAPI) //nolint:contextcheck
 	res.AccountCreated = true
 	res.Account = acc
 	return nil

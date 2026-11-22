@@ -82,6 +82,9 @@ type Account interface {
 	// oldest first.
 	GetActiveAccountsCreatedBefore(ctx context.Context, accountType api.AccountType, before time.Time, limit int) ([]api.Account, error)
 	SetPassword(ctx context.Context, localpart string, serverName spec.ServerName, plaintextPassword string) error
+	// UpgradeGuestAccount turns a guest account into a user account with the
+	// given password. It returns sql.ErrNoRows if there is no such guest.
+	UpgradeGuestAccount(ctx context.Context, localpart string, serverName spec.ServerName, plaintextPassword string) (*api.Account, error)
 }
 
 type AccountData interface {

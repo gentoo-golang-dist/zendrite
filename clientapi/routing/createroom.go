@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -226,6 +227,10 @@ func waitForSyncedRoom(
 	}
 }
 
+// createRoomAttempts is how many create events /createRoom makes before it
+// gives up on finding a free room ID.
+const createRoomAttempts = 5
+
 // createRoom implements /createRoom.
 func createRoom(
 	ctx context.Context,
@@ -295,92 +300,64 @@ func createRoom(
 
 	verImpl := gomatrixserverlib.MustGetRoomVersion(roomVersion)
 
-	var createEventJSON json.RawMessage
-	if verImpl.DomainlessRoomIDs() {
-		// make the create event up-front so the roomserver can calculate the room NID to store.
-		var additionalCreators []string
-		if createRequest.Preset == spec.PresetTrustedPrivateChat {
-			additionalCreators = createRequest.Invite
-		}
-		createContent, err := roomserverAPI.GenerateCreateContent(ctx, roomVersion, userID.String(), createRequest.CreationContent, additionalCreators)
-		if err != nil {
-			util.GetLogger(ctx).WithError(err).Error("GenerateCreateContent failed")
-			return util.JSONResponse{
-				Code: http.StatusBadRequest,
-				JSON: spec.BadJSON("invalid create content"),
+	// In room versions whose room ID is the hash of the create event, two
+	// rooms created by the same user with the same content in the same
+	// millisecond get the same room ID. The roomserver refuses the second,
+	// which is then made again with a slightly later timestamp, as Synapse
+	// does.
+	var (
+		roomAlias string
+		createRes *util.JSONResponse
+	)
+	for attempt := 1; ; attempt++ {
+		var createEventJSON json.RawMessage
+		if verImpl.DomainlessRoomIDs() {
+			createEvent, jsonErr := domainlessCreateEvent(ctx, cfg, rsAPI, createRequest, roomVersion, *userID, evTime)
+			if jsonErr != nil {
+				return *jsonErr
 			}
+			createEventJSON = createEvent.JSON()
+			r := createEvent.RoomID()
+			roomID = &r
 		}
-		authEvents, _ := gomatrixserverlib.NewAuthEvents(nil)
-		identity, err := cfg.Matrix.SigningIdentityFor(userID.Domain())
-		if err != nil {
-			util.GetLogger(ctx).WithError(err).Error("Failed to get signing identity")
-			return util.JSONResponse{
-				Code: http.StatusInternalServerError,
-				JSON: spec.InternalServerError{},
-			}
-		}
-		createEvent, jsonErr := roomserverAPI.GeneratePDU(
-			ctx, gomatrixserverlib.MustGetRoomVersion(roomVersion),
-			gomatrixserverlib.FledglingEvent{
-				Type:    spec.MRoomCreate,
-				Content: createContent,
-			},
-			authEvents, 1, "", identity, evTime, userID.String(), "", rsAPI,
-		)
-		if jsonErr != nil {
-			util.GetLogger(ctx).WithError(err).Error("Failed to make the create event")
-			return *jsonErr
-		}
-		createEventJSON = createEvent.JSON()
-		r := createEvent.RoomID()
-		roomID = &r
 
-		// A client that asks for this room version knows that creators cannot
-		// be listed in the power levels. Clients which leave the version to the
-		// server may predate that rule, so the roomserver drops creators for
-		// them instead.
-		if createRequest.RoomVersion != "" && verImpl.PrivilegedCreators() {
-			overrideUsers := gjson.GetBytes(createRequest.PowerLevelContentOverride, "users")
-			for _, creator := range gomatrixserverlib.CreatorsFromCreateEvent(createEvent) {
-				if overrideUsers.Get(gjson.Escape(creator)).Exists() {
-					return util.JSONResponse{
-						Code: http.StatusBadRequest,
-						JSON: spec.InvalidParam("power_level_content_override must not contain room creators in this room version"),
-					}
-				}
-			}
+		req := roomserverAPI.PerformCreateRoomRequest{
+			InvitedUsers:              createRequest.Invite,
+			RoomName:                  createRequest.Name,
+			Visibility:                createRequest.Visibility,
+			Topic:                     createRequest.Topic,
+			StatePreset:               createRequest.Preset,
+			CreationContent:           createRequest.CreationContent,
+			CreateEvent:               createEventJSON,
+			InitialState:              createRequest.InitialState,
+			RoomAliasName:             createRequest.RoomAliasName,
+			RoomVersion:               roomVersion,
+			PowerLevelContentOverride: createRequest.PowerLevelContentOverride,
+			IsDirect:                  createRequest.IsDirect,
+			InviteReason:              createRequest.inviteReason(),
+
+			UserDisplayName: userDisplayName,
+			UserAvatarURL:   userAvatarURL,
+			KeyID:           keyID,
+			PrivateKey:      privateKey,
+			EventTime:       evTime,
 		}
+
+		logger.WithFields(log.Fields{
+			"userID":      userID.String(),
+			"roomID":      roomID.String(),
+			"roomVersion": roomVersion,
+		}).Info("Creating new room")
+
+		roomAlias, createRes = rsAPI.PerformCreateRoom(ctx, *userID, *roomID, &req)
+		if createRes != nil && createRes.JSON == roomserverAPI.RoomIDInUse &&
+			verImpl.DomainlessRoomIDs() && attempt < createRoomAttempts {
+			logger.WithField("roomID", roomID.String()).Info("Room ID taken, making the create event again")
+			evTime = evTime.Add(time.Duration(1+rand.IntN(10)) * time.Millisecond) //nolint:gosec,mnd // not security sensitive
+			continue
+		}
+		break
 	}
-
-	req := roomserverAPI.PerformCreateRoomRequest{
-		InvitedUsers:              createRequest.Invite,
-		RoomName:                  createRequest.Name,
-		Visibility:                createRequest.Visibility,
-		Topic:                     createRequest.Topic,
-		StatePreset:               createRequest.Preset,
-		CreationContent:           createRequest.CreationContent,
-		CreateEvent:               createEventJSON,
-		InitialState:              createRequest.InitialState,
-		RoomAliasName:             createRequest.RoomAliasName,
-		RoomVersion:               roomVersion,
-		PowerLevelContentOverride: createRequest.PowerLevelContentOverride,
-		IsDirect:                  createRequest.IsDirect,
-		InviteReason:              createRequest.inviteReason(),
-
-		UserDisplayName: userDisplayName,
-		UserAvatarURL:   userAvatarURL,
-		KeyID:           keyID,
-		PrivateKey:      privateKey,
-		EventTime:       evTime,
-	}
-
-	logger.WithFields(log.Fields{
-		"userID":      userID.String(),
-		"roomID":      roomID.String(),
-		"roomVersion": roomVersion,
-	}).Info("Creating new room")
-
-	roomAlias, createRes := rsAPI.PerformCreateRoom(ctx, *userID, *roomID, &req)
 	if createRes != nil {
 		return *createRes
 	}
@@ -394,4 +371,65 @@ func createRoom(
 		Code: 200, //nolint:mnd
 		JSON: response,
 	}
+}
+
+// domainlessCreateEvent makes the create event of a room whose room ID is the
+// hash of its create event, up front, so that the roomserver knows the room ID
+// to store.
+func domainlessCreateEvent(
+	ctx context.Context, cfg *config.ClientAPI, rsAPI roomserverAPI.ClientRoomserverAPI,
+	createRequest createRoomRequest, roomVersion gomatrixserverlib.RoomVersion,
+	userID spec.UserID, evTime time.Time,
+) (gomatrixserverlib.PDU, *util.JSONResponse) {
+	verImpl := gomatrixserverlib.MustGetRoomVersion(roomVersion)
+	var additionalCreators []string
+	if createRequest.Preset == spec.PresetTrustedPrivateChat {
+		additionalCreators = createRequest.Invite
+	}
+	createContent, err := roomserverAPI.GenerateCreateContent(ctx, roomVersion, userID.String(), createRequest.CreationContent, additionalCreators)
+	if err != nil {
+		util.GetLogger(ctx).WithError(err).Error("GenerateCreateContent failed")
+		return nil, &util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.BadJSON("invalid create content"),
+		}
+	}
+	authEvents, _ := gomatrixserverlib.NewAuthEvents(nil)
+	identity, err := cfg.Matrix.SigningIdentityFor(userID.Domain())
+	if err != nil {
+		util.GetLogger(ctx).WithError(err).Error("Failed to get signing identity")
+		return nil, &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	createEvent, jsonErr := roomserverAPI.GeneratePDU(
+		ctx, verImpl,
+		gomatrixserverlib.FledglingEvent{
+			Type:    spec.MRoomCreate,
+			Content: createContent,
+		},
+		authEvents, 1, "", identity, evTime, userID.String(), "", rsAPI,
+	)
+	if jsonErr != nil {
+		util.GetLogger(ctx).Error("Failed to make the create event")
+		return nil, jsonErr
+	}
+
+	// A client that asks for this room version knows that creators cannot
+	// be listed in the power levels. Clients which leave the version to the
+	// server may predate that rule, so the roomserver drops creators for
+	// them instead.
+	if createRequest.RoomVersion != "" && verImpl.PrivilegedCreators() {
+		overrideUsers := gjson.GetBytes(createRequest.PowerLevelContentOverride, "users")
+		for _, creator := range gomatrixserverlib.CreatorsFromCreateEvent(createEvent) {
+			if overrideUsers.Get(gjson.Escape(creator)).Exists() {
+				return nil, &util.JSONResponse{
+					Code: http.StatusBadRequest,
+					JSON: spec.InvalidParam("power_level_content_override must not contain room creators in this room version"),
+				}
+			}
+		}
+	}
+	return createEvent, nil
 }

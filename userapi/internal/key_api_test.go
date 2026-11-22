@@ -37,6 +37,7 @@ func Test_QueryDeviceMessages(t *testing.T) {
 	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
 		// Create test data inside the callback to avoid data races
 		alice := test.NewUser(t)
+		bob := test.NewUser(t)
 
 		type args struct {
 			req *api.QueryDeviceMessagesRequest
@@ -52,7 +53,7 @@ func Test_QueryDeviceMessages(t *testing.T) {
 				name: "no existing keys",
 				args: args{
 					req: &api.QueryDeviceMessagesRequest{
-						UserID: "@doesNotExist:localhost",
+						UserID: "@noKeys:localhost",
 					},
 					res: &api.QueryDeviceMessagesResponse{},
 				},
@@ -67,7 +68,7 @@ func Test_QueryDeviceMessages(t *testing.T) {
 					res: &api.QueryDeviceMessagesResponse{},
 				},
 				want: &api.QueryDeviceMessagesResponse{
-					StreamID: 6,
+					StreamID: 7,
 					Devices: []api.DeviceMessage{
 						{
 							Type: api.TypeDeviceKeyUpdate, StreamID: 5, DeviceKeys: &api.DeviceKeys{
@@ -87,6 +88,18 @@ func Test_QueryDeviceMessages(t *testing.T) {
 						},
 					},
 				},
+			},
+			{
+				// A device without keys reports no device, but its stream ID
+				// counts, so the next update's prev_id is one remote servers saw.
+				name: "device without keys counts towards the stream ID",
+				args: args{
+					req: &api.QueryDeviceMessagesRequest{
+						UserID: bob.ID,
+					},
+					res: &api.QueryDeviceMessagesResponse{},
+				},
+				want: &api.QueryDeviceMessagesResponse{StreamID: 1},
 			},
 		}
 
@@ -139,6 +152,18 @@ func Test_QueryDeviceMessages(t *testing.T) {
 					KeyJSON:     []byte("jkl"),
 					DisplayName: "second device",
 				}, // streamID 6
+			},
+			{ // a device without keys, which still advances the stream
+				Type: api.TypeDeviceKeyUpdate, DeviceKeys: &api.DeviceKeys{
+					DeviceID: "myThirdDevice",
+					UserID:   alice.ID,
+				}, // streamID 7
+			},
+			{ // bob's only device has no keys yet
+				Type: api.TypeDeviceKeyUpdate, DeviceKeys: &api.DeviceKeys{
+					DeviceID: "bobDevice",
+					UserID:   bob.ID,
+				}, // streamID 1
 			},
 		}
 		db, closeDB := mustCreateDatabase(t, dbType) //nolint:contextcheck

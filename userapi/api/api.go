@@ -399,6 +399,10 @@ type PerformAccountCreationRequest struct {
 	AppServiceID string // optional: the application service ID (not user ID) creating this account, if any.
 	Password     string // optional: if missing then this account will be a passwordless account
 	OnConflict   Conflict
+	// UpgradeGuest turns the existing guest account with this localpart into
+	// a user account with the password, instead of creating an account. It
+	// answers ErrorConflict if there is no such guest account.
+	UpgradeGuest bool
 }
 
 // PerformAccountCreationResponse is the response for PerformAccountCreation.

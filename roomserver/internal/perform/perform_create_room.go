@@ -51,13 +51,19 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 		}
 	}
 
-	// Allocate the room
-	_, err = c.DB.AssignRoomNID(ctx, roomID, createRequest.RoomVersion)
+	// Allocate the room, unless another room has its ID
+	_, created, err := c.DB.CreateRoomNID(ctx, roomID, createRequest.RoomVersion)
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("failed to assign roomNID")
 		return "", &util.JSONResponse{
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
+		}
+	}
+	if !created {
+		return "", &util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: api.RoomIDInUse,
 		}
 	}
 
@@ -313,7 +319,7 @@ func (c *Creator) PerformCreateRoom(ctx context.Context, userID spec.UserID, roo
 		if aliasResp.RoomID != "" {
 			return "", &util.JSONResponse{
 				Code: http.StatusBadRequest,
-				JSON: spec.RoomInUse("Room ID already exists."),
+				JSON: spec.RoomInUse("Room alias already exists."),
 			}
 		}
 

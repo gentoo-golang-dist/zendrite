@@ -16,6 +16,11 @@ import (
 	userapi "codefloe.com/pat-s/zendrite/userapi/api"
 )
 
+// RoomIDInUse is the error PerformCreateRoom answers with when another room
+// already has the room ID. For a room version whose room ID is the hash of
+// the create event, the caller can try again with a new create event.
+var RoomIDInUse = spec.RoomInUse("Room ID already exists.")
+
 // ErrInvalidID is an error returned if the userID is invalid.
 type ErrInvalidID struct {
 	Err error

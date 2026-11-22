@@ -52,6 +52,11 @@ const insertAccountSQL = "" +
 const updatePasswordSQL = "" +
 	"UPDATE userapi_accounts SET password_hash = $1 WHERE localpart = $2 AND server_name = $3"
 
+// upgradeGuestAccountSQL turns a guest account (2) into a user account (1).
+const upgradeGuestAccountSQL = "" +
+	"UPDATE userapi_accounts SET password_hash = $1, account_type = 1" +
+	" WHERE localpart = $2 AND server_name = $3 AND account_type = 2"
+
 const deactivateAccountSQL = "" +
 	"UPDATE userapi_accounts SET is_deactivated = TRUE WHERE localpart = $1 AND server_name = $2"
 
@@ -88,6 +93,7 @@ type accountsStatements struct {
 	insertAccountStmt             *sql.Stmt
 	countAccountsStmt             *sql.Stmt
 	updatePasswordStmt            *sql.Stmt
+	upgradeGuestAccountStmt       *sql.Stmt
 	deactivateAccountStmt         *sql.Stmt
 	reactivateAccountStmt         *sql.Stmt
 	selectAccountByLocalpartStmt  *sql.Stmt
@@ -137,6 +143,7 @@ func NewPostgresAccountsTable(db *sql.DB, serverName spec.ServerName) (tables.Ac
 		{&s.insertAccountStmt, insertAccountSQL},
 		{&s.countAccountsStmt, countAccountsSQL},
 		{&s.updatePasswordStmt, updatePasswordSQL},
+		{&s.upgradeGuestAccountStmt, upgradeGuestAccountSQL},
 		{&s.deactivateAccountStmt, deactivateAccountSQL},
 		{&s.reactivateAccountStmt, reactivateAccountSQL},
 		{&s.selectAccountByLocalpartStmt, selectAccountByLocalpartSQL},
@@ -191,6 +198,14 @@ func (s *accountsStatements) UpdatePassword(
 ) (err error) {
 	_, err = s.updatePasswordStmt.ExecContext(ctx, passwordHash, localpart, serverName)
 	return
+}
+
+// UpgradeGuestAccount gives a guest account a password and makes it a user
+// account, and reports sql.ErrNoRows when no guest account matches.
+func (s *accountsStatements) UpgradeGuestAccount(
+	ctx context.Context, txn *sql.Tx, localpart string, serverName spec.ServerName, passwordHash string,
+) error {
+	return execOneAccount(sqlutil.TxStmt(txn, s.upgradeGuestAccountStmt).ExecContext(ctx, passwordHash, localpart, serverName))
 }
 
 func (s *accountsStatements) DeactivateAccount(

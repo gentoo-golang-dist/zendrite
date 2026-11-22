@@ -56,6 +56,10 @@ type Database interface {
 	// Do we support processing input events for more than one room at a time?
 	SupportsConcurrentRoomInputs() bool
 	AssignRoomNID(ctx context.Context, roomID spec.RoomID, roomVersion gomatrixserverlib.RoomVersion) (roomNID types.RoomNID, err error)
+	// CreateRoomNID allocates the numeric ID of a room this server is
+	// creating. It reports false, and allocates nothing, if the room ID is
+	// already taken.
+	CreateRoomNID(ctx context.Context, roomID spec.RoomID, roomVersion gomatrixserverlib.RoomVersion) (roomNID types.RoomNID, created bool, err error)
 	// RoomInfo returns room information for the given room ID, or nil if there is no room.
 	RoomInfo(ctx context.Context, roomID string) (*types.RoomInfo, error)
 	RoomInfoByNID(ctx context.Context, roomNID types.RoomNID) (*types.RoomInfo, error)

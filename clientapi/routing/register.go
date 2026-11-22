@@ -300,6 +300,12 @@ type registerRequest struct {
 	// Application Services place Type in the root of their registration
 	// request, whereas clients place it in the authDict struct.
 	Type authtypes.LoginType `json:"type"`
+
+	// GuestAccessToken upgrades the guest account it belongs to, whose
+	// localpart must be the username, to a user account.
+	GuestAccessToken string `json:"guest_access_token"`
+	// upgradeGuest is set once GuestAccessToken has been checked.
+	upgradeGuest bool
 }
 
 type authDict struct {
@@ -607,9 +613,18 @@ func Register(
 	// when the account is made, or, with a registration token, a normal
 	// account, whose username is checked when the flow completes. Either way
 	// the requested username must not be checked or refused here.
-	if accessTokenErr != nil && callGuestRegistration(cfg, r.ServerName) {
+	r.upgradeGuest = false
+	if r.GuestAccessToken != "" {
+		if resErr := checkGuestUpgrade(req.Context(), cfg, userAPI, &r); resErr != nil {
+			return *resErr
+		}
+	}
+	switch {
+	case r.upgradeGuest:
+		// The username is the guest's own, as checkGuestUpgrade made sure.
+	case accessTokenErr != nil && callGuestRegistration(cfg, r.ServerName):
 		r.Username = strings.ToLower(r.Username)
-	} else {
+	default:
 		if resErr := prepareRequestedUsername(req.Context(), userAPI, &r); resErr != nil {
 			return *resErr
 		}
@@ -676,6 +691,52 @@ func prepareRequestedUsername(ctx context.Context, userAPI userapi.ClientUserAPI
 	}
 	// Squash username to all lowercase letters
 	r.Username = strings.ToLower(r.Username)
+	return nil
+}
+
+// checkGuestUpgrade checks a registration that upgrades a guest account to a
+// user account by giving the guest's access token: the token must belong to a
+// guest on this server name whose localpart is the requested username, as the
+// spec's guest access module asks. The username defaults to the guest's.
+func checkGuestUpgrade(ctx context.Context, cfg *config.ClientAPI, userAPI userapi.ClientUserAPI, r *registerRequest) *util.JSONResponse {
+	if !registrationEnabledFor(cfg, r.ServerName) {
+		return &util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden(fmt.Sprintf("Registration is disabled on %q", r.ServerName)),
+		}
+	}
+	var res userapi.QueryAccessTokenResponse
+	if err := userAPI.QueryAccessToken(ctx, &userapi.QueryAccessTokenRequest{AccessToken: r.GuestAccessToken}, &res); err != nil {
+		util.GetLogger(ctx).WithError(err).Error("userAPI.QueryAccessToken failed")
+		return &util.JSONResponse{
+			Code: http.StatusInternalServerError,
+			JSON: spec.InternalServerError{},
+		}
+	}
+	if res.Device == nil || res.Device.AccountType != userapi.AccountTypeGuest {
+		return &util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden("guest_access_token is not the access token of a guest"),
+		}
+	}
+	localpart, domain, err := gomatrixserverlib.SplitID('@', res.Device.UserID)
+	if err != nil || domain != r.ServerName {
+		return &util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden("guest_access_token belongs to another server name"),
+		}
+	}
+	if r.Username == "" {
+		r.Username = localpart
+	}
+	if !strings.EqualFold(r.Username, localpart) {
+		return &util.JSONResponse{
+			Code: http.StatusForbidden,
+			JSON: spec.Forbidden("guest_access_token belongs to another user"),
+		}
+	}
+	r.Username = localpart
+	r.upgradeGuest = true
 	return nil
 }
 
@@ -783,7 +844,6 @@ func handleRegistrationFlow(
 	accessTokenErr error,
 ) util.JSONResponse {
 	// TODO: Enable registration config flag
-	// TODO: Guest account upgrading
 
 	// TODO: Handle loading of previous session parameters from database.
 	// TODO: Handle mapping registrationRequest parameters into session parameters
@@ -831,7 +891,7 @@ func handleRegistrationFlow(
 
 	// Refuse a taken username before any auth stage, as Synapse does, so
 	// that a client is not asked to complete a flow that cannot succeed.
-	if !callGuestRegistration(cfg, r.ServerName) {
+	if !callGuestRegistration(cfg, r.ServerName) && !r.upgradeGuest {
 		if resErr := checkLocalpartAvailable(req.Context(), userAPI, r.Username, r.ServerName); resErr != nil {
 			return *resErr
 		}
@@ -842,8 +902,10 @@ func handleRegistrationFlow(
 	// the server did not issue, or that leaves out the session while one
 	// issued for this username is outstanding, and start a fresh flow
 	// without completing the stage. A client that never received a session
-	// may still complete a single-stage flow in one request.
-	if r.Auth.Type != "" && (unknownSession || (r.Auth.Session == "" && sessions.hasSessionForUsername(r))) {
+	// may still complete a single-stage flow in one request. A guest
+	// upgrading its own account proves who it is with guest_access_token,
+	// so it may leave out the session too, as Synapse lets it.
+	if r.Auth.Type != "" && (unknownSession || (r.Auth.Session == "" && !r.upgradeGuest && sessions.hasSessionForUsername(r))) {
 		sessions.addParams(sessionID, r)
 		return util.JSONResponse{
 			Code: http.StatusUnauthorized,
@@ -997,7 +1059,7 @@ func handleApplicationServiceRegistration(
 	return completeRegistration(
 		req.Context(), userAPI, r.Username, r.ServerName, "", "", appserviceID, internalhttputil.ClientIP(req),
 		req.UserAgent(), r.Auth.Session, r.InhibitLogin, r.InitialDisplayName, r.DeviceID,
-		userapi.AccountTypeAppService, refreshableLifetime(cfg, r.RefreshToken),
+		userapi.AccountTypeAppService, refreshableLifetime(cfg, r.RefreshToken), false,
 	)
 }
 
@@ -1031,7 +1093,7 @@ func checkAndCompleteFlow(
 			resp = completeRegistration(
 				req.Context(), userAPI, r.Username, r.ServerName, "", r.Password, "", internalhttputil.ClientIP(req),
 				req.UserAgent(), sessionID, r.InhibitLogin, r.InitialDisplayName, r.DeviceID,
-				accountType, refreshableLifetime(cfg, r.RefreshToken),
+				accountType, refreshableLifetime(cfg, r.RefreshToken), r.upgradeGuest,
 			)
 		}
 		finaliseRegistrationToken(req, userAPI, sessionID, resp.Code == http.StatusOK)
@@ -1086,7 +1148,7 @@ func completeCallGuestRegistration(
 		resp = completeRegistration(
 			req.Context(), userAPI, localpart, r.ServerName, "", r.Password, "", internalhttputil.ClientIP(req),
 			req.UserAgent(), sessionID, r.InhibitLogin, r.InitialDisplayName, r.DeviceID,
-			userapi.AccountTypeCallGuest, refreshableLifetime(cfg, r.RefreshToken),
+			userapi.AccountTypeCallGuest, refreshableLifetime(cfg, r.RefreshToken), false,
 		)
 		if matrixErr, ok := resp.JSON.(spec.MatrixError); !ok || matrixErr.ErrCode != spec.ErrorUserInUse {
 			return resp
@@ -1189,6 +1251,7 @@ func completeRegistration(
 	deviceDisplayName, deviceID *string,
 	accType userapi.AccountType,
 	refreshLifetime time.Duration,
+	upgradeGuest bool,
 ) util.JSONResponse {
 	if username == "" {
 		return util.JSONResponse{
@@ -1211,6 +1274,7 @@ func completeRegistration(
 		Password:     password,
 		AccountType:  accType,
 		OnConflict:   userapi.ConflictAbort,
+		UpgradeGuest: upgradeGuest,
 	}, &accRes)
 	if err != nil {
 		var conflictErr *userapi.ErrorConflict
@@ -1479,7 +1543,7 @@ func handleSharedSecretRegistration(cfg *config.ClientAPI, userAPI userapi.Clien
 	if ssrr.Admin {
 		accType = userapi.AccountTypeAdmin
 	}
-	return completeRegistration(req.Context(), userAPI, ssrr.User, cfg.Matrix.ServerName, ssrr.DisplayName, ssrr.Password, "", internalhttputil.ClientIP(req), req.UserAgent(), "", false, &ssrr.User, &deviceID, accType, 0)
+	return completeRegistration(req.Context(), userAPI, ssrr.User, cfg.Matrix.ServerName, ssrr.DisplayName, ssrr.Password, "", internalhttputil.ClientIP(req), req.UserAgent(), "", false, &ssrr.User, &deviceID, accType, 0, false)
 }
 
 // RegistrationTokenValidity implements the unauthenticated MSC3231 validity check.

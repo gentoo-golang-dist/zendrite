@@ -626,10 +626,10 @@ func (s *eventStatements) SelectRoomsWithEventTypeNID(
 ) ([]types.RoomNID, error) {
 	stmt := sqlutil.TxStmt(txn, s.selectRoomsWithEventTypeNIDStmt)
 	rows, err := stmt.QueryContext(ctx, eventTypeNID)
-	defer internal.CloseAndLogIfError(ctx, rows, "SelectRoomsWithEventTypeNID: rows.close() failed")
 	if err != nil {
 		return nil, err
 	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectRoomsWithEventTypeNID: rows.close() failed")
 
 	var roomNIDs []types.RoomNID
 	var roomNID types.RoomNID

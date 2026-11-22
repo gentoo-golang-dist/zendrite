@@ -359,6 +359,24 @@ func (d *Database) SetPassword(
 	})
 }
 
+// UpgradeGuestAccount turns a guest account into a user account with the
+// given password, keeping its user ID, devices and data.
+func (d *Database) UpgradeGuestAccount(
+	ctx context.Context, localpart string, serverName spec.ServerName,
+	plaintextPassword string,
+) (*api.Account, error) {
+	hash, err := d.hashPassword(plaintextPassword)
+	if err != nil {
+		return nil, err
+	}
+	if err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		return d.Accounts.UpgradeGuestAccount(ctx, txn, localpart, serverName, hash)
+	}); err != nil {
+		return nil, err
+	}
+	return d.Accounts.SelectAccountByLocalpart(ctx, localpart, serverName)
+}
+
 // CreateAccount makes a new account with the given login name and password, and creates an empty profile
 // for this account. If no password is supplied, the account will be a passwordless account. If the
 // account already exists, it will return nil, ErrUserExists.

@@ -257,6 +257,8 @@ The [v1.19 changes](https://spec.matrix.org/v1.19/changelog/) add mutual rooms, 
 - **Mutual rooms:** `clientapi/routing/mutual_rooms.go` serves the stable `GET /v1/mutual_rooms` from v1.19.
 - **Legacy `/events` and `/initialSync`:** both are deprecated, and Zendrite answers them with empty responses, kept for Sytest.
   Clients use `/sync` instead.
+- **Guest upgrade:** `POST /register` with the guest's access token as `guest_access_token` and its localpart as `username` turns the guest into a user account, as the guest access module describes.
+  The account keeps its user ID, devices and rooms, and its access tokens become those of the user account.
 - **Notifications ([#312](https://codefloe.com/pat-s/zendrite/issues/312)):** `GetNotifications` now validates query parameters and calls `QueryNotifications`.
   `notification_test.go` covers response behavior.
   It isn't a stub on the audited branch, so this page doesn't list it as an unresolved blocker.

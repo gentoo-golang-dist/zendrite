@@ -773,6 +773,35 @@ func (d *Database) AssignRoomNID(ctx context.Context, roomID spec.RoomID, roomVe
 	return roomNID, nil
 }
 
+// CreateRoomNID allocates the numeric ID of a room this server is creating.
+// Unlike AssignRoomNID, it reports false, and allocates nothing, if the room
+// ID is already taken, so that two rooms never share one. In room versions
+// whose room ID is the hash of the create event, two create events with the
+// same sender, content and millisecond timestamp give the same room ID.
+func (d *Database) CreateRoomNID(ctx context.Context, roomID spec.RoomID, roomVersion gomatrixserverlib.RoomVersion) (roomNID types.RoomNID, created bool, err error) {
+	if _, err = gomatrixserverlib.GetRoomVersion(roomVersion); err != nil {
+		return 0, false, err
+	}
+	if _, ok := d.Cache.GetRoomServerRoomNID(roomID.String()); ok {
+		return 0, false, nil
+	}
+	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		roomNID, err = d.RoomsTable.InsertRoomNID(ctx, txn, roomID.String(), roomVersion)
+		if errors.Is(err, sql.ErrNoRows) {
+			// The insert did nothing, as the room ID is taken.
+			return nil
+		}
+		created = err == nil
+		return err
+	})
+	if err != nil || !created {
+		return 0, false, err
+	}
+	d.Cache.StoreRoomServerRoomID(roomNID, roomID.String())
+	d.Cache.StoreRoomVersion(roomID.String(), roomVersion)
+	return roomNID, true, nil
+}
+
 // GetOrCreateRoomInfo gets or creates a new RoomInfo, which is only safe to use with functions only needing a roomVersion or roomNID.
 func (d *Database) GetOrCreateRoomInfo(ctx context.Context, event gomatrixserverlib.PDU) (roomInfo *types.RoomInfo, err error) {
 	// Get the default room version. If the client doesn't supply a room_version

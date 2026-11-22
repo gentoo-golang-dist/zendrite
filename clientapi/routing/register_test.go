@@ -613,6 +613,7 @@ func TestRegisterUserWithDisplayName(t *testing.T) {
 			&deviceID,
 			api.AccountTypeAdmin,
 			time.Hour,
+			false,
 		)
 
 		assert.Equal(t, http.StatusOK, response.Code)
