@@ -1,17 +1,16 @@
 ---
 title: Profiling
-description: CPU and memory profiling with pprof and Grafana Pyroscope
+description: Profile CPU and memory use with pprof and Grafana Pyroscope.
 ---
 
-If you are running into problems with Zendrite using excessive resources (e.g. CPU or RAM) then you can use the profiler to work out what is happening.
-
-Zendrite contains an embedded profiler called `pprof`, which is a part of the standard Go toolchain.
+When Zendrite uses too much CPU or RAM, profile it to find out why.
+Zendrite embeds `pprof`, the profiler from the standard Go toolchain.
 
 ## Continuous profiling with Grafana Pyroscope
 
 Zendrite can continuously push CPU and memory profiles to a Pyroscope server or Grafana Cloud Profiles.
-Profiling is disabled by default.
-To enable it, configure `global.pyroscope` in `zendrite.yaml` and restart Zendrite:
+Profiling is off by default.
+To turn it on, configure `global.pyroscope` in `zendrite.yaml` and restart Zendrite:
 
 ```yaml
 global:
@@ -27,105 +26,109 @@ global:
       instance: my-homeserver
 ```
 
-Set `server_address` to your Pyroscope ingestion URL, reachable from the Zendrite process or container.
-For Grafana Cloud Profiles, use the URL, username and access policy token from your stack's Profiles configuration, placing the token in `basic_auth.password`.
-Use `tenant_id` only if your Pyroscope server requires multi-tenancy.
-The `basic_auth`, `tenant_id` and `tags` settings are optional, and `application_name` defaults to `zendrite`.
+Set `server_address` to your Pyroscope ingestion URL.
+The Zendrite process or container must be able to reach it.
+For Grafana Cloud Profiles, take the URL, username, and access policy token from your stack's Profiles configuration, and put the token in `basic_auth.password`.
+
+Set `tenant_id` only if your Pyroscope server requires multi-tenancy.
+The `basic_auth`, `tenant_id`, and `tags` settings are optional, and `application_name` defaults to `zendrite`.
 See the [Grafana Go SDK documentation](https://grafana.com/docs/pyroscope/latest/configure-client/language-sdks/go_push/) for backend configuration details.
 
 Zendrite collects CPU samples, allocated objects and bytes, and in-use objects and bytes.
-Profiles are uploaded in the background and remaining data is flushed during graceful shutdown.
-Upload failures are logged without stopping the homeserver.
-In Grafana, select the configured application name to explore its profiles and filter by your tags.
+It uploads profiles in the background and flushes the remaining data during graceful shutdown.
+Zendrite logs upload failures and keeps running.
+In Grafana, select the configured application name to explore its profiles, and filter by your tags.
 
-Pyroscope does not require `PPROFLISTEN`.
-While continuous profiling is enabled, avoid requesting a CPU profile from the pprof endpoint, since both use Go's single CPU profiler.
-Disable Pyroscope and restart Zendrite before collecting a manual CPU profile.
+Pyroscope doesn't need `PPROFLISTEN`.
+While continuous profiling is on, don't request a CPU profile from the pprof endpoint, because both use Go's single CPU profiler.
+To collect a manual CPU profile, turn Pyroscope off and restart Zendrite first.
 
 ## Enable the pprof profiler
 
-To enable the profiler, start Zendrite with the `PPROFLISTEN` environment variable.
-This variable specifies which address and port to listen on, e.g.
+Start Zendrite with the `PPROFLISTEN` environment variable set to the address and port to listen on:
 
 ```bash
 PPROFLISTEN=localhost:65432 ./bin/zendrite ...
 ```
 
-If pprof has been enabled successfully, a log line at startup will show that pprof is listening:
+At startup, Zendrite logs that pprof is listening:
 
 ```text
 level=warning msg="Starting pprof listener on localhost:65432 — this endpoint has NO authentication, do not expose to untrusted networks"
 ```
 
-All examples from this point forward assume `PPROFLISTEN=localhost:65432` but you may need to adjust as necessary for your setup.
+The examples below assume `PPROFLISTEN=localhost:65432`.
+Adjust them for your setup.
 
-## Profiling CPU usage
+## Profile CPU usage
 
-To examine where CPU time is going, you can call the `profile` endpoint:
+To see where CPU time goes, call the `profile` endpoint:
 
 ```text
 http://localhost:65432/debug/pprof/profile?seconds=30
 ```
 
-The profile will run for the specified number of `seconds` and then will produce a result.
+The profile runs for the given number of `seconds`, then returns a result.
 
-### Examine a profile using the Go toolchain
+### Examine a CPU profile with the Go toolchain
 
-If you have Go installed and want to explore the profile, you can invoke `go tool pprof` to start the profile directly.
-The `-http=` parameter will instruct `go tool pprof` to start a web server providing a view of the captured profile:
+If you have Go installed, open the profile with `go tool pprof`.
+The `-http=` parameter starts a web server that shows the captured profile:
 
 ```bash
 go tool pprof -http=localhost:23456 http://localhost:65432/debug/pprof/profile?seconds=30
 ```
 
-You can then visit `http://localhost:23456` in your web browser to see a visual representation of the profile.
-Particularly usefully, in the "View" menu, you can select "Flame Graph" to see a proportional interactive graph of CPU usage.
+Then visit `http://localhost:23456` in your web browser to see the profile.
+In the "View" menu, select "Flame Graph" for a proportional, interactive graph of CPU usage.
 
-### Download a profile to send to someone else
+### Download a CPU profile to send to someone else
 
-If you don't have the Go tools installed but just want to capture the profile to send to someone else, you can instead use `curl` to download the profiler results:
+Without the Go tools, download the profile with `curl`:
 
 ```bash
 curl -O http://localhost:65432/debug/pprof/profile?seconds=30
 ```
 
-This will block for the specified number of seconds, capturing information about what Zendrite is doing, and then produces a `profile` file, which you can send onward.
+The command blocks for the given number of seconds while it captures what Zendrite is doing.
+It then writes a `profile` file that you can send onward.
 
-## Profiling memory usage
+## Profile memory usage
 
-To examine where memory usage is going, you can call the `heap` endpoint:
+To see where memory goes, call the `heap` endpoint:
 
 ```text
 http://localhost:65432/debug/pprof/heap
 ```
 
-The profile will return almost instantly.
+The profile returns almost instantly.
 
-### Examine a profile using the Go toolchain
+### Examine a memory profile with the Go toolchain
 
-If you have Go installed and want to explore the profile, you can invoke `go tool pprof` to start the profile directly.
-The `-http=` parameter will instruct `go tool pprof` to start a web server providing a view of the captured profile:
+If you have Go installed, open the profile with `go tool pprof`.
+The `-http=` parameter starts a web server that shows the captured profile:
 
 ```bash
 go tool pprof -http=localhost:23456 http://localhost:65432/debug/pprof/heap
 ```
 
-You can then visit `http://localhost:23456` in your web browser to see a visual representation of the profile.
-The "Sample" menu lets you select between four different memory profiles:
+Then visit `http://localhost:23456` in your web browser to see the profile.
+The "Sample" menu selects one of four memory profiles:
 
-- `inuse_space`: Shows how much actual heap memory is allocated per function (this is generally the most useful profile when diagnosing high memory usage)
-- `inuse_objects`: Shows how many heap objects are allocated per function
-- `alloc_space`: Shows how much memory has been allocated per function (although that memory may have since been deallocated)
-- `alloc_objects`: Shows how many allocations have been made per function (although that memory may have since been deallocated)
+- `inuse_space`: how much heap memory each function has allocated and still in use.
+  This is usually the most useful profile for diagnosing high memory usage.
+- `inuse_objects`: how many heap objects each function has allocated and still in use.
+- `alloc_space`: how much memory each function has allocated in total, including memory since freed.
+- `alloc_objects`: how many allocations each function has made in total, including memory since freed.
 
-Also in the "View" menu, you can select "Flame Graph" to see a proportional interactive graph of the memory usage.
+In the "View" menu, select "Flame Graph" for a proportional, interactive graph of memory usage.
 
-### Download a profile to send to someone else
+### Download a memory profile to send to someone else
 
-If you don't have the Go tools installed but just want to capture the profile to send to someone else, you can instead use `curl` to download the profiler results:
+Without the Go tools, download the profile with `curl`:
 
 ```bash
 curl -O http://localhost:65432/debug/pprof/heap
 ```
 
-This will almost instantly produce a `heap` file, which you can send onward.
+The command writes a `heap` file almost instantly, which you can send onward.

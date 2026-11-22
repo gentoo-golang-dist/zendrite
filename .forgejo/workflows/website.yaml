@@ -5,10 +5,14 @@ on:
     branches: [main]
     paths:
       - 'website/**'
+      - '.vale.ini'
+      - '.vale/**'
       - '.forgejo/workflows/website.yaml'
   pull_request:
     paths:
       - 'website/**'
+      - '.vale.ini'
+      - '.vale/**'
       - '.forgejo/workflows/website.yaml'
   workflow_dispatch:
 
@@ -17,6 +21,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  vale:
+    runs-on: ubuntu-latest
+    # Spelling, grammar, and style checks for the docs; rules live in .vale.ini
+    # and .vale/zendrite/, accepted words in .vale/config/vocabularies/zendrite/.
+    # renovate: datasource=docker depName=jdkato/vale
+    container: cr.codefloe.com/docker.io/jdkato/vale:v3.28.1
+    timeout-minutes: 5
+    steps:
+      # actions/checkout needs node, which the Alpine-based image lacks.
+      - name: Install dependencies
+        run: apk add --no-cache nodejs
+
+      - uses: actions/checkout@v7
+
+      - name: Sync Vale packages
+        run: vale sync
+
+      - name: Vale
+        run: vale website/src/content/docs
+
   build:
     runs-on: ubuntu-latest
     # Pulled through the codefloe registry proxy cache. bun comes from npm

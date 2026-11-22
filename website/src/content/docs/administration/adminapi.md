@@ -3,48 +3,46 @@ title: Supported admin APIs
 description: Administrative API endpoints for Zendrite
 ---
 
-Zendrite supports, at present, a very small number of endpoints that allow admin users to perform administrative functions.
-Please note that there is no API stability guarantee on these endpoints at present — they may change shape without warning.
+Zendrite supports a small number of admin endpoints.
+They have no API stability guarantee and may change shape without warning.
 
-More endpoints will be added in the future.
-
-Endpoints may be used directly through curl:
+Call them with curl:
 
 ```bash
 curl --header "Authorization: Bearer <access_token>" -X <POST|GET|PUT> <Endpoint URI> -d '<Request Body Contents>'
 ```
 
-An `access_token` can be obtained through most Element-based matrix clients by going to `Settings` -> `Help & About` -> `Advanced` -> `Access Token`.
-Be aware that an `access_token` allows a client to perform actions as an user and should be kept **secret**.
+Most Element-based Matrix clients show the `access_token` under `Settings` -> `Help & About` -> `Advanced` -> `Access Token`.
+Keep the `access_token` **secret**, because anyone who has it can act as that user.
 
-The user must be an administrator in the `userapi_accounts` table in order to use these endpoints.
-
-Existing user accounts can be set to administrative accounts by changing `account_type` to `3` in `userapi_accounts`
+Only users marked as administrators in the `userapi_accounts` table can call these endpoints.
+To make an existing account an administrator, set its `account_type` to `3` in `userapi_accounts`:
 
 ```sql
 UPDATE userapi_accounts SET account_type = 3 WHERE localpart = '$localpart';
 ```
 
-Where `$localpart` is the username only (e.g. `alice`).
+`$localpart` is the username only, for example `alice`.
 
 ## POST `/_zendrite/admin/evacuateRoom/{roomID}`
 
-This endpoint will instruct Zendrite to part all local users from the given `roomID` in the URL.
-It may take some time to complete.
-A JSON body will be returned containing the user IDs of all affected users.
+Zendrite removes all local users from the room given by `roomID` in the URL.
+This can take some time.
+The response is a JSON body with the user IDs of all affected users.
 
-If the room has an alias set (e.g. is published), the room's ID will not be visible in the URL, but it can be found as the room's "internal ID" in Element Web (Settings -> Advanced)
+If the room has an alias (for example, because it's published), Element Web shows the alias in its URL instead of the room ID.
+The room ID is the room's "internal ID" under **Settings > Advanced** in Element Web.
 
 ## POST `/_zendrite/admin/evacuateUser/{userID}`
 
-This endpoint will instruct Zendrite to part the given local `userID` in the URL from all rooms which they are currently joined.
-A JSON body will be returned containing the room IDs of all affected rooms.
+Zendrite removes the local user given by `userID` in the URL from all rooms they have joined.
+The response is a JSON body with the room IDs of all affected rooms.
 
 ## POST `/_zendrite/admin/resetPassword/{userID}`
 
-Reset the password of a local user.
+Resets the password of a local user.
 
-**If `logout_devices` is set to `true`, all `access_tokens` will be invalidated, resulting in the potential loss of encrypted messages**
+**If `logout_devices` is `true`, Zendrite invalidates all `access_tokens`, and the user may lose access to encrypted messages.**
 
 Request body format:
 
@@ -57,30 +55,30 @@ Request body format:
 
 ## GET `/_zendrite/admin/fulltext/reindex`
 
-This endpoint instructs Zendrite to reindex all searchable events (`m.room.message`, `m.room.topic` and `m.room.name`).
-An empty JSON body will be returned immediately.
-Indexing is done in the background, the server logs every 1000 events (or below) when they are being indexed.
-Once reindexing is done, you'll see something along the lines `Indexed 69586 events in 53.68223182s` in your debug logs.
+Zendrite reindexes all searchable events (`m.room.message`, `m.room.topic`, and `m.room.name`).
+It returns an empty JSON body immediately and indexes in the background.
+The server logs progress for every batch of up to 1000 events.
+When reindexing finishes, your debug logs show a line such as `Indexed 69586 events in 53.68223182s`.
 
 ## POST `/_zendrite/admin/refreshDevices/{userID}`
 
-This endpoint instructs Zendrite to immediately query `/devices/{userID}` on a federated server.
-An empty JSON body will be returned on success, updating all locally stored user devices/keys.
-This can be used to possibly resolve E2EE issues, where the remote user can't decrypt messages.
+Zendrite immediately queries `/devices/{userID}` on the user's federated server and updates all locally stored devices and keys for that user.
+It returns an empty JSON body on success.
+Use it to try to fix E2EE problems where the remote user can't decrypt messages.
 
 ## POST `/_zendrite/admin/purgeRoom/{roomID}`
 
-This endpoint instructs Zendrite to remove the given room from its database.
-Before doing so, it attempts to evacuate all local users from the room.
-It does **NOT** remove media files.
-Depending on the size of the room, this may take a while.
-Will return an empty JSON once other components were instructed to delete the room.
+Zendrite removes the room from its database.
+First, it tries to evacuate all local users from the room.
+It does **not** remove media files.
+Large rooms can take a while.
+The endpoint returns an empty JSON body once Zendrite has told the other components to delete the room.
 
-Zendrite can also purge empty rooms automatically — see [Auto-purging empty rooms](/administration/auto-purge-empty-rooms/).
+Zendrite can also purge empty rooms automatically, see [Purge empty rooms automatically](/administration/auto-purge-empty-rooms/).
 
 ## GET `/_zendrite/admin/emptyRooms`
 
-Returns a list of all rooms which have zero (locally) joined members.
+Returns all rooms with zero locally joined members.
 Response format:
 
 ```json
@@ -91,6 +89,7 @@ Response format:
 
 ## POST `/_synapse/admin/v1/send_server_notice`
 
+Sends a server notice to one user.
 Request body format:
 
 ```json
@@ -103,9 +102,8 @@ Request body format:
 }
 ```
 
-Send a server notice to a specific user.
-See the [Matrix Spec](https://spec.matrix.org/v1.3/client-server-api/#server-notices) for additional details on server notice behaviour.
-If successfully sent, the API will return the following response:
+See the [Matrix Spec](https://spec.matrix.org/v1.3/client-server-api/#server-notices) for how server notices behave.
+On success, the API returns:
 
 ```json
 {
@@ -115,38 +113,70 @@ If successfully sent, the API will return the following response:
 
 ## GET `/_synapse/admin/v1/register`
 
-Shared secret registration — please see the [user creation page](/administration/createusers) for guidance on configuring and using this endpoint.
+Shared secret registration.
+See [Creating user accounts](/administration/createusers) to configure and use this endpoint.
 
 ## GET and PUT `/_matrix/client/v1/admin/lock/{userId}`
 
-From the [Matrix Spec](https://spec.matrix.org/v1.18/client-server-api/#put_matrixclientv1adminlockuserid).
-`PUT` locks (`{"locked": true}`) or unlocks (`{"locked": false}`) a local account, and `GET` returns `{"locked": <bool>}`.
-A locked account keeps its sessions but can only log out until it is unlocked; see [account locking](/mscs/#account-locking).
-The user ID must belong to this server (otherwise 400 `M_INVALID_PARAM`), and the account must exist and not be deactivated (otherwise 404 `M_NOT_FOUND`).
-Administrators cannot lock themselves or another administrator (403 `M_FORBIDDEN`).
-With MSC3861 delegated authentication, both methods return 403; lock the account in the authentication service instead.
+Defined in the [Matrix Spec](https://spec.matrix.org/v1.18/client-server-api/#put_matrixclientv1adminlockuserid).
+
+- `PUT` with `{"locked": true}` locks a local account, and `{"locked": false}` removes the lock.
+- `GET` returns `{"locked": <bool>}`.
+
+A locked account keeps its sessions, but can only log out until an admin removes the lock.
+See [account locking](/mscs/#account-locking).
+
+Errors:
+
+- 400 `M_INVALID_PARAM` if the user ID doesn't belong to this server.
+- 404 `M_NOT_FOUND` if the account doesn't exist or is deactivated.
+- 403 `M_FORBIDDEN` if an administrator tries to lock themselves or another administrator.
+- 403 for both methods with MSC3861 delegated authentication.
+  Lock the account in the authentication service instead.
 
 ## GET and PUT `/_matrix/client/v1/admin/suspend/{userId}`
 
-From the [Matrix Spec](https://spec.matrix.org/v1.18/client-server-api/#put_matrixclientv1adminsuspenduserid).
-`PUT` suspends (`{"suspended": true}`) or unsuspends (`{"suspended": false}`) a local account, and `GET` returns `{"suspended": <bool>}`.
-A suspended account can still read and log in, but not join rooms, send messages or change its profile; see [account suspension](/mscs/#account-suspension).
-The errors are those of the lock endpoints, and suspension also works with MSC3861 delegated authentication.
+Defined in the [Matrix Spec](https://spec.matrix.org/v1.18/client-server-api/#put_matrixclientv1adminsuspenduserid).
+
+- `PUT` with `{"suspended": true}` suspends a local account, and `{"suspended": false}` lifts the suspension.
+- `GET` returns `{"suspended": <bool>}`.
+
+A suspended account can still log in and read, but can't join rooms, send messages, or change its profile.
+See [account suspension](/mscs/#account-suspension).
+
+The errors match the lock endpoints.
+Suspension also works with MSC3861 delegated authentication.
 
 ## GET `/_synapse/admin/v1/room_reports`
 
-Lists room reports (MSC4151), newest first, as Synapse does.
-The optional `from` (offset, default 0), `limit` (default 100), `dir` (`b`, the default, or `f` for oldest first), `user_id` (the reporter) and `room_id` filter the list.
-The response holds `room_reports` (each with `id`, `received_ts`, `room_id`, `name`, `canonical_alias`, `user_id` and `reason`), `total`, and `next_token` when more reports follow.
+Lists room reports (MSC4151), newest first, like Synapse.
+Filter the list with these optional parameters:
+
+- `from`: offset, default 0.
+- `limit`: default 100.
+- `dir`: `b` (the default) or `f` for oldest first.
+- `user_id`: the reporter.
+- `room_id`: the reported room.
+
+The response contains `room_reports`, `total`, and `next_token` when more reports follow.
+Each report has `id`, `received_ts`, `room_id`, `name`, `canonical_alias`, `user_id`, and `reason`.
 
 ## GET `/_synapse/admin/v1/user_reports`
 
-Lists user reports (MSC4260), newest first, in the shape of the room reports.
-The optional `from` (offset, default 0), `limit` (default 100), `dir` (`b`, the default, or `f` for oldest first), `user_id` (the reporter) and `target_user_id` (the reported user) filter the list.
-The response holds `user_reports` (each with `id`, `received_ts`, `target_user_id`, `user_id` and `reason`), `total`, and `next_token` when more reports follow.
+Lists user reports (MSC4260), newest first, in the same shape as room reports.
+Filter the list with these optional parameters:
+
+- `from`: offset, default 0.
+- `limit`: default 100.
+- `dir`: `b` (the default) or `f` for oldest first.
+- `user_id`: the reporter.
+- `target_user_id`: the reported user.
+
+The response contains `user_reports`, `total`, and `next_token` when more reports follow.
+Each report has `id`, `received_ts`, `target_user_id`, `user_id`, and `reason`.
 
 ## GET `/_matrix/client/v3/admin/whois/{userId}`
 
-From the [Matrix Spec](https://spec.matrix.org/v1.3/client-server-api/#get_matrixclientv3adminwhoisuserid).
-Gets information about a particular user.
-`userId` is the full user ID (e.g. `@alice:domain.com`)
+Defined in the [Matrix Spec](https://spec.matrix.org/v1.3/client-server-api/#get_matrixclientv3adminwhoisuserid).
+Returns information about a user.
+`userId` is the full user ID, for example `@alice:domain.com`.

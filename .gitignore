@@ -86,3 +86,10 @@ AGENTS.md
 # Local documentation
 /docs/
 /.hachaos
+
+# Vale: `vale sync` downloads packages into .vale/; keep only the local style
+# and vocabulary. Listed after the bare `zendrite` pattern so they re-include.
+.vale/*
+!.vale/zendrite/
+!.vale/config/
+!.vale/config/vocabularies/zendrite/

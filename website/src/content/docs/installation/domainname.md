@@ -3,57 +3,60 @@ title: Setting up the domain
 description: Domain name configuration, TLS certificates, and delegation for Zendrite
 ---
 
-Every Matrix server deployment requires a server name which uniquely identifies it.
-For example, if you are using the server name `example.com`, then your users will have usernames that take the format `@user:example.com`.
+Every Matrix server needs a server name that uniquely identifies it.
+If your server name is `example.com`, your users get usernames in the format `@user:example.com`.
 
-For federation to work, the server name must be resolvable by other homeservers on the internet — that is, the domain must be registered and properly configured with the relevant DNS records.
+For federation to work, other homeservers on the internet must be able to resolve the server name.
+Register the domain and configure the relevant DNS records.
 
-Matrix servers usually discover each other when federating using the following methods:
+When federating, Matrix servers usually discover each other as follows:
 
-1. If a well-known delegation exists on `example.com`, use the domain and port from the well-known file to connect to the remote homeserver;
-2. If a DNS SRV delegation exists on `example.com`, use the IP address and port from the DNS SRV record to connect to the remote homeserver;
-3. If neither well-known nor DNS SRV delegation are configured, attempt to connect to the remote homeserver by connecting to `example.com` port TCP/8448 using HTTPS.
+1. If `example.com` has a well-known delegation, connect to the domain and port from the well-known file.
+2. If `example.com` has a DNS SRV delegation, connect to the IP address and port from the SRV record.
+3. If neither delegation exists, connect to `example.com` on port TCP/8448 using HTTPS.
 
-The exact details of how server name resolution works can be found in [the spec](https://spec.matrix.org/v1.3/server-server-api/#resolving-server-names).
+[The spec](https://spec.matrix.org/v1.3/server-server-api/#resolving-server-names) describes server name resolution in detail.
 
 ## TLS certificates
 
-Matrix federation requires that valid TLS certificates are present on the domain.
-You must obtain certificates from a publicly-trusted certificate authority (CA).
-[Let's Encrypt](https://letsencrypt.org) is a popular choice of CA because the certificates are publicly-trusted, free, and automated via the ACME protocol.
-(Self-signed certificates are not suitable for federation and will typically not be accepted by other homeservers.)
+Matrix federation requires valid TLS certificates on the domain.
+Get them from a publicly trusted certificate authority (CA).
+[Let's Encrypt](https://letsencrypt.org) is a popular CA because its certificates are publicly trusted, free, and automated through the ACME protocol.
+Other homeservers typically reject self-signed certificates, so they don't work for federation.
 
-Automating the renewal of TLS certificates is best practice.
-There are many tools for this, but the simplest way to achieve TLS automation is to have your reverse proxy do it for you.
-[Caddy](https://caddyserver.com) is recommended as a production-grade reverse proxy with automatic TLS which is commonly used in front of Zendrite.
-It obtains and renews TLS certificates automatically and by default as long as your domain name is pointed at your server first.
-Although the finer details of [configuring Caddy](https://caddyserver.com/docs/) is not described here, in general, you must reverse proxy all `/_matrix` paths to your Zendrite server.
+Automate certificate renewal.
+The simplest way is to let your reverse proxy do it.
+[Caddy](https://caddyserver.com) is a production-grade reverse proxy with automatic TLS, commonly used in front of Zendrite.
+Once your domain name points at your server, Caddy obtains and renews TLS certificates automatically by default.
+This page doesn't cover [configuring Caddy](https://caddyserver.com/docs/) in detail, but you must reverse proxy all `/_matrix` paths to your Zendrite server.
 For example, with Caddy:
 
 ```text
 reverse_proxy /_matrix/* localhost:8008
 ```
 
-It is possible for the reverse proxy to listen on the standard HTTPS port TCP/443 so long as your domain delegation is configured to point to port TCP/443.
+The reverse proxy can listen on the standard HTTPS port TCP/443 if your domain delegation points to port TCP/443.
 
 ## Delegation
 
-Delegation allows you to specify the server name and port that your Zendrite installation is reachable at, or to host the Zendrite server at a different server name to the domain that is being delegated.
+Delegation tells other servers the server name and port where your Zendrite installation is reachable.
+It also lets you host Zendrite under a different server name than the delegated domain.
 
-For example, if your Zendrite installation is actually reachable at `matrix.example.com` port 8448, you will be able to delegate from `example.com` to `matrix.example.com` so that your users will have `@user:example.com` user names instead of `@user:matrix.example.com` usernames.
+For example, if Zendrite is reachable at `matrix.example.com` port 8448, you can delegate from `example.com` to `matrix.example.com`.
+Your users then get `@user:example.com` usernames instead of `@user:matrix.example.com`.
 
-Delegation can be performed in one of two ways:
+You can delegate in one of two ways:
 
-- **Well-known delegation (preferred)**: A well-known text file is served over HTTPS on the domain name that you want to use, pointing to your server on `matrix.example.com` port 8448;
-- **DNS SRV delegation (not recommended)**: See the SRV delegation section below for details.
+- **Well-known delegation (preferred)**: a web server on the domain you want to use serves a well-known text file over HTTPS, pointing to your server on `matrix.example.com` port 8448.
+- **DNS SRV delegation (not recommended)**: see [DNS SRV delegation](#dns-srv-delegation) below.
 
-If you are using a reverse proxy to forward `/_matrix` to Zendrite, your well-known or delegation must refer to the hostname and port that the reverse proxy is listening on instead.
+If a reverse proxy forwards `/_matrix` to Zendrite, your well-known or delegation must refer to the hostname and port that the reverse proxy listens on.
 
 ## Well-known delegation
 
-Using well-known delegation requires that you are running a web server at `example.com` which is listening on the standard HTTPS port TCP/443.
+Well-known delegation requires a web server at `example.com` that listens on the standard HTTPS port TCP/443.
 
-Assuming that your Zendrite installation is listening for HTTPS connections at `matrix.example.com` on port 8448, the delegation file must be served at `https://example.com/.well-known/matrix/server` and contain the following JSON document:
+If Zendrite listens for HTTPS connections at `matrix.example.com` on port 8448, serve the delegation file at `https://example.com/.well-known/matrix/server` with this JSON document:
 
 ```json
 {
@@ -61,7 +64,7 @@ Assuming that your Zendrite installation is listening for HTTPS connections at `
 }
 ```
 
-For example, this can be done with the following Caddy config:
+For example, with Caddy:
 
 ```text
 handle /.well-known/matrix/server {
@@ -77,8 +80,9 @@ handle /.well-known/matrix/client {
 }
 ```
 
-You can also serve `.well-known` with Zendrite itself by setting the `well_known_server_name` config option to the value you want for `m.server`.
-This is primarily useful if Zendrite is exposed on `example.com:443` and you don't want to set up a separate webserver just for serving the `.well-known` file.
+Zendrite can also serve `.well-known` itself.
+Set the `well_known_server_name` config option to the value you want for `m.server`.
+This is useful if Zendrite is exposed on `example.com:443` and you don't want a separate web server only for the `.well-known` file.
 
 ```yaml
 global:
@@ -88,9 +92,10 @@ well_known_server_name: "example.com:443"
 
 ### Support contacts
 
-Zendrite also serves `/.well-known/matrix/support` ([MSC1929](https://spec.matrix.org/v1.10/client-server-api/#getwell-knownmatrixsupport)) when `global.support` is set.
+When you set `global.support`, Zendrite also serves `/.well-known/matrix/support` ([MSC1929](https://spec.matrix.org/v1.10/client-server-api/#getwell-knownmatrixsupport)).
 Clients show these contacts and the support page to users who need help with the homeserver.
-Each contact needs a `role`, either `m.role.admin`, `m.role.security` or a namespaced identifier, and a `matrix_id`, an `email_address` or both.
+Each contact needs a `role` and at least one of `matrix_id` and `email_address`.
+The `role` is `m.role.admin`, `m.role.security`, or a namespaced identifier.
 
 ```yaml
 global:
@@ -104,18 +109,19 @@ global:
     support_page: https://example.com/support
 ```
 
-Like the other `.well-known` files, it must be reachable on `example.com`, so a separate web server has to forward `/.well-known/matrix/support` to Zendrite or serve the document itself.
+Like the other `.well-known` files, this one must be reachable on `example.com`.
+A separate web server there must forward `/.well-known/matrix/support` to Zendrite or serve the document itself.
 Without `global.support`, the endpoint returns 404.
 
 ## DNS SRV delegation
 
-This method is not recommended, as the behavior of SRV records in Matrix is rather unintuitive: SRV records will only change the IP address and port that other servers connect to, they won't affect the domain name.
-In technical terms, the `Host` header and TLS SNI of federation requests will still be `example.com` even if the SRV record points at `matrix.example.com`.
+Avoid this method, because SRV records in Matrix behave in a counterintuitive way.
+An SRV record changes only the IP address and port that other servers connect to, not the domain name.
+The `Host` header and TLS SNI of federation requests stay `example.com`, even if the SRV record points at `matrix.example.com`.
 
-In practice, this means that the server must be configured with valid TLS certificates for `example.com`, rather than `matrix.example.com` as one might intuitively expect.
-If there's a reverse proxy in between, the proxy configuration must be written as if it's `example.com`, as the proxy will never see the name `matrix.example.com` in incoming requests.
+So the server needs valid TLS certificates for `example.com`, not `matrix.example.com`.
+A reverse proxy between them must be configured as if it's `example.com`, because it never sees the name `matrix.example.com` in incoming requests.
 
-This behavior also means that if `example.com` and `matrix.example.com` point at the same IP address, there is no reason to have a SRV record pointing at `matrix.example.com`.
-It can still be used to change the port number, but it won't do anything else.
+If `example.com` and `matrix.example.com` point at the same IP address, an SRV record pointing at `matrix.example.com` is useful only to change the port number.
 
 If you understand how SRV records work and still want to use them, the service name is `_matrix` and the protocol is `_tcp`.

@@ -3,60 +3,65 @@ title: FAQ
 description: Frequently asked questions about Zendrite
 ---
 
-Most of the content originated from [element-hq/dendrite](https://github.com/element-hq/dendrite) and might not be up-to-date anymore with respect to the many changes of this fork.
-Please use with caution and/or report drifts in an issue/Pull Request.
+Much of this content comes from [element-hq/dendrite](https://github.com/element-hq/dendrite) and may be out of date after the many changes in this fork.
+Use it with caution, and report drift in an issue or pull request.
 
 ## Why does Zendrite exist?
 
-Zendrite aims to provide a matrix compatible server that has low resource usage compared to [Synapse](https://github.com/element-hq/synapse).
-It also aims to provide more flexibility when scaling either up or down.
-Zendrite's code is also very easy to hack on which makes it suitable for experimenting with new Matrix features.
-It was forked from Dendrite to add [significant features](/mscs), optimisations and fixes.
+Zendrite is a Matrix-compatible server that uses fewer resources than [Synapse](https://github.com/element-hq/synapse).
+It also gives more flexibility when scaling up or down.
+Its code is easy to change, which makes it suitable for experimenting with new Matrix features.
+It was forked from Dendrite to add [significant features](/mscs), optimisations, and fixes.
 
 ## Is Zendrite stable?
 
-Mostly. It advertises Matrix spec versions up to v1.19, and it's much more stable than Dendrite used to be.
-If you are a confident power user then please try out Zendrite.
+Mostly.
+It advertises Matrix spec versions up to v1.19, and it's much more stable than Dendrite used to be.
+If you're a confident power user, try Zendrite.
 
 ## Is Zendrite feature-complete?
 
-For the Matrix specification, mostly: Zendrite advertises spec versions up to v1.19, and the [client API conformance audit](/development/client-api-conformance/) records the evidence.
-Some proposals (MSCs) that clients use but that are not in a spec release yet are still missing; [issue #558](https://codefloe.com/pat-s/zendrite/issues/558) tracks them, and [MSC support](/mscs) lists what is implemented.
+For the Matrix specification, mostly.
+Zendrite advertises spec versions up to v1.19, and the [client API conformance audit](/development/client-api-conformance/) records the evidence.
+Some proposals (MSCs) that clients use but that aren't in a spec release yet are still missing.
+[Issue #558](https://codefloe.com/pat-s/zendrite/issues/558) tracks them, and [MSC support](/mscs) lists what's implemented.
 
 ## Is there a migration path from Dendrite to Zendrite?
 
-Yes, please see [Migration from Dendrite](/administration/migration-from-dendrite)
+Yes, see [Migration from Dendrite](/administration/migration-from-dendrite).
 
 ## Is there a migration path from Synapse to Zendrite?
 
-There's [a migration script](https://github.com/Saimo/synapse-dendrite-migration) but it's unsupported and may be in need of maintenance, so take backups and test carefully first if considering it.
+There's [a migration script](https://github.com/Saimo/synapse-dendrite-migration), but it's unsupported and may need maintenance.
+If you consider it, take backups and test carefully first.
 
 ## Can I use Zendrite with an existing Synapse database?
 
-No, Zendrite has a very different database schema to Synapse and the two are not interchangeable.
+No.
+Zendrite's database schema is very different from Synapse's, and the two aren't interchangeable.
 
 ## Can I configure which port Zendrite listens on?
 
-Yes, use the cli flag `-http-bind-address`.
+Yes, use the `-http-bind-address` command-line flag.
 
 ## I've installed Zendrite but federation isn't working
 
 Check the [Federation Tester](https://federationtester.matrix.org).
 You need at least:
 
-- A valid DNS name
-- A valid TLS certificate for that DNS name
-- Either DNS SRV records or well-known files, see [Well-known delegation](/installation/domainname/#well-known-delegation)
+- A valid domain name
+- A valid TLS certificate for that domain name
+- Either SRV records or well-known files, see [Well-known delegation](/installation/domainname/#well-known-delegation)
 
 ## Whenever I try to connect from Element it says unable to connect to homeserver
 
-Check that your zendrite instance is running.
-Otherwise this is most likely due to a reverse proxy misconfiguration.
+Check that your Zendrite instance is running.
+If it is, the cause is most likely a misconfigured reverse proxy.
 
 ## Does Zendrite work with my favourite client?
 
 It should.
-If a client misbehaves against Zendrite, please open an issue.
+If a client misbehaves with Zendrite, open an issue.
 
 ## Is there a public instance of Zendrite I can try out?
 
@@ -64,13 +69,13 @@ No, there is no public Zendrite instance.
 
 ## Does Zendrite support Space Summaries?
 
-Yes
+Yes.
 
 ## Does Zendrite support Threads?
 
 Yes, threads (`m.thread` relations) work without any configuration.
 
-The older threading proposal [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) is a different, experimental feature that clients do not use for threads.
+The older threading proposal [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) is a different, experimental feature that clients don't use for threads.
 You can opt into it in the `mscs` configuration:
 
 ```yaml
@@ -80,18 +85,19 @@ mscs:
 ```
 
 See [MSC support](/mscs) for the other proposals Zendrite implements.
-Please note that opt-in MSCs should be considered experimental and can result in significant usability issues when enabled.
-If you'd like more details on how MSCs are ratified or the current status of MSCs, please see the [Matrix specification documentation](https://spec.matrix.org/proposals/) on the subject.
+Treat opt-in MSCs as experimental, because enabling them can cause significant usability problems.
+For how MSCs are ratified and their current status, see the [Matrix specification documentation](https://spec.matrix.org/proposals/).
 
 ## Does Zendrite support push notifications?
 
-Yes, Zendrite supports push notifications.
-Configure them in the usual way in your Matrix client.
+Yes.
+Configure them as usual in your Matrix client.
 
 ## Does Zendrite support application services/bridges?
 
-Possibly - Zendrite does have some application service support but it is not well tested.
-Please let us know by raising a issue if you try it and run into problems.
+Partly.
+Zendrite has some application service support, but it isn't well tested.
+If you try it and run into problems, open an issue.
 
 Bridges known to work:
 
@@ -100,76 +106,79 @@ Bridges known to work:
 - [Signal](https://docs.mau.fi/bridges/python/signal/index.html)
 - [probably all other mautrix bridges](https://docs.mau.fi/bridges/)
 
-Remember to add the config file(s) to the `app_service_api` section of the config file.
+Add each bridge's registration file to the `app_service_api` section of the Zendrite config file.
 
 ## Is it possible to prevent communication with the outside world?
 
-Yes, you can do this by disabling federation - set `disable_federation` to `true` in the `global` section of the Zendrite configuration file.
+Yes, disable federation.
+Set `disable_federation` to `true` in the `global` section of the Zendrite config file.
 
-## How can I migrate a room in order to change the internal ID?
+## How can I migrate a room to change its internal ID?
 
-This can be done by performing a room upgrade.
-Use the command `/upgraderoom <version>` in Element to do this.
+Upgrade the room.
+In Element, run `/upgraderoom <version>`.
 
 ## How do I reset somebody's password on my server?
 
-Use the admin endpoint [resetpassword](/administration/adminapi#post-_zendriteadminresetpassworduserid)
+Use the [`resetPassword`](/administration/adminapi#post-_zendriteadminresetpassworduserid) admin endpoint.
 
 ## Should I use PostgreSQL or SQLite for my databases?
 
-Please use PostgreSQL wherever possible, especially if you are planning to run a homeserver that caters to more than a couple of users.
+Use PostgreSQL wherever possible, especially if your homeserver serves more than a couple of users.
 
 ## What data needs to be kept if transferring/backing up Zendrite?
 
-The list of files that need to be stored is:
+Keep these files:
 
 - `matrix_key.pem`
 - `zendrite.yaml`
-- the postgres or sqlite DB
-- the jetstream directory
+- the PostgreSQL or SQLite database
+- the JetStream directory
 - the media store
-- the search index (although this can be regenerated)
+- the search index (Zendrite can regenerate it)
 
-Note that this list may be out of date.
-We don't officially maintain instructions for migrations like this.
+This list may be out of date.
+There are no official instructions for migrations like this.
 
 ## How can I prepare enough storage for media caches?
 
-This might be what you want: [matrix-media-repo](https://github.com/turt2live/matrix-media-repo)
-We don't officially support this or any other dedicated media storage solutions.
+Try [matrix-media-repo](https://github.com/turt2live/matrix-media-repo).
+Zendrite doesn't officially support it or any other dedicated media storage solution.
 
 ## Zendrite is using a lot of CPU
 
-Generally speaking, you should expect to see some CPU spikes, particularly if you are joining or participating in large rooms.
-However, constant/sustained high CPU usage is not expected - if you are experiencing that, please open an issue and let us know what you were doing when the CPU usage shot up.
-If you can take a [CPU profile](/development/profiling) then that would be a huge help too, as that will help us to understand where the CPU time is going.
+Expect some CPU spikes, especially when you join or take part in large rooms.
+Constant high CPU usage isn't expected.
+If you see it, open an issue and describe what you were doing when the CPU usage rose.
+A [CPU profile](/development/profiling) helps a lot, because it shows where the CPU time goes.
 
 ## Zendrite is using a lot of RAM
 
-As above with CPU usage, some memory spikes are expected if Zendrite is doing particularly heavy work at a given instance.
-However, if it is using more RAM than you expect for a long time, that's probably not expected.
-If you can take a [memory profile](/development/profiling) then that would be a huge help too, as that will help us to understand where the memory usage is happening.
+As with CPU usage, expect some memory spikes while Zendrite does heavy work.
+If it uses more RAM than you expect for a long time, that's probably a problem.
+A [memory profile](/development/profiling) helps a lot, because it shows where the memory goes.
 
 ## Do I need to generate the self-signed certificate if I'm going to use a reverse proxy?
 
-No, if you already have a proper certificate from some provider, like Let's Encrypt, and use that on your reverse proxy, and the reverse proxy does TLS termination, then you're good and can use HTTP to the zendrite process.
+No.
+If your reverse proxy terminates TLS with a proper certificate from a provider such as Let's Encrypt, you can use HTTP between the proxy and the Zendrite process.
 
 ## Zendrite is running out of PostgreSQL database connections
 
-You may need to revisit the connection limit of your PostgreSQL server and/or make changes to the `max_connections` lines in your Zendrite configuration.
+Raise the connection limit (`max_connections`) of your PostgreSQL server, lower the connection limits in your Zendrite configuration, or both.
 With the `global.database` pool, all components share one pool, so its `max_open_conns` is the limit for the whole server.
-Every component that has its own `database` block with a different connection string opens its own pool with its own limit on top of that.
+Each component with its own `database` block and a different connection string opens a separate pool, and its limit adds to the global one.
 
 ## VOIP and Video Calls don't appear to work on Zendrite
 
-There is likely an issue with your STUN/TURN configuration on the server.
-If you believe your configuration to be correct, please see the [troubleshooting](/administration/troubleshooting) for troubleshooting recommendations.
+Your server's STUN/TURN configuration is the likely cause.
+If you believe your configuration is correct, see [Troubleshooting](/administration/troubleshooting).
 
 ## What is being reported when enabling phone-home statistics?
 
-Phone-home statistics contain your server's domain name, some configuration information about your deployment and aggregated information about active users on your deployment.
-They are sent to the endpoint URL configured in your Zendrite configuration file only.
-The following is an example of the data that is sent:
+Phone-home statistics contain your server's domain name, some information about your deployment's configuration, and aggregated information about its active users.
+Zendrite sends them only to the endpoint URL configured in your Zendrite configuration file.
+Here is an example of the data it sends:
 
 ```json
 {

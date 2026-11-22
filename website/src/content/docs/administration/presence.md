@@ -1,24 +1,15 @@
 ---
 title: Enabling presence
-description: Configuring online/offline status presence in Zendrite
+description: Configure online and offline presence status in Zendrite.
 ---
 
-Zendrite supports presence, which allows you to send your online/offline status to other users, and to receive their statuses automatically.
-They will be displayed by supported clients.
+Presence shares your users' online and offline status with other users and receives their status in return.
+Supported clients display it.
 
-Note that enabling presence **can negatively impact** the performance of your Zendrite server — it will require more CPU time and will increase the "chattiness" of your server over federation.
-It is disabled by default for this reason.
+Presence is disabled by default because it costs performance.
+It uses more CPU time and makes your server send more federation traffic.
 
-Zendrite has two options for controlling presence:
-
-- **Enable inbound presence**: Zendrite will handle presence updates for remote users and distribute them to local users on your homeserver;
-- **Enable outbound presence**: Zendrite will generate presence notifications for your local users and distribute them to remote users over the federation.
-
-This means that you can configure only one or other direction if you prefer, i.e. to receive presence from other servers without revealing the presence of your own users.
-
-## Configuring presence
-
-Presence is controlled by the `presence` block in the `global` section of the configuration file:
+Set the two directions in the `presence` block of the `global` section:
 
 ```yaml
 global:
@@ -27,3 +18,9 @@ global:
     enable_inbound: false
     enable_outbound: false
 ```
+
+- `enable_inbound`: Zendrite handles presence updates for remote users and passes them to your local users.
+- `enable_outbound`: Zendrite generates presence updates for your local users and sends them to remote users over federation.
+
+You can enable one direction only.
+For example, enable inbound presence to receive presence from other servers without revealing the presence of your own users.

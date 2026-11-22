@@ -1,17 +1,18 @@
 ---
 title: Coverage
-description: Running tests with code coverage analysis
+description: Run the unit tests with code coverage.
 ---
 
-## Running unit tests with coverage enabled
+## Run unit tests with coverage
 
-Running unit tests with coverage enabled can be done with the following commands.
-This will generate an `integrationcover.log`:
+Run the unit tests with coverage and print a per-function summary:
 
 ```bash
 go test -covermode=atomic -coverpkg=./... -coverprofile=integrationcover.log $(go list ./... | grep -v '/cmd/')
 go tool cover -func=integrationcover.log
 ```
+
+The first command writes the profile to `integrationcover.log`.
 
 To view coverage as an HTML report:
 

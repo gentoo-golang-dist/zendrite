@@ -1,40 +1,40 @@
 ---
 title: Contributing
-description: Guidelines for contributing to Zendrite development
+description: Set up a development environment and follow the conventions for Zendrite changes.
 ---
 
-Everyone is welcome to contribute to Zendrite!
-We aim to make it as easy as possible to get started.
+Everyone is welcome to contribute to Zendrite.
 
-## Getting up and running
+## Set up a development environment
 
-See the [Installation](/installation/planning) section for information on how to build an instance of Zendrite.
-You will likely need this in order to test your changes.
+Build an instance of Zendrite as described in [Installation](/installation/planning).
+You need one to test your changes.
 
-Local development uses the built-in NATS server with JetStream, which Zendrite starts automatically when `global.jetstream.addresses` is empty.
+For local development, Zendrite starts its built-in NATS server with JetStream when `global.jetstream.addresses` is empty.
 Set `global.jetstream.storage_path` to a persistent, writable directory as described in [JetStream configuration](/installation/manual/configuration/#jetstream-configuration).
-No separate messaging service needs to be installed for this setup.
+You don't need to install a separate messaging service for this setup.
 
 ## Pre-commit hooks
 
-This project uses [pre-commit](https://pre-commit.com/) to run checks before each commit.
-Install the hooks with:
+The project runs [pre-commit](https://pre-commit.com/) checks before each commit.
+Install the hooks:
 
 ```bash
 pre-commit install
 ```
 
-The hooks run automatically on `git commit` and include:
+The hooks run on `git commit` and include:
 
-- **golangci-lint** — Go linting and formatting (see below)
-- **markdownlint** — Markdown style enforcement
-- **prettier** — Code formatting for non-Go files (YAML, JS, CSS, etc.)
-- **yamllint** — YAML validation
-- **hadolint** — Dockerfile linting
-- **editorconfig-checker** — Consistent editor settings
-- **commitlint** — Conventional Commit message validation (see below)
+- **golangci-lint:** Go linting and formatting (see below).
+- **markdownlint:** Markdown style.
+- **prettier:** formatting for non-Go files (YAML, JS, CSS, and others).
+- **yamllint:** YAML validation.
+- **hadolint:** Dockerfile linting.
+- **editorconfig-checker:** consistent editor settings.
+- **commitlint:** Conventional Commit message validation (see below).
 
-`commitlint` runs at the `commit-msg` stage, which `pre-commit install` wires up automatically thanks to `default_install_hook_types` in the config.
+`commitlint` runs at the `commit-msg` stage.
+`pre-commit install` installs that stage too, because the config sets `default_install_hook_types`.
 
 ## Commit and pull request titles
 
@@ -44,18 +44,21 @@ Commit messages and pull request titles must follow [Conventional Commits](https
 <type>(<scope>): <subject>
 ```
 
-The scope names the affected package so changes group cleanly in the changelog, for example `fix(clientapi/routing): time out federated join requests`.
-Nested scopes such as `clientapi/routing` are allowed; use the package closest to the change.
+The scope names the affected package, so changes group cleanly in the changelog, for example `fix(clientapi/routing): time out federated join requests`.
+Nested scopes such as `clientapi/routing` are allowed.
+Use the package closest to the change.
 
 Allowed types are `build`, `chore`, `ci`, `docs`, `enh`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, and `test`.
-`WIP` is additionally allowed on local commits but never on a mergeable pull request title, since PRs are squash-merged and the title becomes the changelog entry.
+`WIP` is also allowed on local commits, but never on a mergeable pull request title.
+Pull requests are squash-merged, so the title becomes the changelog entry.
 
-Both rules are enforced locally by the `commitlint` pre-commit hook and in CI by the `Commitlint` workflow, which validates the pull request title.
+The `commitlint` pre-commit hook enforces both rules locally.
+In CI, the `Commitlint` workflow validates the pull request title.
 
 ## Code style
 
-Go formatting is handled automatically by `golangci-lint`, which runs `gofmt`, `gofumpt`, and `gci` (import ordering).
-You do not need to run these manually — pre-commit will apply them on each commit.
+`golangci-lint` formats Go code by running `gofmt`, `gofumpt`, and `gci` (import ordering).
+You don't need to run these by hand, because pre-commit applies them on each commit.
 
 Import ordering follows the `gci` convention configured in `.golangci.yaml`:
 
@@ -65,43 +68,44 @@ Import ordering follows the `gci` convention configured in `.golangci.yaml`:
 
 ## Comments
 
-Please make sure that the comments adequately explain _why_ your code does what it does.
-If there are statements that are not obvious, please comment what they do.
+Write comments that explain _why_ your code does what it does.
+Comment any statement whose purpose isn't obvious.
 
-We also have some special tags which we use for searchability:
+Use these tags so others can search for them:
 
-- `// TODO:` for places where a future review, rewrite or refactor is likely required.
-- `// FIXME:` for places where we know there is an outstanding bug that needs a fix.
-- `// NOTSPEC:` for places where the behaviour specifically does not match what the [Matrix Specification](https://spec.matrix.org/) prescribes, along with a description of _why_ that is the case.
+- `// TODO:` marks code that likely needs a future review, rewrite, or refactor.
+- `// FIXME:` marks a known outstanding bug.
+- `// NOTSPEC:` marks behavior that deliberately differs from the [Matrix Specification](https://spec.matrix.org/), with a description of _why_.
 
 ## Linting
 
-Linting is configured in `.golangci.yaml` and runs via [golangci-lint](https://github.com/golangci/golangci-lint).
-It runs automatically as a pre-commit hook, but you can also run it manually:
+`.golangci.yaml` configures [golangci-lint](https://github.com/golangci/golangci-lint).
+It runs as a pre-commit hook, and you can also run it by hand:
 
 ```bash
 prek run golangci-lint --all-files
 ```
 
-This command and `just lint`, which invokes the same hook, require `prek` on `PATH`.
+This command and `just lint`, which invokes the same hook, need `prek` on `PATH`.
 The hook uses the version pinned in `.pre-commit-config.yaml` and the `test` and `goolm` build tags configured in `.golangci.yaml`.
 
-If you are receiving linter warnings that you are certain are spurious and want to silence them, you can annotate the relevant lines or methods with a `// nolint:` comment.
-Please avoid doing this if you can.
+If you're certain a linter warning is spurious, silence it with a `// nolint:` comment on the relevant line or method.
+Avoid this where you can.
 
 ## Unit tests
 
-We also have unit tests which we run via:
+Run the unit tests:
 
 ```bash
 go test -tags goolm -race ./...
 ```
 
-The `goolm` tag selects the pure-Go Olm implementation for the end-to-end encryption tests; without it they need the C `libolm` library.
-This runs both SQLite and PostgreSQL tests.
-If you wish to execute Postgres tests, you'll either need to have Postgres installed locally (`createdb` will be used) or have a remote/containerized Postgres instance available.
+The `goolm` tag selects the pure-Go Olm implementation for the end-to-end encryption tests.
+Without it, those tests need the C `libolm` library.
+The command runs both the SQLite and PostgreSQL tests.
+The PostgreSQL tests need either a local PostgreSQL install (they use `createdb`) or a remote or containerized PostgreSQL instance.
 
-To configure the connection to a remote Postgres, you can use the following environment variables:
+To connect to a remote PostgreSQL, set these environment variables:
 
 ```bash
 POSTGRES_USER=postgres
@@ -110,50 +114,55 @@ POSTGRES_HOST=localhost
 POSTGRES_DB=postgres # the superuser database to use
 ```
 
-In general, we like submissions that come with tests.
-Anything that proves that the code is functioning as intended is great, and to ensure that we will find out quickly in the future if any regressions happen.
+Include tests with your changes.
+A test proves the code works as intended and catches future regressions early.
 
-We use the standard [Go testing package](https://gobyexample.com/testing) for this, alongside some helper functions in our own `test` package.
+Tests use the standard [Go testing package](https://gobyexample.com/testing) plus helper functions in Zendrite's own `test` package.
 
 ## Changing shared state
 
-HA deployments run an old and a new build against the same database and streams during a [rolling upgrade](/administration/high-availability/#rolling-upgrades), so a change to that shared state needs a new HA upgrade level.
-`TestContractSurface` in `setup/ha` creates every table in a fresh PostgreSQL database and compares the schema, the recorded migrations and the JetStream stream definitions with `setup/ha/testdata/surface.txt`.
-When it fails, raise `Level` in `setup/ha/contract.go` and decide the other two fields:
+During a [rolling upgrade](/administration/high-availability/#rolling-upgrades), an HA deployment runs an old and a new build against the same database and streams.
+A change to that shared state needs a new HA upgrade level.
+`TestContractSurface` in `setup/ha` creates every table in a fresh PostgreSQL database.
+It then compares the schema, the recorded migrations, and the JetStream stream definitions with `setup/ha/testdata/surface.txt`.
+When it fails, raise `Level` in `setup/ha/contract.go` and set the other two fields:
 
 - Keep `UpgradeFrom` and `RollbackTo` at the previous level when the change is backward compatible, such as a new table, a nullable column, or a new optional message field.
-- Raise `RollbackTo` when an older build cannot work with what this one writes, such as a dropped column it reads or a message it cannot decode.
-- Raise `UpgradeFrom` when this build cannot take over from an older one, such as a changed stream or a migration that needs the old build stopped first; that makes the upgrade offline.
+- Raise `RollbackTo` when an older build can't work with what this one writes, such as a dropped column it reads or a message it can't decode.
+- Raise `UpgradeFrom` when this build can't take over from an older one, such as a changed stream or a migration that needs the old build stopped first.
+  This makes the upgrade offline.
 
-Then record the level with `go test ./setup/ha -run TestContractSurface -update`, which adds it to `setup/ha/testdata/levels.json`, the published upgrade matrix.
-The test cannot see message formats, so a change to a JetStream message that an older build cannot decode needs the same treatment without a failing test.
+Then record the level with `go test ./setup/ha -run TestContractSurface -update`.
+This adds the level to `setup/ha/testdata/levels.json`, the published upgrade matrix.
+The test can't see message formats.
+A change to a JetStream message that an older build can't decode needs the same treatment, even though no test fails.
 
 ## Continuous integration
 
-When a Pull Request is submitted, continuous integration jobs are run automatically by Forgejo Actions to ensure that the code builds and works.
-CI will run `golangci-lint` and then execute unit tests split by package group (syncapi, clientapi, roomserver, userapi, federationapi, and other) with both SQLite and PostgreSQL.
+When you open a pull request, Forgejo Actions runs CI jobs to check that the code builds and works.
+CI runs `golangci-lint`, then runs the unit tests split by package group (syncapi, clientapi, roomserver, userapi, federationapi, and other) on both SQLite and PostgreSQL.
 
-You can see the progress of any CI jobs at the bottom of the Pull Request page, or by looking at the Actions tab of the repository.
+You can follow CI progress at the bottom of the pull request page, or in the repository's Actions tab.
 
-We generally won't accept a submission unless all of the CI jobs are passing.
-We do understand though that sometimes the tests get things wrong — if that's the case, please also raise a pull request to fix the relevant tests!
+A pull request needs all CI jobs to pass before it's accepted.
+If a test itself is wrong, open a pull request that fixes the test.
 
-### Running checks locally
+### Run checks locally
 
-To save waiting for CI to finish after every commit, it is ideal to run the checks locally before pushing, fixing errors first.
-This also saves other people time as only so many PRs can be tested at a given time.
+Run the checks locally before you push, and fix any errors first.
+This saves waiting on CI and frees CI capacity for other pull requests.
 
-The simplest way is to rely on the pre-commit hooks, which run `golangci-lint` and other checks on each commit.
-You can also run them manually against all files:
+The pre-commit hooks run `golangci-lint` and other checks on each commit.
+To run them against all files:
 
 ```bash
 pre-commit run --all-files
 ```
 
-To run the full test suite locally:
+To run the full test suite:
 
 ```bash
 go test -tags goolm -race ./...
 ```
 
-If these steps report no problems, the code should be able to pass the CI tests.
+If both pass, the code should pass CI.

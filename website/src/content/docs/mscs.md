@@ -1,15 +1,16 @@
 ---
 title: MSC Support
-description: Implementation status of Matrix Spec Changes (MSCs) in Zendrite.
+description: Which Matrix Spec Changes (MSCs) Zendrite implements, and how.
 ---
 
-[MSCs](https://spec.matrix.org/proposals/) (Matrix Spec Changes) are proposals to extend or modify the Matrix protocol.
-This page tracks the implementation status of notable MSCs in Zendrite.
+[MSCs](https://spec.matrix.org/proposals/) (Matrix Spec Changes) are proposals to extend or change the Matrix protocol.
+This page tracks which notable MSCs Zendrite implements.
 
-Many MSCs listed here have since been merged into the [Matrix specification](https://spec.matrix.org/) proper.
-They are listed by their original MSC number and the first spec version which includes them.
-Zendrite advertises spec versions up to v1.19; see the [client API conformance audit](/development/client-api-conformance/) for the evidence and the discovery policy.
-Open MSCs that clients use and Zendrite does not implement yet are tracked in [issue #684](https://codefloe.com/pat-s/zendrite/issues/684), which follows [issue #558](https://codefloe.com/pat-s/zendrite/issues/558).
+Many of these MSCs are now part of the [Matrix specification](https://spec.matrix.org/).
+The tables list each one by its original MSC number and the first spec version that includes it.
+Zendrite advertises spec versions up to v1.19.
+The [client API conformance audit](/development/client-api-conformance/) gives the evidence and the discovery policy.
+[Issue #684](https://codefloe.com/pat-s/zendrite/issues/684), the successor of [issue #558](https://codefloe.com/pat-s/zendrite/issues/558), tracks open MSCs that clients use but Zendrite does not implement yet.
 
 ## Sync
 
@@ -26,132 +27,177 @@ Open MSCs that clients use and Zendrite does not implement yet are tracked in [i
 | [MSC4480](https://github.com/matrix-org/matrix-spec-proposals/pull/4480) | Sliding sync extension: sticky events | N/A | Implemented: the `org.matrix.msc4354.sticky_events` extension |
 | [MSC4262](https://github.com/matrix-org/matrix-spec-proposals/pull/4262) | Sliding sync extension: profile updates | N/A | Implemented (unstable prefix): see [profile updates in sliding sync](#profile-updates-in-sliding-sync) |
 | [MSC4429](https://github.com/matrix-org/matrix-spec-proposals/pull/4429) | Profile updates for legacy sync | N/A | Implemented (unstable prefix): see [profile updates in `/sync`](#profile-updates-in-sync) |
-| [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) | `state_after` in `/sync` | 1.16 | Implemented: with `use_state_after=true`, joined and left rooms carry `state_after`, the state at the end of the timeline, instead of `state`. The unstable `org.matrix.msc4222.use_state_after` parameter is answered with `org.matrix.msc4222.state_after`. See [state after the timeline](#state-after-the-timeline) |
-| [MSC4445](https://github.com/matrix-org/matrix-spec-proposals/pull/4445) | Clarify `/sync` timeline order | N/A | Implemented (unstable prefix): the timeline of a room a sync sends for the first time is in topological order, an incremental timeline in stream order. See [timeline order](#timeline-order) |
-| [MSC4319](https://github.com/matrix-org/matrix-spec-proposals/pull/4319) | Room member events for invite and knock rooms in `/sync` | N/A (accepted) | Implemented: invited and knocked rooms carry the invite or knock in full under `state` and the unstable `org.matrix.msc4319.state`, and sliding sync sends it as their `required_state`. `invite_state` and `knock_state` keep the stripped event for older clients. The stripped state of invites Zendrite sends holds the inviter's membership and the topic |
+| [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) | `state_after` in `/sync` | 1.16 | Implemented: with `use_state_after=true`, joined and left rooms return `state_after` (the state at the end of the timeline) instead of `state`. Zendrite answers the unstable `org.matrix.msc4222.use_state_after` parameter with `org.matrix.msc4222.state_after`. See [state after the timeline](#state-after-the-timeline) |
+| [MSC4445](https://github.com/matrix-org/matrix-spec-proposals/pull/4445) | Clarify `/sync` timeline order | N/A | Implemented (unstable prefix): when a sync sends a room for the first time, its timeline is in topological order. Incremental timelines are in stream order. See [timeline order](#timeline-order) |
+| [MSC4319](https://github.com/matrix-org/matrix-spec-proposals/pull/4319) | Room member events for invite and knock rooms in `/sync` | N/A (accepted) | Implemented: invited and knocked rooms include the full invite or knock event under `state` and the unstable `org.matrix.msc4319.state`, and sliding sync sends it as their `required_state`. `invite_state` and `knock_state` keep the stripped event for older clients. The stripped state of invites that Zendrite sends includes the inviter's membership and the topic |
 
 ### Sliding sync extensions
 
-Zendrite serves sliding sync at two paths with the same rooms and lists, which differ only in their extensions:
+Zendrite serves sliding sync at two paths.
+Both return the same rooms and lists, and differ only in their extensions:
 
-- `/_matrix/client/unstable/org.matrix.simplified_msc3575/sync`, Synapse's path, which Element X uses, keeps Synapse's formats: `to_device` messages under `events`, and typing and receipts as full `m.typing` and `m.receipt` events per room.
-- `/_matrix/client/v4/sync` follows the extension MSCs, which are accepted: `to_device` messages under `messages`, and per room the bare `{"user_ids": [...]}` of typing and the bare receipt content.
+- `/_matrix/client/unstable/org.matrix.simplified_msc3575/sync` is Synapse's path, which Element X uses.
+  It keeps Synapse's formats: `to_device` messages under `events`, and typing and receipts as full `m.typing` and `m.receipt` events per room.
+- `/_matrix/client/v4/sync` follows the accepted extension MSCs: `to_device` messages under `messages`, and per room the bare `{"user_ids": [...]}` for typing and the bare receipt content.
 
-On `/v4/sync`, each extension can be requested under its unprefixed key or the unstable one (`org.matrix.msc4508.typing`, `org.matrix.msc4538.to_device`, `org.matrix.msc4543.e2ee`, `org.matrix.msc4548.account_data`, `org.matrix.msc4551.receipts`), and its response uses the key of the request.
-`"*"` in the `lists` and `rooms` of an extension does not match everything there, since MSC4508 dropped it; a `lists` of `["*"]` matches nothing.
-A `to_device` `limit` that is not a positive integer is 400 `M_BAD_JSON`, and a `since` that is not a `next_batch` of the extension is 400 `M_INVALID_PARAM`.
+On `/v4/sync`, a client can request each extension under its unprefixed key or its unstable key (`org.matrix.msc4508.typing`, `org.matrix.msc4538.to_device`, `org.matrix.msc4543.e2ee`, `org.matrix.msc4548.account_data`, `org.matrix.msc4551.receipts`).
+The response uses the key of the request.
+
+`"*"` in an extension's `lists` and `rooms` does not match everything, because MSC4508 dropped the wildcard.
+A `lists` of `["*"]` matches nothing.
+A `to_device` `limit` that is not a positive integer returns 400 `M_BAD_JSON`, and a `since` that is not a `next_batch` of the extension returns 400 `M_INVALID_PARAM`.
 The unstable path accepts both, as Synapse does.
 
 On both paths:
 
-- Typing and receipts are only sent for rooms the user is joined to, although lists also hold invites, knocks and rooms the user was kicked from.
-- A room the response sends carries its current typing state, so a room entering a list's range shows who is typing even if that started before `pos`.
-- The first response of a connection with the account data extension enabled carries all global account data, also when the extension is enabled after the connection's first request.
+- Zendrite sends typing and receipts only for joined rooms, although lists also include invites, knocks, and rooms the user was kicked from.
+- Each room in a response includes its current typing state.
+  A room that enters a list's range shows who is typing, even if the typing started before `pos`.
+- The first response of a connection with the account data extension enabled includes all global account data.
+  This also applies when the client enables the extension after the connection's first request.
   Connections from before Zendrite tracked this receive their global account data once more.
-- `to_device` returns at most `limit` messages, 100 by default, with `next_batch` naming the last one, and the connection position stops there too, so clients with and without `since` receive the rest next.
-  Messages are deleted once a request acknowledges them with `since`, or without it with `pos`; a `since` beyond the latest message deletes nothing.
-- `/keys/changes` accepts a sliding sync `pos` as `from` and `to` (MSC4543), also after the connection has expired, since the `pos` carries its stream position.
+- `to_device` returns at most `limit` messages (default 100), with `next_batch` naming the last one.
+  The connection position stops there too, so clients with and without `since` receive the rest next.
+  Zendrite deletes messages once a request acknowledges them with `since`, or with `pos` when the request has no `since`.
+  A `since` beyond the latest message deletes nothing.
+- `/keys/changes` accepts a sliding sync `pos` as `from` and `to` (MSC4543), even after the connection has expired, because the `pos` contains its stream position.
 
-`/versions` advertises `org.matrix.msc4508`, `org.matrix.msc4538`, `org.matrix.msc4543`, `org.matrix.msc4548` and `org.matrix.msc4551`, each with its `.stable` flag.
+`/versions` advertises `org.matrix.msc4508`, `org.matrix.msc4538`, `org.matrix.msc4543`, `org.matrix.msc4548`, and `org.matrix.msc4551`, each with its `.stable` flag.
 
-The receipts extension follows the delivery rules of MSC4551 on both paths:
+The receipts extension follows the MSC4551 delivery rules on both paths:
 
-- A room entering the extension's scope for the first time on a connection gets its initial receipts: the user's own receipts, and every user's receipts on the events of its timeline in the response.
+- A room that enters the extension's scope for the first time on a connection gets its initial receipts: the user's own receipts, and every user's receipts on the timeline events in the response.
   This includes the first request of a connection, enabling the extension partway through, and rejoining a room.
-- Any other room in scope gets the receipts that changed since they were last sent, which covers the changes made while it was out of scope.
-- A room sent with `initial` or `expanded_timeline` also gets every user's receipts on the events of its timeline, and the user's own receipts, even those already sent.
-- What a response sends stays pending until a request carries its `pos`, which acknowledges it and forgets what every other response sent, so a retry after a lost response gets those receipts again.
-- A room the user is not joined to gets nothing, and the connection forgets its receipts, so a rejoined room enters scope for the first time.
-  Forgetting is not undone by a retry, so in the rare case of a lost response that forgot a room the user then rejoins, other users' receipts that changed meanwhile are only sent when they next change.
+- Any other room in scope gets the receipts that changed since Zendrite last sent them, including changes made while the room was out of scope.
+- A room sent with `initial` or `expanded_timeline` also gets every user's receipts on its timeline events, and the user's own receipts, even if already sent.
+- What a response sends stays pending until a request includes its `pos`.
+  That request acknowledges it and discards what every other response sent, so a retry after a lost response gets those receipts again.
+- A room the user has not joined gets nothing, and the connection forgets its receipts, so a rejoined room enters scope for the first time.
+  A retry does not undo the forgetting.
+  In the rare case where a lost response forgot a room that the user then rejoins, Zendrite sends other users' receipts that changed meanwhile only when they next change.
 
 ### Sticky events
 
-`/versions` advertises `org.matrix.msc4354` in `unstable_features`, which Element Call needs before it sends call memberships as sticky events.
+`/versions` advertises `org.matrix.msc4354` in `unstable_features`.
+Element Call needs this flag before it sends call memberships as sticky events.
+
 `PUT /_matrix/client/v3/rooms/{roomId}/send/{eventType}/{txnId}` accepts `org.matrix.msc4354.sticky_duration_ms` and puts it into the event as `msc4354_sticky.duration_ms`.
-As in Synapse, the duration must be a non-negative integer, otherwise the request fails with 400 `M_INVALID_PARAM`, and durations above an hour are kept in the event but count as one hour.
-The parameter is ignored when sending state events.
+As in Synapse, the duration must be a non-negative integer, or the request fails with 400 `M_INVALID_PARAM`.
+Zendrite keeps durations above an hour in the event but counts them as one hour.
+Zendrite ignores the parameter for state events.
 
-An event stays sticky from the earlier of its `origin_server_ts` and the time Zendrite received it, for its duration of at most an hour.
+An event stays sticky for its duration (at most an hour), starting from the earlier of its `origin_server_ts` and the time Zendrite received it.
 Redacting an event removes its stickiness.
-While an event is sticky, `/sync` delivers it in a `msc4354_sticky.events` section of its joined room, unless the timeline of the same response carries it after the timeline filter.
-Each sticky event is delivered once as the client's sync position advances, at most 100 per response, and joining a room delivers all of the room's sticky events at once.
-Sticky events of ignored users are left out, and with lazy-loaded members their senders' memberships are included.
-Sticky events in the sticky section and in timelines carry `unsigned.msc4354_sticky_duration_ttl_ms`, the milliseconds until they expire.
+While an event is sticky, `/sync` delivers it in a `msc4354_sticky.events` section of its joined room, unless the same response's timeline includes it after the timeline filter.
+`/sync` delivers each sticky event once as the client's sync position advances, at most 100 per response.
+Joining a room delivers all the room's sticky events at once.
 
-Sliding sync delivers sticky events through the `org.matrix.msc4354.sticky_events` extension, for every joined room the lists or room subscriptions match, also outside the lists' windows.
-The extension takes `since` and `limit` (default 100), and answers with `rooms` and `next_batch`, or is left out when there is nothing to deliver.
-Sticky events in the timelines of the response are left out of the extension and carry their TTL in the timeline instead, when the extension is enabled.
+Zendrite leaves out sticky events of ignored users.
+With lazy-loaded members, the response includes the senders' memberships.
+Sticky events in the sticky section and in timelines include `unsigned.msc4354_sticky_duration_ttl_ms`, the milliseconds until they expire.
 
-History visibility does not hide sticky events from joined users, in `/sync`, sliding sync, `/messages`, `/context`, `/event` and the other endpoints that filter by it.
-`/sync` and sliding sync timelines keep the usual rules, as sticky events reach clients through their own section.
+Sliding sync delivers sticky events through the `org.matrix.msc4354.sticky_events` extension for every joined room that the lists or room subscriptions match, even outside the lists' windows.
+The extension takes `since` and `limit` (default 100) and answers with `rooms` and `next_batch`.
+Zendrite leaves the extension out when there is nothing to deliver.
+When the extension is enabled, sticky events in the response's timelines are left out of the extension and include their TTL in the timeline instead.
 
-When a server joins a room, Zendrite sends it the sticky events that local users sent there and that are still sticky.
-Zendrite remembers these events in memory, so after a restart it only sends sticky events created since.
-Soft-failed sticky events are not re-evaluated when the room state changes.
+History visibility does not hide sticky events from joined users in `/sync`, sliding sync, `/messages`, `/context`, `/event`, and the other endpoints that filter by it.
+`/sync` and sliding sync timelines keep the usual rules, because sticky events reach clients through their own section.
+
+When a server joins a room, Zendrite sends it the still-sticky events that local users sent there.
+Zendrite keeps these events in memory, so after a restart it sends only sticky events created since then.
+Zendrite does not re-evaluate soft-failed sticky events when the room state changes.
 
 ### Profile updates in sliding sync
 
-`/versions` advertises `org.matrix.msc4262` in `unstable_features`, and sliding sync serves the `org.matrix.msc4262.profiles` extension with the request and response shape of Synapse.
-The extension takes `enabled`, an optional `fields` list (all fields when it is left out), and the usual `lists` and `rooms` filters.
-It answers with `users`, which maps a user ID to the fields that were set or changed under `updated` and the fields that were removed under `removed`, each present only when not empty, or to `null` when the syncing user no longer shares any room with that user.
-The extension is left out of a response with nothing to deliver.
+`/versions` advertises `org.matrix.msc4262` in `unstable_features`.
+Sliding sync serves the `org.matrix.msc4262.profiles` extension with Synapse's request and response shape.
 
-- The first time a joined room is sent on a connection, or when the `fields` filter changed since it was, the whole profiles of its members are sent.
-  When the room's members load lazily (`["m.room.member", "$LAZY"]` or `lazy_members`), only the timeline senders and the member state in the response are sent, along with the room's heroes the first time.
+The extension takes `enabled`, an optional `fields` list (all fields when omitted), and the usual `lists` and `rooms` filters.
+It answers with `users`, which maps a user ID to an object or to `null`.
+The object lists set or changed fields under `updated` and removed fields under `removed`, each present only when not empty.
+`null` means the syncing user no longer shares any room with that user.
+
+Zendrite leaves the extension out of a response with nothing to deliver.
+
+- The first time a connection sends a joined room, or when the `fields` filter changed since then, Zendrite sends the whole profiles of the room's members.
+  When the room's members load lazily (`["m.room.member", "$LAZY"]` or `lazy_members`), it sends only the timeline senders and the member state in the response, plus the room's heroes the first time.
 - An initial sync also sends the syncing user's own profile.
-- Every change a local user who shares a joined room with the syncing user makes to their profile is sent, also when the room is outside the lists' windows, and so are the syncing user's own changes.
+- Zendrite sends every profile change by a local user who shares a joined room with the syncing user, even when the room is outside the lists' windows.
+  It also sends the syncing user's own changes.
 - Users who join a room shared with the syncing user have their whole profile sent.
-- A change is acknowledged only when the client syncs from the `pos` of the response that carried it; syncing again from an older `pos` sends it again.
+- A change counts as acknowledged only when the client syncs from the `pos` of the response that included it.
+  Syncing again from an older `pos` sends it again.
 
 Profile changes reach sliding sync through a profile updates stream in the sync API database, with its own position in the sync token.
-Which rooms of a connection have had their members' profiles sent is stored per connection position in the database, like the rest of the connection state, so a successor in a high availability deployment continues from it.
+Like the rest of the connection state, the database stores per connection position which rooms have had their members' profiles sent.
+A successor in a high availability deployment continues from there.
 
 Zendrite does not track the global profiles of remote users.
-Their profiles are the display name and avatar URL of their membership event in a shared room, and a change is sent when a new membership event changes them.
-Their custom fields are not sent.
-Removing custom fields by deactivating an account is not sent.
-One response reads at most 1,000 profile changes and 1,000 membership events per room; further profile changes follow in the next response.
-`/sync` carries the same profile updates for clients that opt in, see [profile updates in `/sync`](#profile-updates-in-sync).
+For them, the profile is the display name and avatar URL of their membership event in a shared room.
+Zendrite sends a change when a new membership event changes them.
+Zendrite does not send their custom fields.
+It also does not send the removal of custom fields when an account is deactivated.
+
+One response reads at most 1,000 profile changes and 1,000 membership events per room.
+Further profile changes follow in the next response.
+`/sync` returns the same profile updates for clients that opt in: see [profile updates in `/sync`](#profile-updates-in-sync).
 
 ### Profile updates in `/sync`
 
-`/versions` advertises `org.matrix.msc4429` in `unstable_features`, and `/sync` carries profile updates ([MSC4429](https://github.com/matrix-org/matrix-spec-proposals/pull/4429)) with the request and response shape of Synapse.
-A client opts in with the `org.matrix.msc4429.profile_fields` filter field, whose `ids` list the profile fields it wants, for example `{"org.matrix.msc4429.profile_fields": {"ids": ["displayname", "avatar_url", "m.tz"]}}`.
-The field works in an inline filter and in one stored with `POST /user/{userId}/filter`.
+`/versions` advertises `org.matrix.msc4429` in `unstable_features`.
+`/sync` returns profile updates ([MSC4429](https://github.com/matrix-org/matrix-spec-proposals/pull/4429)) with Synapse's request and response shape.
+
+A client opts in with the `org.matrix.msc4429.profile_fields` filter field.
+Its `ids` list the profile fields the client wants, for example `{"org.matrix.msc4429.profile_fields": {"ids": ["displayname", "avatar_url", "m.tz"]}}`.
+The field works in an inline filter and in a filter stored with `POST /user/{userId}/filter`.
 Without it, or with an empty `ids`, `/sync` sends no profile updates.
 
-The response carries `org.matrix.msc4429.users`, which maps a user ID to `profile_updates`: the requested fields that were set or changed, with `null` for fields that were removed, or `null` instead of the object when the syncing user no longer shares any room with that user.
-The key is left out of a response with nothing to deliver.
+The response includes `org.matrix.msc4429.users`, which maps a user ID to `profile_updates`.
+That object lists the requested fields that were set or changed, with `null` for removed fields.
+A user ID maps to `null` instead when the syncing user no longer shares any room with that user.
+Zendrite leaves the key out of a response with nothing to deliver.
 
 - An initial sync sends the syncing user's own profile.
-- The members whose membership event a joined room of the response carries in its state, or on an initial sync in its timeline, have their requested fields sent.
-  Without lazy-loaded members, that is every member of every joined room on an initial sync, and of a room the user just joined.
-  With `lazy_load_members`, it is the members the response loads, so a member's profile follows their membership event and is sent again only when a later response loads the member again.
-- Every change a local user who shares a joined room with the syncing user makes to a requested field is sent, and so are the syncing user's own changes.
+- Zendrite sends the requested fields of each member whose membership event a joined room in the response includes in its state, or in its timeline on an initial sync.
+  Without lazy-loaded members, that is every member of every joined room on an initial sync, and of a newly joined room.
+  With `lazy_load_members`, it is the members the response loads.
+  A member's profile follows their membership event, and Zendrite sends it again only when a later response loads the member again.
+- Zendrite sends every change to a requested field by a local user who shares a joined room with the syncing user, and the syncing user's own changes.
 - Users who join a room shared with the syncing user have their requested fields sent.
-- The display name and avatar URL of remote users come from their membership events, as in [sliding sync](#profile-updates-in-sliding-sync); their custom fields are not sent.
+- The display name and avatar URL of remote users come from their membership events, as in [sliding sync](#profile-updates-in-sliding-sync).
+  Zendrite does not send their custom fields.
 
 A long-polling `/sync` that opted in returns when one of these updates arrives.
-One that did not opt in, or whose fields did not change, carries the profile position forward and keeps waiting.
-The updates reuse the profile updates stream and position of the sliding sync extension, so no extra state is stored.
-One response reads at most 1,000 profile changes and 1,000 membership events per room; further profile changes follow in the next response.
+When the request did not opt in or its fields did not change, Zendrite advances its profile position and keeps it waiting.
+The updates reuse the profile updates stream and position of the sliding sync extension, so Zendrite stores no extra state.
+One response reads at most 1,000 profile changes and 1,000 membership events per room.
+Further profile changes follow in the next response.
 
 ### State after the timeline
 
-A client that opts in to [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) must not apply the state events of the timeline itself, so `state_after` holds them as well.
-An initial sync, a sync with `full_state=true` and a sync that newly joined a room send the room's whole current state.
+A client that opts in to [MSC4222](https://github.com/matrix-org/matrix-spec-proposals/pull/4222) must not apply the timeline's state events itself, so `state_after` includes them too.
+An initial sync, a sync with `full_state=true`, and a sync that newly joined a room send the room's whole current state.
 An incremental sync sends the state changes between the `since` token and the end of the timeline, including those of a gappy (`limited`) timeline.
 For a room the user left, the state ends at their leave.
-`state_after` is sent even when it is empty, and the `state` filter applies to it.
-With `lazy_load_members`, it holds the memberships of the timeline senders, and an incremental sync keeps every membership change.
+
+Zendrite sends `state_after` even when it is empty, and the `state` filter applies to it.
+With `lazy_load_members`, it includes the timeline senders' memberships, and an incremental sync keeps every membership change.
 Zendrite advertises `org.matrix.msc4222` in `unstable_features` for clients that check it before opting in.
 
 ### Timeline order
 
-As in Synapse, the timeline of a room that a sync sends for the first time is a section of the room's history, so it holds the room's latest events in topological order, as `/messages` returns them: by depth, with the order in which the server received them breaking ties.
-That covers the rooms of an initial sync (joined, peeked and, with `include_leave`, left rooms, whose timeline ends at the leave), a room that an incremental sync newly joined, and a room that a sliding sync connection sends for the first time or with a larger `timeline_limit`.
-Its `prev_batch` continues `/messages` just before the first event of the timeline in that order, and `limited` is set when the room holds older events.
-An incremental timeline holds the events that arrived since the `since` token, in the order the server received them, so events that arrive late, such as those of a fork after a netsplit, are sent even when they are older in the DAG.
+As in Synapse, when a sync sends a room for the first time, the timeline is a section of the room's history.
+It contains the room's latest events in topological order, as `/messages` returns them: by depth, with the order in which the server received them breaking ties.
+This covers:
+
+- the rooms of an initial sync: joined, peeked, and, with `include_leave`, left rooms, whose timeline ends at the leave
+- a room that an incremental sync newly joined
+- a room that a sliding sync connection sends for the first time, or with a larger `timeline_limit`
+
+Its `prev_batch` continues `/messages` right before the first timeline event in that order, and `limited` is set when the room has older events.
+An incremental timeline contains the events that arrived since the `since` token, in the order the server received them.
+So Zendrite sends late events, such as those of a fork after a netsplit, even when they are older in the DAG.
 Backfilled events never appear in `/sync` timelines.
 `/versions` advertises `org.matrix.msc4445.initial_sync_timeline_topological_ordering` in `unstable_features`, as Synapse does.
 
@@ -162,27 +208,27 @@ Backfilled events never appear in `/sync` timelines.
 | [MSC2675](https://github.com/matrix-org/matrix-spec-proposals/pull/2675) | Serverside aggregations of message relationships | 1.3 | Implemented: [bundled aggregations](#bundled-aggregations), and `/relations` in topological order with `/messages` and `/sync` tokens |
 | [MSC4492](https://github.com/matrix-org/matrix-spec-proposals/pull/4492) | Pagination tokens are directionless | N/A (accepted) | Implemented: see [pagination tokens](#pagination-tokens) |
 | [MSC3981](https://github.com/matrix-org/matrix-spec-proposals/pull/3981) | Recursive relations | 1.10 | Implemented: `recurse` follows relations three levels deep |
-| [MSC2676](https://github.com/matrix-org/matrix-spec-proposals/pull/2676) | Message editing | 1.4 | Implemented: the latest valid edit is bundled under `m.replace`, in the v1.7 format; invalid edits are ignored, and a redacted original carries no edits |
-| [MSC3316](https://github.com/matrix-org/matrix-spec-proposals/pull/3316) | Timestamp massaging | 1.3 | Implemented: the `ts` parameter on `/send`, `/state`, membership endpoints, `/createRoom` and profile updates only applies to requests made with an application service token, and is ignored otherwise |
-| [MSC4210](https://github.com/matrix-org/matrix-spec-proposals/pull/4210) | Remove legacy mentions | 1.17 | Implemented: the `.m.rule.contains_display_name`, `.m.rule.contains_user_name` and `.m.rule.roomnotif` push rules are no longer installed, and are dropped from existing accounts' rules once `.m.rule.is_user_mention` and `.m.rule.is_room_mention` have taken over their settings. Only `m.mentions` notifies of a mention. The deprecated `contains_display_name` condition still works in user-defined rules |
+| [MSC2676](https://github.com/matrix-org/matrix-spec-proposals/pull/2676) | Message editing | 1.4 | Implemented: Zendrite bundles the latest valid edit under `m.replace` in the v1.7 format. It ignores invalid edits, and a redacted original has no edits |
+| [MSC3316](https://github.com/matrix-org/matrix-spec-proposals/pull/3316) | Timestamp massaging | 1.3 | Implemented: the `ts` parameter on `/send`, `/state`, membership endpoints, `/createRoom`, and profile updates applies only to requests made with an application service token. Zendrite ignores it otherwise |
+| [MSC4210](https://github.com/matrix-org/matrix-spec-proposals/pull/4210) | Remove legacy mentions | 1.17 | Implemented: Zendrite no longer installs the `.m.rule.contains_display_name`, `.m.rule.contains_user_name`, and `.m.rule.roomnotif` push rules. It drops them from existing accounts' rules once `.m.rule.is_user_mention` and `.m.rule.is_room_mention` have taken over their settings. Only `m.mentions` notifies of a mention. The deprecated `contains_display_name` condition still works in user-defined rules |
 | [MSC3958](https://github.com/matrix-org/matrix-spec-proposals/pull/3958) | Suppress notifications from message edits | 1.9 | Implemented: the `.m.rule.suppress_edits` default push rule, also added to existing accounts' rules |
 | [MSC3930](https://github.com/matrix-org/matrix-spec-proposals/pull/3930) | Push rules for polls | N/A | Implemented (unstable prefix): see [poll push rules](#poll-push-rules) |
 | [MSC4028](https://github.com/matrix-org/matrix-spec-proposals/pull/4028) | Push all encrypted events except for muted rooms | N/A | Opt-in (`msc4028`): see [MSC4028](#msc4028-push-all-encrypted-events) |
 | [MSC3664](https://github.com/matrix-org/matrix-spec-proposals/pull/3664) | Push rules for relations | N/A | Opt-in (`msc3664`, unstable prefix): see [MSC3664](#msc3664-push-rules-for-related-events) |
 | [MSC3848](https://github.com/matrix-org/matrix-spec-proposals/pull/3848) | Errcodes for specific event sending failures | N/A | Opt-in (`msc3848`, unstable prefix): see [MSC3848](#msc3848-specific-errcodes-for-refused-events) |
 | [MSC3881](https://github.com/matrix-org/matrix-spec-proposals/pull/3881) | Remotely toggle push notifications for another client | N/A | Implemented (unstable prefix): see [remote push notification toggling](#remote-push-notification-toggling) |
-| [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Implemented: relations are stored and served through `/relations`. Sending an annotation that the sender has already made, with the same event type and key on the same event and not redacted, fails with 400 `M_DUPLICATE_ANNOTATION`; retrying the original transaction still returns its event. The spec defines no server-side aggregation for annotations |
-| [MSC3970](https://github.com/matrix-org/matrix-spec-proposals/pull/3970) | Scope transaction IDs to devices | 1.7 | Implemented: `/send`, `/redact`, `/sendToDevice`, delayed events and server notices recognise a retransmission by device, endpoint and transaction ID, so it survives a refreshed access token. Application services share one scope per application service, whichever user they act as |
+| [MSC2677](https://github.com/matrix-org/matrix-spec-proposals/pull/2677) | Reactions | 1.7 | Implemented: Zendrite stores relations and serves them through `/relations`. Sending an annotation the sender already made (same event type and key on the same event, not redacted) fails with 400 `M_DUPLICATE_ANNOTATION`. Retrying the original transaction still returns its event. The spec defines no server-side aggregation for annotations |
+| [MSC3970](https://github.com/matrix-org/matrix-spec-proposals/pull/3970) | Scope transaction IDs to devices | 1.7 | Implemented: `/send`, `/redact`, `/sendToDevice`, delayed events, and server notices recognize a retransmission by device, endpoint, and transaction ID, so it survives a refreshed access token. Each application service has one scope, whichever user it acts as |
 | [MSC3267](https://github.com/matrix-org/matrix-spec-proposals/pull/3267) | Reference relations | 1.5 | Implemented: references are bundled under `m.reference` |
 | [MSC3440](https://github.com/matrix-org/matrix-spec-proposals/pull/3440) | Threading via `m.thread` | 1.4 | Implemented: `m.thread` aggregations, `GET /v1/rooms/{roomId}/threads`, and 400 `M_UNKNOWN` for a thread rooted at an event that is itself a relation |
-| [MSC3771](https://github.com/matrix-org/matrix-spec-proposals/pull/3771) | Threaded read receipts | 1.4 | Implemented: receipts carry `thread_id` and clear only their thread's notifications |
+| [MSC3771](https://github.com/matrix-org/matrix-spec-proposals/pull/3771) | Threaded read receipts | 1.4 | Implemented: receipts include `thread_id` and clear only their thread's notifications |
 | [MSC3773](https://github.com/matrix-org/matrix-spec-proposals/pull/3773) | Notifications for threads | 1.4 | Implemented: with `unread_thread_notifications` in the timeline filter, `/sync` reports `unread_thread_notifications` per thread root and `unread_notifications` for the main timeline only |
 | [MSC4306](https://github.com/matrix-org/matrix-spec-proposals/pull/4306) | Thread subscriptions | N/A | Implemented (unstable prefix): see [thread subscriptions](#thread-subscriptions) |
 | [MSC4308](https://github.com/matrix-org/matrix-spec-proposals/pull/4308) | Sliding sync extension: thread subscriptions | N/A | Implemented (unstable prefix): the `io.element.msc4308.thread_subscriptions` extension and `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions` |
 | [MSC2836](https://github.com/matrix-org/matrix-spec-proposals/pull/2836) | Threading (generic relationships) | N/A | Opt-in (`msc2836`) |
 | [MSC2285](https://github.com/matrix-org/matrix-spec-proposals/pull/2285) | Private read receipts | 1.4 | Implemented |
 | [MSC4446](https://github.com/matrix-org/matrix-spec-proposals/pull/4446) | Allow moving the fully read marker to older events | N/A | Implemented (unstable prefix): see [moving the fully read marker backwards](#moving-the-fully-read-marker-backwards) |
-| [MSC2174](https://github.com/matrix-org/matrix-spec-proposals/pull/2174) | Move the `redacts` property to `content` | 1.8 | Implemented: from room version 11, redactions are applied from `content.redacts` and the top-level key is ignored. Clients receive `redacts` both at the top level and in `content` in every room version |
+| [MSC2174](https://github.com/matrix-org/matrix-spec-proposals/pull/2174) | Move the `redacts` property to `content` | 1.8 | Implemented: from room version 11, Zendrite applies redactions from `content.redacts` and ignores the top-level key. Clients receive `redacts` both at the top level and in `content` in every room version |
 | [MSC2815](https://github.com/matrix-org/matrix-spec-proposals/pull/2815) | Allow room moderators to view redacted event content | N/A | Implemented (unstable prefix): see [redacted event content for moderators](#redacted-event-content-for-moderators) |
 | [MSC3389](https://github.com/matrix-org/matrix-spec-proposals/pull/3389) | Redaction changes for events with a relation | N/A | Implemented (unstable room version): see [relation redactions](#relation-redactions) |
 | [MSC3874](https://github.com/matrix-org/matrix-spec-proposals/pull/3874) | Filtering threads from the `/messages` endpoint | N/A | Implemented (unstable prefix): see [relation type and label filters](#relation-type-and-label-filters) |
@@ -194,125 +240,168 @@ Backfilled events never appear in `/sync` timelines.
 ### Pagination tokens
 
 As [MSC4492](https://github.com/matrix-org/matrix-spec-proposals/pull/4492) requires, a token names a position in the room, and `dir` alone decides which way to page from it.
-`/messages` and `/relations` accept, as `from` and `to`, the tokens of `/messages` (`start`, `end`), `/relations` (`next_batch`, `prev_batch`), `/context` (`start`, `end`), `/search` result contexts, and `/sync` (`prev_batch`, `next_batch`).
-Paging backward from a token returns the events before that position, and paging forward the events after it, so reversing direction at a page boundary returns the events of that page again.
-`/context` names the place before the oldest event of the window as `start` and the place after its newest as `end`.
-The tokens of `/threads` and `/hierarchy` are separate and only work with their own endpoint.
+`/messages` and `/relations` accept these tokens as `from` and `to`: those of `/messages` (`start`, `end`), `/relations` (`next_batch`, `prev_batch`), `/context` (`start`, `end`), `/search` result contexts, and `/sync` (`prev_batch`, `next_batch`).
+
+Paging backward from a token returns the events before that position, and paging forward returns the events after it.
+Reversing direction at a page boundary returns the events of that page again.
+`/context` returns the position before the window's oldest event as `start`, and the position after its newest event as `end`.
+The tokens of `/threads` and `/hierarchy` are separate and work only with their own endpoint.
 
 ### Bundled aggregations
 
-Zendrite adds `unsigned.m.relations` to events served by `/messages`, `/context`, `/event`, `/relations`, `/search` and `/threads`, and to `/sync` and sliding sync timelines that are `limited`.
-An unlimited timeline already carries every child event the client has not seen, so the client aggregates those itself.
-Each bundle holds the thread summary (`m.thread`), the most recent valid edit (`m.replace`) and the referencing events (`m.reference`).
-Only child events the requesting user may see are aggregated, and events from ignored users are left out.
-State events, and aggregations that arrive with events over federation, are never served with bundles.
+Zendrite adds `unsigned.m.relations` to events from `/messages`, `/context`, `/event`, `/relations`, `/search`, and `/threads`, and to `limited` `/sync` and sliding sync timelines.
+An unlimited timeline already includes every child event the client has not seen, so the client aggregates those itself.
+Each bundle contains the thread summary (`m.thread`), the most recent valid edit (`m.replace`), and the referencing events (`m.reference`).
+Zendrite aggregates only child events the requesting user may see, and leaves out events from ignored users.
+State events, and aggregations that arrive with events over federation, never get bundles.
 
 ### Redacted event content for moderators
 
 Zendrite implements MSC2815 with Synapse's unstable names and advertises `fi.mau.msc2815` in `unstable_features`.
-When the roomserver applies a redaction, it keeps the event's original JSON in a separate table for `room_server.redaction_retention_period` (7 days by default, as in Synapse).
-Everything else, including `/sync`, sliding sync, `/messages`, `/context`, search and federation, keeps getting the redacted event.
+When the roomserver applies a redaction, it keeps the event's original JSON in a separate table for `room_server.redaction_retention_period` (default 7 days, as in Synapse).
+Everything else, including `/sync`, sliding sync, `/messages`, `/context`, search, and federation, still gets the redacted event.
 
 `GET /rooms/{roomId}/event/{eventId}?fi.mau.msc2815.include_unredacted_content=true` returns a redacted event with its original content and the redacted event's `unsigned`, including `redacted_because`:
 
-- The requester's power level in the room's current state must be at least the `redact` level; room creators in room versions that give them unlimited power, and server admins, may always ask.
-  Anyone else gets 403 `M_FORBIDDEN`, as in Synapse, before the event is looked up.
-- History visibility applies as without the parameter: an event the requester may not see is 404 `M_NOT_FOUND`, and events of erased users (MSC4025) stay redacted for those who could not see them when they were sent.
-- An event that is not redacted is returned as it is.
-- A redacted event whose content the server no longer has gets 404 `FI.MAU.MSC2815_UNREDACTED_CONTENT_DELETED`, with `fi.mau.msc2815.content_keep_ms` set to the retention period unless content is kept until the room is purged.
-  That includes events redacted before the upgrade to a version with MSC2815, or while the retention period was `0s`.
-- Any value other than `true` or `false` is 400 `M_INVALID_PARAM`.
+- The requester's power level in the room's current state must be at least the `redact` level.
+  Server admins, and room creators in room versions that give them unlimited power, may always ask.
+  Anyone else gets 403 `M_FORBIDDEN` before the event is looked up, as in Synapse.
+- History visibility applies as without the parameter.
+  An event the requester may not see returns 404 `M_NOT_FOUND`.
+  Events of erased users (MSC4025) stay redacted for those who could not see them when they were sent.
+- An event that is not redacted is returned unchanged.
+- A redacted event whose content the server no longer has returns 404 `FI.MAU.MSC2815_UNREDACTED_CONTENT_DELETED`.
+  The response sets `fi.mau.msc2815.content_keep_ms` to the retention period, unless content is kept until the room is purged.
+  This includes events redacted before the upgrade to a version with MSC2815, or while the retention period was `0s`.
+- Any value other than `true` or `false` returns 400 `M_INVALID_PARAM`.
 
-Content redacted longer ago than the retention period is no longer served, and a job on each roomserver deletes it every five minutes.
-`0s` keeps no content, and a negative period keeps it until the room is purged; purging a room deletes its content.
-The MSC's `M_UNREDACTED_CONTENT_NOT_RECEIVED` code is not used, as in Synapse: an event that arrived already redacted is returned redacted.
+Zendrite stops serving content redacted longer ago than the retention period, and a job on each roomserver deletes it every five minutes.
+`0s` keeps no content, and a negative period keeps it until the room is purged.
+Purging a room deletes its content.
+As in Synapse, Zendrite does not use the MSC's `M_UNREDACTED_CONTENT_NOT_RECEIVED` code: an event that arrived already redacted is returned redacted.
 
 ### Relation redactions
 
-Zendrite offers the unstable room version `org.matrix.msc3389.10`, which is room version 10 except that redaction keeps `rel_type` and `event_id` in `content.m.relates_to`, so clients can tell a redacted edit, reaction or thread reply from other redacted events.
-`m.relates_to` is dropped when it is not an object or has neither key, and the values are kept whatever their JSON type, as in Synapse.
+Zendrite offers the unstable room version `org.matrix.msc3389.10`.
+It is room version 10, except that redaction keeps `rel_type` and `event_id` in `content.m.relates_to`.
+Clients can then tell a redacted edit, reaction, or thread reply from other redacted events.
+As in Synapse, Zendrite drops `m.relates_to` when it is not an object or has neither key, and keeps the values whatever their JSON type.
 The rule applies wherever events are redacted: local redactions, events that arrive after their redaction, and events received over federation whose content hash does not match.
-Redacted relations are still left out of `/relations`, bundled aggregations and the reaction duplicate check, and [moderators](#redacted-event-content-for-moderators) still get the whole original content.
-As in Synapse, it also has strict byte limits: an event whose type, state key, sender or room ID is over 255 bytes is never stored, while room version 10 still stores such events fetched over federation when they are within 255 codepoints.
-`/capabilities` lists the room version as `unstable`, and `createRoom` accepts it; it is never the default room version.
-Synapse defines the room version but does not offer it, so only Zendrite servers can join such rooms for now.
+
+Redacted relations are still left out of `/relations`, bundled aggregations, and the reaction duplicate check.
+[Moderators](#redacted-event-content-for-moderators) still get the whole original content.
+As in Synapse, the room version also has strict byte limits.
+Zendrite never stores an event whose type, state key, sender, or room ID is over 255 bytes.
+Room version 10 still stores such events fetched over federation when they are within 255 codepoints.
+
+`/capabilities` lists the room version as `unstable`, and `createRoom` accepts it.
+It is never the default room version.
+Synapse defines the room version but does not offer it, so for now only Zendrite servers can join such rooms.
 
 ### Relation type and label filters
 
-Room event filters take the relation type filters of MSC3874 and the label filters of MSC2326, with Synapse's unstable names:
+Room event filters accept the relation type filters of MSC3874 and the label filters of MSC2326, with Synapse's unstable names:
 
-- `org.matrix.msc3874.rel_types` keeps the events whose `m.relates_to` has one of the listed `rel_type`s, and `org.matrix.msc3874.not_rel_types` leaves them out.
+- `org.matrix.msc3874.rel_types` keeps events whose `m.relates_to` has one of the listed `rel_type`s, and `org.matrix.msc3874.not_rel_types` excludes them.
   An event without a relation never matches `rel_types` and always passes `not_rel_types`.
-  A relation needs a string `rel_type` and `event_id`, so a plain reply (`m.in_reply_to`) has none.
-- `org.matrix.labels` keeps the events with one of the listed labels in their `org.matrix.labels` content field, and `org.matrix.not_labels` leaves them out.
-  Only the strings of an `org.matrix.labels` array are labels; labels are compared as they are, without case folding.
+  A relation needs a string `rel_type` and `event_id`, so a plain reply (`m.in_reply_to`) has no relation.
+- `org.matrix.labels` keeps events with one of the listed labels in their `org.matrix.labels` content field, and `org.matrix.not_labels` excludes them.
+  Only the strings of an `org.matrix.labels` array count as labels.
+  Zendrite compares labels exactly, without case folding.
 - An exclusion wins over an inclusion, and an empty `rel_types` or `labels` list matches nothing.
 
-The filters apply to `/messages` (including events backfilled over federation), to `/sync` timelines and to `/context`, in the database.
-`/versions` advertises `org.matrix.msc3874` in `unstable_features`; Synapse gates MSC3874 behind `experimental_features.msc3874_enabled` and does not advertise it, and MSC2326 has no flag.
+The filters apply in the database to `/messages` (including events backfilled over federation), `/sync` timelines, and `/context`.
+`/versions` advertises `org.matrix.msc3874` in `unstable_features`.
+Synapse gates MSC3874 behind `experimental_features.msc3874_enabled` and does not advertise it, and MSC2326 has no flag.
 
-The sync API stores the labels of each event and indexes its relation, written in the same transaction as the event.
-Labels of events stored before the upgrade are filled in by a migration; a redaction removes an event's labels and relation.
-Zendrite does not update labels from edits (the MSC's `m.new_content` rules), as Synapse does not.
+The sync API stores each event's labels and indexes its relation in the same transaction as the event.
+A migration fills in the labels of events stored before the upgrade.
+A redaction removes an event's labels and relation.
+Like Synapse, Zendrite does not update labels from edits (the MSC's `m.new_content` rules).
 
 ### Thread subscriptions
 
 Zendrite implements MSC4306 with Synapse's unstable names and advertises `org.matrix.msc4306` in `unstable_features`.
-`PUT`, `GET` and `DELETE /_matrix/client/unstable/io.element.msc4306/rooms/{roomId}/thread/{eventId}/subscription` subscribe to, read and remove the user's subscription to a thread.
-The thread root must be an event of the room that the user may see under history visibility; otherwise, and for unknown events, the answer is 404 `M_NOT_FOUND`.
+`PUT`, `GET`, and `DELETE /_matrix/client/unstable/io.element.msc4306/rooms/{roomId}/thread/{eventId}/subscription` subscribe to, read, and remove the user's subscription to a thread.
+The thread root must be an event of the room that the user may see under history visibility.
+Otherwise, and for unknown events, the answer is 404 `M_NOT_FOUND`.
 `GET` also answers 404 when the user is not subscribed, and `DELETE` succeeds when there is nothing to remove.
 
-A `PUT` body without `automatic` is a manual subscription, which replaces an automatic one and is never replaced by one.
+A `PUT` body without `automatic` creates a manual subscription.
+It replaces an automatic subscription, and an automatic one never replaces it.
 With `"automatic": "$eventId"`, the event must be a visible `m.thread` reply to the root, or the answer is 400 `IO.ELEMENT.MSC4306.M_NOT_IN_THREAD`.
+
 Unsubscribing records the sync stream position of the room's latest event.
-An automatic subscription whose cause event is at or before that position, that is an event the server had already received when the user unsubscribed, is refused with 409 `IO.ELEMENT.MSC4306.M_CONFLICTING_UNSUBSCRIPTION`, so a device that missed the unsubscription cannot undo it.
-Subscriptions live in the userapi database; concurrent changes are serialized, and each change gets a position in the thread subscriptions stream.
+Zendrite refuses an automatic subscription whose cause event is at or before that position with 409 `IO.ELEMENT.MSC4306.M_CONFLICTING_UNSUBSCRIPTION`.
+Such an event is one the server had already received when the user unsubscribed, so a device that missed the unsubscription cannot undo it.
 
-Push rules gain the `postcontent` kind, evaluated after `content` and before `room`, with two default rules that use the `io.element.msc4306.thread_subscription` condition:
-`.io.element.msc4306.rule.unsubscribed_thread` keeps replies in threads the user is not subscribed to from notifying or counting as unread, and `.io.element.msc4306.rule.subscribed_thread` notifies with the default sound for threads the user is subscribed to, even in a room set to mentions only.
+Zendrite stores subscriptions in the userapi database, serializes concurrent changes, and gives each change a position in the thread subscriptions stream.
+
+Push rules gain the `postcontent` kind, evaluated after `content` and before `room`.
+It has two default rules that use the `io.element.msc4306.thread_subscription` condition:
+
+- `.io.element.msc4306.rule.unsubscribed_thread` stops replies in threads the user is not subscribed to from notifying or counting as unread.
+- `.io.element.msc4306.rule.subscribed_thread` notifies with the default sound for threads the user is subscribed to, even in a room set to mentions only.
+
 Mentions and keyword rules still run first.
-Existing accounts receive both rules when their push rules are next read; a rule the user disabled stays disabled.
+Existing accounts receive both rules when their push rules are next read.
+A rule the user disabled stays disabled.
 Clients cannot create `postcontent` rules: `PUT /pushrules/global/postcontent/{ruleId}` answers 400 `M_INVALID_PARAM`.
-The condition can be used in user-defined `override` and `underride` rules.
+User-defined `override` and `underride` rules can use the condition.
 
-Sliding sync reports changes through the `io.element.msc4308.thread_subscriptions` extension (`enabled`, `limit`, 100 by default and at most 512).
-Its `subscribed` and `unsubscribed` maps hold the latest state of each changed thread since the request's `pos`, with the stream position as `bump_stamp`.
+Sliding sync reports changes through the `io.element.msc4308.thread_subscriptions` extension, which takes `enabled` and `limit` (default 100, at most 512).
+Its `subscribed` and `unsubscribed` maps contain the latest state of each thread changed since the request's `pos`, with the stream position as `bump_stamp`.
 An initial request returns the latest changes of all time.
-When older changes were left out, `prev_batch` is a token for `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions?dir=b&from=...&to=...`, which pages backwards with the same limits and returns `end` while there may be more; `to` takes a thread subscriptions token or a sliding sync `pos`.
-A change wakes the user's waiting sliding sync requests, and the `/sync` token carries the stream's position without returning its changes.
+
+When older changes were left out, `prev_batch` is a token for `GET /_matrix/client/unstable/io.element.msc4308/thread_subscriptions?dir=b&from=...&to=...`.
+That endpoint pages backwards with the same limits, and returns `end` while there may be more.
+`to` takes a thread subscriptions token or a sliding sync `pos`.
+A change wakes the user's waiting sliding sync requests.
+The `/sync` token includes the stream's position but does not return its changes.
 
 ### Remote push notification toggling
 
 Zendrite implements MSC3881 with Synapse's unstable names and advertises `org.matrix.msc3881` in `unstable_features`.
-Pushers have an enabled flag and belong to the device that registered them, so a client can silence another device's notifications without knowing more than what `GET /pushers` returns:
+Pushers have an enabled flag and belong to the device that registered them.
+A client can silence another device's notifications using only what `GET /pushers` returns:
 
-- `POST /pushers/set` takes `org.matrix.msc3881.enabled`. Leaving it out, or sending `null`, enables the pusher, also when it updates a disabled one, as in Synapse. Any other value than a boolean is 400 `M_BAD_JSON`.
+- `POST /pushers/set` takes `org.matrix.msc3881.enabled`.
+  Leaving it out, or sending `null`, enables the pusher, even when updating a disabled one, as in Synapse.
+  Any value other than a boolean returns 400 `M_BAD_JSON`.
 - `GET /pushers` returns `org.matrix.msc3881.enabled` for every pusher, and `org.matrix.msc3881.device_id`, the device whose access token registered it.
-- A disabled pusher gets no push gateway requests at all, neither for events nor for notification count updates. Notifications are still stored, so `/notifications` and unread counts are unaffected.
-- When another device of the same user updates a pusher, for example to disable it, the pusher keeps its device. A client cannot pick the device by sending `org.matrix.msc3881.device_id`.
-- Setting a pusher without `append` removes the pushers of other users with the same app ID and pushkey, and updates the user's own one in place, as in Synapse. Before MSC3881, Zendrite replaced the user's own pusher too.
-- Deleting a device, which includes logging out, deletes the pushers it registered, as in Synapse.
+- A disabled pusher gets no push gateway requests, neither for events nor for notification count updates.
+  Zendrite still stores notifications, so `/notifications` and unread counts are unaffected.
+- When another device of the same user updates a pusher, for example to disable it, the pusher keeps its device.
+  A client cannot choose the device by sending `org.matrix.msc3881.device_id`.
+- Setting a pusher without `append` removes other users' pushers with the same app ID and pushkey, and updates the user's own pusher in place, as in Synapse.
+  Before MSC3881, Zendrite replaced the user's own pusher too.
+- Deleting a device, including by logging out, deletes the pushers it registered, as in Synapse.
 
 Pushers registered before the upgrade stay enabled and take the device of the session that registered them.
-A pusher whose device was already gone has no device ID until a device updates it, and then it takes that one.
-Unlike Synapse, where it needs `experimental_features.msc3881_enabled` or a per-user admin flag, the MSC is always on, and a pusher without a device leaves `org.matrix.msc3881.device_id` out instead of returning `null`.
+A pusher whose device was already gone has no device ID until a device updates it, and then takes that device.
+Synapse needs `experimental_features.msc3881_enabled` or a per-user admin flag.
+In Zendrite the MSC is always on, and a pusher without a device omits `org.matrix.msc3881.device_id` instead of returning `null`.
 
 ### Moving the fully read marker backwards
 
 Zendrite implements MSC4446 with Synapse's unstable names and advertises `com.beeper.msc4446` in `unstable_features`.
-By default, `POST /rooms/{roomId}/read_markers` and `POST /rooms/{roomId}/receipt/m.fully_read/{eventId}` only move `m.fully_read` forward, as Synapse does: an event at or before the current marker leaves the marker as it is, and the request still succeeds with 200.
+By default, `POST /rooms/{roomId}/read_markers` and `POST /rooms/{roomId}/receipt/m.fully_read/{eventId}` move `m.fully_read` only forward, as Synapse does.
+An event at or before the current marker leaves the marker unchanged, and the request still succeeds with 200.
 Before MSC4446, Zendrite moved the marker to whatever event a client sent.
-Events are ordered by depth, with the order in which the server stored them breaking ties, like Synapse's `(topological_ordering, stream_ordering)`.
+Zendrite orders events by depth, with the order in which the server stored them breaking ties, like Synapse's `(topological_ordering, stream_ordering)`.
 
 - `"com.beeper.allow_backward": true` in the request body lets either endpoint move `m.fully_read` to an older event.
-- On `/read_markers`, the flag only applies to `m.fully_read`; `m.read` and `m.read.private` in the same request are handled as without it.
-- On `/receipt/{receiptType}/{eventId}`, `true` with any receipt type other than `m.fully_read` is 400 `M_INVALID_PARAM` (`com.beeper.allow_backward is only allowed to be true for m.fully_read.`).
-- Any value other than `true` or `false` is 400 `M_INVALID_PARAM` on both endpoints.
-- `m.fully_read` must name an event the server has in the room, as in Synapse; anything else is 404 `M_UNKNOWN`.
+- On `/read_markers`, the flag applies only to `m.fully_read`.
+  Zendrite handles `m.read` and `m.read.private` in the same request as without it.
+- On `/receipt/{receiptType}/{eventId}`, `true` with any receipt type other than `m.fully_read` returns 400 `M_INVALID_PARAM` (`com.beeper.allow_backward is only allowed to be true for m.fully_read.`).
+- Any value other than `true` or `false` returns 400 `M_INVALID_PARAM` on both endpoints.
+- `m.fully_read` must name an event the server has in the room, as in Synapse.
+  Anything else returns 404 `M_UNKNOWN`.
   A current marker whose event the server no longer has counts as older than any event.
-- Updates of one user's marker in one room are handled one at a time on each server, as Synapse's linearizer does.
+- Each server handles updates of one user's marker in one room one at a time, as Synapse's linearizer does.
 
-Read receipts (`m.read`, `m.read.private`) still replace the previous receipt even when they point at an older event; Synapse ignores such receipts.
+Read receipts (`m.read`, `m.read.private`) still replace the previous receipt even when they point at an older event.
+Synapse ignores such receipts.
 
 ## Rooms & Spaces
 
@@ -320,24 +409,24 @@ Read receipts (`m.read`, `m.read.private`) still replace the previous receipt ev
 | --- | --- | --- | --- |
 | [MSC1772](https://github.com/matrix-org/matrix-spec-proposals/pull/1772) | Spaces | 1.2 | Implemented |
 | [MSC2946](https://github.com/matrix-org/matrix-spec-proposals/pull/2946) | Spaces summary / room hierarchy | 1.2 | Implemented |
-| [MSC3827](https://github.com/matrix-org/matrix-spec-proposals/pull/3827) | Filtering of `/publicRooms` by room type | 1.4 | Implemented: client and federation `/publicRooms` accept `room_types` (`null` matches rooms without a type) and return `room_type`. Results from remote servers are filtered again, for servers that ignore the filter |
-| [MSC2432](https://github.com/matrix-org/matrix-spec-proposals/pull/2432) | Publishing room aliases | 1.2 | Implemented: new canonical and alternative aliases resolve locally or over federation; retained aliases are not revalidated |
+| [MSC3827](https://github.com/matrix-org/matrix-spec-proposals/pull/3827) | Filtering of `/publicRooms` by room type | 1.4 | Implemented: client and federation `/publicRooms` accept `room_types` (`null` matches rooms without a type) and return `room_type`. Zendrite filters results from remote servers again, for servers that ignore the filter |
+| [MSC2432](https://github.com/matrix-org/matrix-spec-proposals/pull/2432) | Publishing room aliases | 1.2 | Implemented: new canonical and alternative aliases resolve locally or over federation. Retained aliases are not revalidated |
 | [MSC3083](https://github.com/matrix-org/matrix-spec-proposals/pull/3083) | Restricted rooms (space-based membership) | 1.2 | Implemented: joins distinguish uncheckable conditions (`M_UNABLE_TO_AUTHORISE_JOIN`) from a missing local authorising user (`M_UNABLE_TO_GRANT_JOIN`) |
-| [MSC2403](https://github.com/matrix-org/matrix-spec-proposals/pull/2403) | Knocking | 1.1 | Implemented: `/knock`, `make_knock` and `send_knock`, `rooms.knock` in `/sync` and knocked rooms in sliding sync. A knock is rescinded with `/leave`. Kicks and bans that end an invite or knock are also sent to the target's server when it is not in the room |
-| [MSC2367](https://github.com/matrix-org/matrix-spec-proposals/pull/2367) | Reasons in all membership events | 1.1 | Implemented: `/join`, `/leave`, `/invite`, `/kick`, `/ban`, `/unban` and `/knock` accept `reason`. A leave through another server adds the reason to the `make_leave` template |
+| [MSC2403](https://github.com/matrix-org/matrix-spec-proposals/pull/2403) | Knocking | 1.1 | Implemented: `/knock`, `make_knock` and `send_knock`, `rooms.knock` in `/sync`, and knocked rooms in sliding sync. `/leave` rescinds a knock. Zendrite also sends kicks and bans that end an invite or knock to the target's server when it is not in the room |
+| [MSC2367](https://github.com/matrix-org/matrix-spec-proposals/pull/2367) | Reasons in all membership events | 1.1 | Implemented: `/join`, `/leave`, `/invite`, `/kick`, `/ban`, `/unban`, and `/knock` accept `reason`. A leave through another server adds the reason to the `make_leave` template |
 | [MSC3820](https://github.com/matrix-org/matrix-spec-proposals/pull/3820) | Room version 11 | 1.8 | Implemented: includes the redaction changes of MSC2174 and MSC3821 |
-| [MSC3266](https://github.com/matrix-org/matrix-spec-proposals/pull/3266) | Room summary API | 1.15 | Implemented: `GET /_matrix/client/v1/room_summary/{roomIdOrAlias}`, and client and federation `/hierarchy` rooms carry `room_version` and, for encrypted rooms, `encryption`. Summaries of remote rooms keep both fields when the remote server sends them |
-| [MSC3765](https://github.com/matrix-org/matrix-spec-proposals/pull/3765) | Rich text in room topics | 1.15 | Implemented: `createRoom` with `topic` adds a `text/plain` representation in `m.topic`. `/publicRooms`, `/hierarchy`, room summaries and `/search` use the first `text/plain` representation in `m.topic` (a missing `mimetype` counts as `text/plain`) and fall back to the `topic` key |
+| [MSC3266](https://github.com/matrix-org/matrix-spec-proposals/pull/3266) | Room summary API | 1.15 | Implemented: `GET /_matrix/client/v1/room_summary/{roomIdOrAlias}`. Client and federation `/hierarchy` rooms include `room_version` and, for encrypted rooms, `encryption`. Summaries of remote rooms keep both fields when the remote server sends them |
+| [MSC3765](https://github.com/matrix-org/matrix-spec-proposals/pull/3765) | Rich text in room topics | 1.15 | Implemented: `createRoom` with `topic` adds a `text/plain` representation in `m.topic`. `/publicRooms`, `/hierarchy`, room summaries, and `/search` use the first `text/plain` representation in `m.topic` (a missing `mimetype` counts as `text/plain`) and fall back to the `topic` key |
 | [MSC4267](https://github.com/matrix-org/matrix-spec-proposals/pull/4267) | Forget room on leave ([`m.forget_forced_upon_leave` capability](https://spec.matrix.org/v1.18/client-server-api/#mforget_forced_upon_leave-capability)) | 1.18 | Implemented (opt-in via [`auto_forget_on_leave`](/administration/auto-forget-on-leave/)) |
 | [MSC4380](https://github.com/matrix-org/matrix-spec-proposals/pull/4380) | Invite blocking | 1.18 | Implemented: see [invite blocking](#invite-blocking) |
 | [MSC4155](https://github.com/matrix-org/matrix-spec-proposals/pull/4155) | Invite filtering | N/A | Implemented (unstable prefix): see [invite filtering](#invite-filtering) |
 | [MSC4491](https://github.com/matrix-org/matrix-spec-proposals/pull/4491) | Invite reasons in room creation | N/A | Implemented (unstable prefix): see [invite reasons in room creation](#invite-reasons-in-room-creation) |
-| [MSC4235](https://github.com/matrix-org/matrix-spec-proposals/pull/4235) | `via` for `/hierarchy` | N/A | Implemented: `GET /_matrix/client/v1/rooms/{roomId}/hierarchy` accepts `via` and the unstable `org.matrix.msc4235.via`, repeated for each server (up to 10). When Zendrite is not in the root room, it asks those servers for it within 30 seconds, without caching their answers, and returns the room if the room is world readable, anyone may join or knock, the user is invited, or the user is joined to one of the rooms that allow joining a restricted room |
+| [MSC4235](https://github.com/matrix-org/matrix-spec-proposals/pull/4235) | `via` for `/hierarchy` | N/A | Implemented: `GET /_matrix/client/v1/rooms/{roomId}/hierarchy` accepts `via` and the unstable `org.matrix.msc4235.via`, repeated for each server (up to 10). When Zendrite is not in the root room, it asks those servers for it within 30 seconds, without caching their answers. It returns the room if the room is world readable, anyone may join or knock, the user is invited, or the user is joined to one of the rooms that allow joining a restricted room |
 | [MSC2666](https://github.com/matrix-org/matrix-spec-proposals/pull/2666) | Mutual rooms | 1.19 | Implemented: `GET /_matrix/client/v1/mutual_rooms` lists the rooms the caller shares with a user, with signed pagination tokens. Also advertised as `uk.half-shot.msc2666.query_mutual_rooms.stable` |
 | [MSC4423](https://github.com/matrix-org/matrix-spec-proposals/pull/4423) | Server-defined room directory order | 1.19 | Implemented: the client and federation room directories list rooms by room ID |
-| [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
-| [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): expired events are no longer served to clients or other servers, and purge jobs delete them. See [message retention policies](#message-retention-policies) |
-| [MSC4242](https://github.com/matrix-org/matrix-spec-proposals/pull/4242) | State DAGs (room version `org.matrix.msc4242.12`) | N/A | Not supported: the room version is not listed in `/capabilities`, `createRoom` and room upgrades refuse it with `M_UNSUPPORTED_ROOM_VERSION`, and joins and federation invites into such rooms fail with `M_INCOMPATIBLE_ROOM_VERSION` |
+| [MSC4289](https://github.com/matrix-org/matrix-spec-proposals/pull/4289), [MSC4291](https://github.com/matrix-org/matrix-spec-proposals/pull/4291), [MSC4297](https://github.com/matrix-org/matrix-spec-proposals/pull/4297), [MSC4304](https://github.com/matrix-org/matrix-spec-proposals/pull/4304), [MSC4307](https://github.com/matrix-org/matrix-spec-proposals/pull/4307) | Room version 12 | 1.16 | Implemented and the default room version: create event room IDs, privileged creators, the new state resolution, and same-room auth events. `trusted_private_chat` invitees become `additional_creators`, upgrades accept `additional_creators`, and the initial power levels set `m.room.tombstone` to 150 |
+| [MSC1763](https://github.com/matrix-org/matrix-spec-proposals/pull/1763) | Message retention periods | N/A | Opt-in (`global.retention`): Zendrite stops serving expired events to clients and other servers, and purge jobs delete them. See [message retention policies](#message-retention-policies) |
+| [MSC4242](https://github.com/matrix-org/matrix-spec-proposals/pull/4242) | State DAGs (room version `org.matrix.msc4242.12`) | N/A | Not supported: `/capabilities` does not list the room version, and `createRoom` and room upgrades refuse it with `M_UNSUPPORTED_ROOM_VERSION`. Joins and federation invites into such rooms fail with `M_INCOMPATIBLE_ROOM_VERSION` |
 
 ### Message retention policies
 
@@ -360,57 +449,72 @@ global:
         interval: 24h
 ```
 
-- With `enabled: false`, the default, `m.room.retention` events have no effect.
-- A room's effective `max_lifetime` is that of its current `m.room.retention` event, or of `default_policy` if the room has no such event or the event sets none; without either, the room's events never expire.
-- `allowed_lifetime_min` raises a shorter `max_lifetime` and `allowed_lifetime_max` lowers a longer one.
-  Zendrite applies the bounds when serving events too, where Synapse only applies them when purging.
+- With `enabled: false` (the default), `m.room.retention` events have no effect.
+- A room's effective `max_lifetime` comes from its current `m.room.retention` event.
+  If the room has no such event, or the event sets none, it comes from `default_policy`.
+  Without either, the room's events never expire.
+- `allowed_lifetime_min` raises a shorter `max_lifetime`, and `allowed_lifetime_max` lowers a longer one.
+  Zendrite also applies the bounds when serving events, where Synapse applies them only when purging.
 - `min_lifetime` is reported but not enforced, as in Synapse.
 - Only the room's latest policy counts, also for events sent before it, as the MSC asks.
-- A non-state event whose `origin_server_ts` is older than the effective `max_lifetime` is no longer served to clients: `/sync`, sliding sync, `/messages`, `/context`, `/event`, `/relations`, threads, bundled aggregations, sticky events, `/search` and `/timestamp_to_event` leave it out, as Synapse does.
+- Zendrite stops serving clients a non-state event whose `origin_server_ts` is older than the effective `max_lifetime`.
+  As in Synapse, `/sync`, sliding sync, `/messages`, `/context`, `/event`, `/relations`, threads, bundled aggregations, sticky events, `/search`, and `/timestamp_to_event` leave it out.
   State events never expire.
-- `/search` leaves expired matches out of its results, highlights and count.
+- `/search` leaves expired matches out of its results, its highlights, and its count.
 - Purge jobs delete expired events from the database.
-  Each job handles, every `interval`, the rooms whose effective `max_lifetime` is greater than `shortest_max_lifetime` and at most `longest_max_lifetime`, either of which may be left out.
+  Every `interval`, each job handles the rooms whose effective `max_lifetime` is greater than `shortest_max_lifetime` and at most `longest_max_lifetime`.
+  Either bound may be left out.
   Without `purge_jobs`, one job handles every room once a day, as in Synapse.
-  Unlike Synapse, a job picks rooms by their effective `max_lifetime`, within the allowed bounds, so jobs whose ranges cover every lifetime never miss a room.
+  Unlike Synapse, a job selects rooms by their effective `max_lifetime` within the allowed bounds, so jobs whose ranges cover every lifetime never miss a room.
 - Between passes, expired events stay in the database but are not served, as the MSC allows.
   Each job first runs a minute after startup rather than an interval later.
-- The roomserver deletes an expired non-state event with its JSON, its redaction and annotation records, its moderator copy of redacted content (MSC2815) and its client transaction record.
-  It keeps the record that the event was referenced by later events, so the event does not become a forward extremity if a server sends it again.
-  It never deletes a forward extremity of the room, so new events can still reference it, as the MSC asks, nor the last event it sent to the other components or any event stored after it, which may still be in processing, and leaves rooms with partial state alone until their state is complete.
-  It reads each batch of up to 500 candidates before locking the room, and deletes them in a transaction that holds the room's lock, so new events are not held up for long.
-- The sync API deletes the event from its timeline, topology, relation, label and sticky event tables and from the search index.
+- The roomserver deletes an expired non-state event with its JSON, its redaction and annotation records, its moderator copy of redacted content (MSC2815), and its client transaction record.
+  It keeps the record that later events referenced the event, so the event does not become a forward extremity if a server sends it again.
+  It never deletes a forward extremity of the room, so new events can still reference it, as the MSC asks.
+  It also never deletes the last event it sent to the other components, or any event stored after it, because those may still be in processing.
+  It leaves rooms with partial state alone until their state is complete.
+  It reads each batch of up to 500 candidates before locking the room, and deletes them in a transaction under the room's lock, so new events wait only briefly.
+- The sync API deletes the event from the search index and from its timeline, topology, relation, label, and sticky event tables.
   It keeps the room's latest event of the kinds that order rooms by activity in sliding sync, so the room keeps its place in room lists.
-  An expired event whose stream entry also records a change to the room's state, which happens when state resolution changes the state at a message, keeps its entry with its content redacted, so incremental syncs across it still get the state change.
-- Media that expired events refer to is kept, as in Synapse; configure media retention separately.
-- Other servers are not served expired events either: `/event` answers 404, and `/backfill` and `/get_missing_events` leave them out, as if they had been purged already.
-  The MSC asks for this ("an expired event is not shared with clients and federated servers"); Synapse does not filter these endpoints.
-  The room's forward extremities are still served, as the purge keeps them, so a server that receives a new event can fetch its `prev_events`.
-  Endpoints that only return state, such as `/state`, `/state_ids`, `/event_auth` and `/send_join`, are unchanged, since state events never expire.
+  When state resolution changes the state at a message, the message's stream entry also records that state change.
+  An expired event with such an entry keeps it with its content redacted, so incremental syncs across it still get the state change.
+- As in Synapse, Zendrite keeps media that expired events refer to.
+  Configure media retention separately.
+- Other servers do not get expired events either: `/event` answers 404, and `/backfill` and `/get_missing_events` leave them out, as if they were already purged.
+  The MSC asks for this ("an expired event is not shared with clients and federated servers"), but Synapse does not filter these endpoints.
+  Zendrite still serves the room's forward extremities, because the purge keeps them, so a server that receives a new event can fetch its `prev_events`.
+  Endpoints that return only state, such as `/state`, `/state_ids`, `/event_auth`, and `/send_join`, are unchanged, because state events never expire.
   A server that cannot get an expired event falls back to asking for the room state at the gap, as it does once the event is purged.
-  Events already queued for a server that has been unreachable for longer than the room's `max_lifetime` are still delivered.
+  Zendrite still delivers events already queued for a server that has been unreachable for longer than the room's `max_lifetime`.
 - `/notifications` leaves out the notifications of expired events and fills each page from later notifications, reading up to ten pages for one response.
-  The stored notifications themselves are deleted by the existing cleanup, after a day, or a month for highlights; unread counts still include them until then.
-- With [high availability](/installation/manual/high-availability/), the jobs only run in the activation that owns the homeserver, and stop at the next batch once ownership is lost.
-  The roomserver and the sync API each purge their own tables, without waiting on a message from the other, and every batch only deletes what has expired, so a pass cut short by a takeover leaves consistent storage and the successor's first pass carries on.
-- Zendrite refuses an `m.room.retention` event sent by a local user, from `/state`, `/send` or `createRoom`'s `initial_state`, unless `min_lifetime` and `max_lifetime` are each absent, `null` or an integer between 0 and 2^53 - 1, and `min_lifetime` is not greater than `max_lifetime`.
-  Like Synapse, it checks this whether or not retention policies are enabled.
+  The existing cleanup deletes the stored notifications after a day, or a month for highlights.
+  Unread counts still include them until then.
+- With [high availability](/installation/manual/high-availability/), the jobs run only in the activation that has ownership of the homeserver, and stop at the next batch once it loses ownership.
+  The roomserver and the sync API each purge their own tables without waiting on a message from the other, and every batch deletes only what has expired.
+  A pass cut short by a takeover leaves consistent storage, and the successor's first pass continues the work.
+- Zendrite refuses an `m.room.retention` event that a local user sends through `/state`, `/send`, or `createRoom`'s `initial_state`, unless it meets two conditions.
+  `min_lifetime` and `max_lifetime` must each be absent, `null`, or an integer between 0 and 2^53 - 1, and `min_lifetime` must not be greater than `max_lifetime`.
+  Like Synapse, Zendrite checks this even when retention policies are disabled.
   Rooms use `m.room.retention`, as Synapse and Element do, not the MSC's unstable `org.matrix.msc1763.retention`.
-- With `msc1763` in the [opt-in MSCs](#opt-in-mscs) as well, `GET /_matrix/client/unstable/org.matrix.msc1763/retention/configuration` reports the default policy under `*` and the bounds as `limits.max_lifetime`, as Synapse does with `msc1763_enabled`.
+- With `msc1763` also in the [opt-in MSCs](#opt-in-mscs), `GET /_matrix/client/unstable/org.matrix.msc1763/retention/configuration` reports the default policy under `*` and the bounds as `limits.max_lifetime`, as Synapse does with `msc1763_enabled`.
 
 ### Invite blocking
 
 A user who sets the `m.invite_permission_config` account data to `{"default_action": "block"}` receives no room invites.
-Inviting them through `POST /rooms/{roomId}/invite`, the `invite` list of `POST /createRoom`, `PUT /rooms/{roomId}/state/m.room.member/{userId}` or the federation `/invite` endpoints fails with 403 `M_INVITE_BLOCKED`.
+Inviting them fails with 403 `M_INVITE_BLOCKED` through `POST /rooms/{roomId}/invite`, the `invite` list of `POST /createRoom`, `PUT /rooms/{roomId}/state/m.room.member/{userId}`, or the federation `/invite` endpoints.
 `createRoom` still creates the room, as with any other failed invite.
-`/sync` and sliding sync leave out invites the user already has, and serve them again once blocking is turned off; other endpoints and application services see invites as usual.
+`/sync` and sliding sync leave out invites the user already has, and serve them again once blocking is turned off.
+Other endpoints and application services see invites as usual.
+
 Any other `default_action`, or no account data, allows invites.
-The unstable `org.matrix.msc4380.invite_permission_config` type is read when the stable type is not set, and `/versions` advertises `org.matrix.msc4380` and `org.matrix.msc4380.stable`.
+Zendrite reads the unstable `org.matrix.msc4380.invite_permission_config` type when the stable type is not set.
+`/versions` advertises `org.matrix.msc4380` and `org.matrix.msc4380.stable`.
 An empty `m.invite_permission_config` (`{}`) states no preference, so [invite filtering](#invite-filtering) applies.
 
 ### Invite reasons in room creation
 
-`POST /createRoom` accepts `uk.timedout.msc4491.invite_reason`, a string that becomes the `reason` of every invite the `invite` list sends, to local and to remote users alike, next to `is_direct`.
+`POST /createRoom` accepts `uk.timedout.msc4491.invite_reason` next to `is_direct`.
+This string becomes the `reason` of every invite that the `invite` list sends, to local and remote users alike.
 
 ```json
 {
@@ -420,9 +524,9 @@ An empty `m.invite_permission_config` (`{}`) states no preference, so [invite fi
 }
 ```
 
-- As in Synapse, an empty reason, or one that is not a string, is ignored: the invites go out without a reason.
-- Only the unstable name is read while the MSC is open; the stable `invite_reason` is ignored, as in Synapse.
-- A reason longer than 65536 bytes could never fit in an event, so it is refused with 413 `M_TOO_LARGE` before the room is created.
+- As in Synapse, Zendrite ignores an empty reason, or one that is not a string, and sends the invites without a reason.
+- While the MSC is open, Zendrite reads only the unstable name and ignores the stable `invite_reason`, as Synapse does.
+- A reason longer than 65536 bytes can never fit in an event, so Zendrite refuses it with 413 `M_TOO_LARGE` before creating the room.
   Synapse creates the room and then fails on the oversized invite.
 - `/versions` always advertises `uk.timedout.msc4491.create_room_invite_reasons`.
   Synapse advertises it, and reads the field, only with `experimental_features.msc4491_enabled`.
@@ -430,7 +534,7 @@ An empty `m.invite_permission_config` (`{}`) states no preference, so [invite fi
 ### Invite filtering
 
 The `org.matrix.msc4155.invite_permission_config` account data lists which users and servers may invite the user, as in Synapse.
-Only the unstable type is read: the stable `m.invite_permission_config` belongs to [invite blocking](#invite-blocking).
+Zendrite reads only the unstable type, because the stable `m.invite_permission_config` belongs to [invite blocking](#invite-blocking).
 
 ```json
 {
@@ -444,28 +548,35 @@ Only the unstable type is read: the stable `m.invite_permission_config` belongs 
 ```
 
 - Entries are globs: `*` matches any number of characters and `?` exactly one, ignoring case.
-  `*_users` globs match the inviter's user ID, `*_servers` globs its server name, with or without the port.
-- The user lists are checked before the server lists, each in the order allowed, ignored, blocked.
-  The first match decides; without one, the invite is allowed.
+  `*_users` globs match the inviter's user ID.
+  `*_servers` globs match the inviter's server name (with or without the port).
+- Zendrite checks the user lists before the server lists, each in the order allowed, ignored, blocked.
+  The first match decides.
+  Without a match, the invite is allowed.
   So an allowed user can invite even from a blocked server, and a blocked user cannot invite from an allowed server.
-- A blocked invite is refused with 403 `M_INVITE_BLOCKED` on `POST /rooms/{roomId}/invite`, the `invite` list of `POST /createRoom`, `PUT /rooms/{roomId}/state/m.room.member/{userId}` and the federation `/invite` endpoints.
+- Zendrite refuses a blocked invite with 403 `M_INVITE_BLOCKED` on `POST /rooms/{roomId}/invite`, the `invite` list of `POST /createRoom`, `PUT /rooms/{roomId}/state/m.room.member/{userId}`, and the federation `/invite` endpoints.
   `createRoom` still creates the room, as with any other failed invite.
-- An ignored invite is accepted, so the inviter learns nothing, but `/sync` and sliding sync leave it out and it does not notify.
+- Zendrite accepts an ignored invite, so the inviter learns nothing, but `/sync` and sliding sync leave it out and it does not notify.
   Other endpoints, such as the room state, and application services see it as usual.
-- `/sync` and sliding sync also leave out invites the user already has and now ignores or blocks, and serve them again once the configuration allows them.
+- `/sync` and sliding sync also leave out existing invites that the user now ignores or blocks, and serve them again once the configuration allows them.
   As with `m.ignored_user_list`, a client should run an initial `/sync` after relaxing the configuration.
 - Sliding sync also leaves out invites from users in `m.ignored_user_list`, as `/sync` already did.
 - `"enabled": false` turns the configuration off without removing it.
-- Entries that are not strings, empty or longer than 255 bytes are skipped, and so are fields that are not lists.
-- A stated [invite blocking](#invite-blocking) preference takes precedence: `m.invite_permission_config` (or its unstable MSC4380 type) with any `default_action` decides alone, and the MSC4155 lists apply only without one.
+- Zendrite skips entries that are not strings, are empty, or are longer than 255 bytes, and fields that are not lists.
+- A stated [invite blocking](#invite-blocking) preference takes precedence.
+  `m.invite_permission_config` (or its unstable MSC4380 type) with any `default_action` decides alone, and the MSC4155 lists apply only without one.
 - `/versions` advertises `org.matrix.msc4155`.
 
 Differences from Synapse:
 
 - Synapse does not read `enabled`, which the MSC defines.
-- Synapse matches server globs against the server name with its port only, and the MSC without it; both forms match here.
-- Synapse lets server admins invite past the invitee's configuration; here admins are filtered like any other user, as for invite blocking.
-- Synapse's `/sync` and sliding sync hide only ignored invites; here pending invites that are now blocked are hidden too, as the MSC recommends and as invite blocking already does.
+- Synapse matches server globs against the server name with its port only, and the MSC without it.
+  Zendrite matches both forms.
+- Synapse lets server admins invite past the invitee's configuration.
+  Zendrite filters admins like any other user, as for invite blocking.
+- Synapse's `/sync` and sliding sync hide only ignored invites.
+  Zendrite also hides pending invites that are now blocked.
+  The MSC recommends this, and invite blocking already does it.
 
 ## Registration
 
@@ -483,8 +594,8 @@ Differences from Synapse:
 | [MSC4025](https://github.com/matrix-org/matrix-spec-proposals/pull/4025) | Local user erasure requests | 1.10 | Implemented: see [erasure](#erasure) |
 | [MSC3939](https://github.com/matrix-org/matrix-spec-proposals/pull/3939) | Account locking | 1.12 | Implemented: see [account locking](#account-locking) |
 | [MSC3823](https://github.com/matrix-org/matrix-spec-proposals/pull/3823) | Account suspension | 1.13 | Implemented: see [account suspension](#account-suspension) |
-| [MSC4151](https://github.com/matrix-org/matrix-spec-proposals/pull/4151) | Reporting rooms | 1.13 | Implemented: `POST /_matrix/client/v3/rooms/{roomId}/report` stores a report with a `reason`, which may be empty, for rooms this server knows, whether or not the reporter is in them; unknown rooms return 404 `M_NOT_FOUND`. Administrators list reports with `GET /_synapse/admin/v1/room_reports` (see the [admin API](/administration/adminapi/)) |
-| [MSC4260](https://github.com/matrix-org/matrix-spec-proposals/pull/4260) | Reporting users | 1.14 | Implemented: `POST /_matrix/client/v3/users/{userId}/report` stores a report with a `reason`, which may be empty, whether or not the reporter shares a room with the user. Local users without an account return 404 `M_NOT_FOUND`; remote users cannot be checked, so any valid remote user ID is accepted. Administrators list reports with `GET /_synapse/admin/v1/user_reports` (see the [admin API](/administration/adminapi/)) |
+| [MSC4151](https://github.com/matrix-org/matrix-spec-proposals/pull/4151) | Reporting rooms | 1.13 | Implemented: `POST /_matrix/client/v3/rooms/{roomId}/report` stores a report with a `reason`, which may be empty, for rooms this server knows, even if the reporter is not in them. Unknown rooms return 404 `M_NOT_FOUND`. Administrators list reports with `GET /_synapse/admin/v1/room_reports` (see the [admin API](/administration/adminapi/)) |
+| [MSC4260](https://github.com/matrix-org/matrix-spec-proposals/pull/4260) | Reporting users | 1.14 | Implemented: `POST /_matrix/client/v3/users/{userId}/report` stores a report with a `reason`, which may be empty, even if the reporter shares no room with the user. Local users without an account return 404 `M_NOT_FOUND`. Zendrite cannot check remote users, so it accepts any valid remote user ID. Administrators list reports with `GET /_synapse/admin/v1/user_reports` (see the [admin API](/administration/adminapi/)) |
 | [MSC3391](https://github.com/matrix-org/matrix-spec-proposals/pull/3391) | Removing account data | N/A | Opt-in (`msc3391`, unstable prefix): see [MSC3391](#msc3391-removing-account-data) |
 | [MSC3890](https://github.com/matrix-org/matrix-spec-proposals/pull/3890) | Remotely silence local notifications | N/A | Implemented (unstable prefix): see [local notification settings](#local-notification-settings) |
 | [MSC4323](https://github.com/matrix-org/matrix-spec-proposals/pull/4323) | User suspension and locking endpoints | 1.18 | Implemented: `GET` and `PUT /_matrix/client/v1/admin/lock/{userId}` and `/admin/suspend/{userId}`, and `/capabilities` reports `m.account_moderation` to administrators. With [MSC3861](#msc3861-oidc-delegated-authentication), only suspension is available (`lock: false`) |
@@ -492,43 +603,58 @@ Differences from Synapse:
 ### Erasure
 
 `POST /_matrix/client/v3/account/deactivate` with `"erase": true`, and the MAS `delete_user` call with `erase`, mark the user as erased in `roomserver_erased_users`.
-From then on, their events are served redacted to clients and servers that see them only through `shared` or `world_readable` history visibility, in `/messages`, `/context`, `/event`, `/relations`, threads, `/sync` timelines, and federation `/event`, `/backfill` and `/get_missing_events`.
-A user who was joined when an event was sent, or invited under `invited` visibility, still sees it unredacted, as does a server that had such a user; this follows Synapse and approximates "joined before the erasure".
-No redaction events are sent and nothing is shared over federation, so other servers may still serve unredacted copies.
-Erasure also deletes the user's account data and 3PIDs, after their identity server bindings have been removed.
+From then on, Zendrite serves their events redacted to clients and servers that see them only through `shared` or `world_readable` history visibility.
+This applies to `/messages`, `/context`, `/event`, `/relations`, threads, `/sync` timelines, and federation `/event`, `/backfill`, and `/get_missing_events`.
+
+A user who was joined when an event was sent, or invited under `invited` visibility, still sees it unredacted.
+So does a server that had such a user.
+This follows Synapse, and approximates the "joined before the erasure" rule.
+
+Zendrite sends no redaction events and shares nothing over federation, so other servers may still serve unredacted copies.
+Erasure also deletes the user's account data and 3PIDs, after removing their identity server bindings.
 Reactivating the account lifts the erasure, as in Synapse.
 
-Deactivation, with or without `erase`, unbinds the user's 3PIDs from `id_server`, or from every identity server that holds a binding, and reports `id_server_unbind_result`.
+Deactivation, with or without `erase`, unbinds the user's 3PIDs from `id_server`, or from every identity server that has a binding, and reports `id_server_unbind_result`.
 
 ### Account locking
 
-An administrator locks or unlocks an account with `PUT /_matrix/client/v1/admin/lock/{userId}` and `{"locked": true}` or `{"locked": false}`, and reads the state with `GET` on the same path (see the [admin API](/administration/adminapi/)).
-A locked account keeps its sessions, but every authenticated request apart from `POST /logout` and `POST /logout/all` fails with 401 `M_USER_LOCKED` and `soft_logout: true`.
-`/login` and `/refresh` refuse locked accounts the same way, after checking the credentials, and `/refresh` leaves the tokens untouched so the client can retry once the account is unlocked.
-Unlocking restores the existing sessions without a new login.
+An administrator locks an account with `PUT /_matrix/client/v1/admin/lock/{userId}` and `{"locked": true}`, and lifts the lock with `{"locked": false}`.
+`GET` on the same path reads the state (see the [admin API](/administration/adminapi/)).
+A locked account keeps its sessions, but every authenticated request except `POST /logout` and `POST /logout/all` fails with 401 `M_USER_LOCKED` and `soft_logout: true`.
+`/login` and `/refresh` refuse locked accounts the same way, after checking the credentials.
+`/refresh` leaves the tokens untouched, so the client can retry once the lock is lifted.
+
+Lifting the lock restores the existing sessions without a new login.
 Administrators cannot lock themselves or another administrator.
 With [MSC3861](#msc3861-oidc-delegated-authentication), the endpoints return 403: lock the account in the authentication service instead.
 
 ### Account suspension
 
-An administrator suspends or unsuspends an account with `PUT /_matrix/client/v1/admin/suspend/{userId}` and `{"suspended": true}` or `{"suspended": false}`, and reads the state with `GET` on the same path.
-A suspended account can still log in, sync, read history, manage its devices, keys and key backup, leave rooms, redact its own events and deactivate itself.
-It gets 403 `M_USER_SUSPENDED` when it joins, knocks, invites, kicks, bans or unbans, creates or upgrades rooms, sends any event other than a redaction of its own events or its own leave, or changes its profile.
+An administrator suspends or unsuspends an account with `PUT /_matrix/client/v1/admin/suspend/{userId}` and `{"suspended": true}` or `{"suspended": false}`.
+`GET` on the same path reads the state.
+
+A suspended account can still log in, sync, read history, manage its devices, keys, and key backup, leave rooms, redact its own events, and deactivate itself.
+It gets 403 `M_USER_SUSPENDED` when it joins, knocks, invites, kicks, bans or unbans, creates or upgrades rooms, changes its profile, or sends any event other than a redaction of its own events or its own leave.
 Administrators cannot suspend themselves or another administrator.
-Suspension also works with [MSC3861](#msc3861-oidc-delegated-authentication), since the authentication service has no equivalent.
+Suspension also works with [MSC3861](#msc3861-oidc-delegated-authentication), because the authentication service has no equivalent.
 
 ### Local notification settings
 
-Clients store MSC3890 per-device notification settings as global account data of type `org.matrix.msc3890.local_notification_settings.<device_id>`; the server only stores them.
-When a device is deleted, with `DELETE /devices/{deviceId}`, `POST /delete_devices`, `POST /logout`, `POST /logout/all`, a password change or reset that logs out devices, MAS device deletion or deactivation, its settings entry is deleted as well, as in Synapse.
-`GET /user/{userId}/account_data/{type}` then returns 404 `M_NOT_FOUND`, and the next incremental `/sync` or sliding sync `account_data` extension response carries the type with empty content (`{}`), as for [MSC3391](#msc3391-removing-account-data) deletions; initial syncs leave it out.
+Clients store MSC3890 per-device notification settings as global account data of type `org.matrix.msc3890.local_notification_settings.<device_id>`.
+The server only stores them.
+When a device is deleted, Zendrite deletes its settings entry too, as Synapse does.
+This covers `DELETE /devices/{deviceId}`, `POST /delete_devices`, `POST /logout`, `POST /logout/all`, a password change or reset that logs out devices, MAS device deletion, and deactivation.
+
+`GET /user/{userId}/account_data/{type}` then returns 404 `M_NOT_FOUND`.
+The next incremental `/sync` or sliding sync `account_data` extension response includes the type with empty content (`{}`), as for [MSC3391](#msc3391-removing-account-data) deletions.
+Initial syncs leave it out.
 Unlike Synapse, this needs no experimental option.
 
 ## Profiles
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
-| [MSC3550](https://github.com/matrix-org/matrix-spec-proposals/pull/3550) | HTTP 403 for profile lookups | 1.2 | Implemented: remote lookup restrictions return 403 `M_FORBIDDEN`; local profiles remain unrestricted |
+| [MSC3550](https://github.com/matrix-org/matrix-spec-proposals/pull/3550) | HTTP 403 for profile lookups | 1.2 | Implemented: remote lookup restrictions return 403 `M_FORBIDDEN`. Local profiles remain unrestricted |
 | [MSC4133](https://github.com/matrix-org/matrix-spec-proposals/pull/4133) | Extended profiles: custom profile fields | 1.16 | Implemented: see [custom profile fields](#custom-profile-fields) |
 | [MSC4175](https://github.com/matrix-org/matrix-spec-proposals/pull/4175) | Time zone profile field (`m.tz`) | 1.16 | Implemented: `m.tz` must be a string |
 | [MSC4437](https://github.com/matrix-org/matrix-spec-proposals/pull/4437) | Endpoint to replace an entire profile | N/A | Implemented (unstable prefix): see [custom profile fields](#custom-profile-fields) |
@@ -536,202 +662,255 @@ Unlike Synapse, this needs no experimental option.
 
 ### Custom profile fields
 
-`GET`, `PUT` and `DELETE /_matrix/client/v3/profile/{userId}/{keyName}` read, set and remove any profile field, and `GET /_matrix/client/v3/profile/{userId}` returns them all.
-The same endpoints are served under `/_matrix/client/unstable/uk.tcpip.msc4133/`, and `/versions` advertises `uk.tcpip.msc4133` and `uk.tcpip.msc4133.stable`.
+`GET`, `PUT`, and `DELETE /_matrix/client/v3/profile/{userId}/{keyName}` read, set, and remove any profile field, and `GET /_matrix/client/v3/profile/{userId}` returns them all.
+Zendrite also serves these endpoints under `/_matrix/client/unstable/uk.tcpip.msc4133/`, and `/versions` advertises `uk.tcpip.msc4133` and `uk.tcpip.msc4133.stable`.
 `/capabilities` reports `m.profile_fields` (and `uk.tcpip.msc4133.profile_fields`) as enabled without restrictions, together with `m.set_displayname` and `m.set_avatar_url`.
 
-A custom field name follows the Common Namespaced Identifier Grammar: it starts with a lowercase letter, contains only lowercase letters, digits, `-`, `_` and `.`, and is at most 255 bytes long.
-Names should be namespaced in reverse-DNS form such as `org.example.job_title`, but this is not enforced.
+A custom field name follows the Common Namespaced Identifier Grammar.
+It starts with a lowercase letter, contains only lowercase letters, digits, `-`, `_`, and `.`, and is at most 255 bytes long.
+Names should use reverse-DNS namespaces such as `org.example.job_title`, but Zendrite does not enforce this.
+
 A field's value can be any JSON.
-A profile, including its display name and avatar URL, is limited to 64 KiB of canonical JSON; a change that would exceed this fails with `M_PROFILE_TOO_LARGE`.
-Only the display name and avatar URL are copied into membership events; deleting either one clears it.
-Guests may only change their display name.
-`/_matrix/federation/v1/query/profile` serves every field, also one at a time via `field`, and profiles of remote users include their custom fields.
+A profile, including its display name and avatar URL, is limited to 64 KiB of canonical JSON.
+A change that would exceed this fails with `M_PROFILE_TOO_LARGE`.
+
+Zendrite copies only the display name and avatar URL into membership events, and deleting either one clears it.
+Guests may change only their display name.
+`/_matrix/federation/v1/query/profile` serves every field, also one at a time through `field`, and profiles of remote users include their custom fields.
 Deactivating an account removes its custom fields.
 
-`PUT /_matrix/client/unstable/com.beeper.msc4437/profile/{userId}` replaces the whole profile at once, which bridges use for their ghost users ([MSC4437](https://github.com/matrix-org/matrix-spec-proposals/pull/4437), advertised as `com.beeper.msc4437`).
-Fields left out of the request are removed, and a `null` display name or avatar URL clears it.
-Each field is checked as the single-field `PUT` checks it, and the request changes nothing if one field is invalid, the profile is too large, or a new name does not fit in a membership event.
-A changed display name or avatar URL sends one membership event to each joined room, with both values.
+`PUT /_matrix/client/unstable/com.beeper.msc4437/profile/{userId}` replaces the whole profile at once ([MSC4437](https://github.com/matrix-org/matrix-spec-proposals/pull/4437), advertised as `com.beeper.msc4437`).
+Bridges use it for their ghost users.
+The request removes fields it leaves out, and a `null` display name or avatar URL clears that value.
+
+Zendrite checks each field as the single-field `PUT` does.
+The request changes nothing if one field is invalid, the profile is too large, or a new name does not fit in a membership event.
+A changed display name or avatar URL sends one membership event, with both values, to each joined room.
 Guests cannot use it.
 
-`POST /_matrix/client/unstable/org.matrix.msc4536/profile/query` returns the profiles of up to 100 users at once, optionally only up to 30 of their fields ([MSC4536](https://github.com/matrix-org/matrix-spec-proposals/pull/4536), advertised as `org.matrix.msc4536`).
-As the MSC asks, and as in Synapse, it only returns local profiles and never queries other servers.
-Users without a profile, or without any of the requested fields, are left out of the response.
+`POST /_matrix/client/unstable/org.matrix.msc4536/profile/query` returns the profiles of up to 100 users at once, optionally limited to up to 30 of their fields ([MSC4536](https://github.com/matrix-org/matrix-spec-proposals/pull/4536), advertised as `org.matrix.msc4536`).
+As the MSC asks, and as in Synapse, it returns only local profiles and never queries other servers.
+The response leaves out users without a profile, or without any of the requested fields.
 
 ## Media
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
 | [MSC2246](https://github.com/matrix-org/matrix-spec-proposals/pull/2246) | Asynchronous media uploads | 1.7 | Implemented: see [asynchronous uploads](#asynchronous-uploads) |
-| [MSC2701](https://github.com/matrix-org/matrix-spec-proposals/pull/2701), [MSC2702](https://github.com/matrix-org/matrix-spec-proposals/pull/2702) | `Content-Type` and `Content-Disposition` in the media repo | 1.12 | Implemented: uploads without a `Content-Type` are stored as `application/octet-stream`, which is also served for older media stored without a type. Downloads are `inline` only for the spec's list of safe types and `attachment` otherwise. Thumbnails are served `inline` with a file name such as `thumbnail.jpg`; an original that answers a thumbnail request itself stays an `attachment` unless its type is safe |
-| [MSC2705](https://github.com/matrix-org/matrix-spec-proposals/pull/2705) | Animated thumbnails | 1.11 | Implemented: without `animated=true`, thumbnails are never animated; an animated GIF, APNG or WebP that would answer the request itself is replaced by a still JPEG rendition. With `animated=true`, an animated image no larger than the requested size is served as it is, and larger ones get a still thumbnail, which the spec allows |
-| [MSC3860](https://github.com/matrix-org/matrix-spec-proposals/pull/3860) | Media download redirects | 1.7 | Implemented: `allow_redirect` is accepted, and Zendrite always serves media itself, which the spec allows. When a remote server answers a federation media request with a `Location` instead of the media, Zendrite fetches it from there, following up to five more redirects, and only from public addresses |
+| [MSC2701](https://github.com/matrix-org/matrix-spec-proposals/pull/2701), [MSC2702](https://github.com/matrix-org/matrix-spec-proposals/pull/2702) | `Content-Type` and `Content-Disposition` in the media repo | 1.12 | Implemented: Zendrite stores uploads without a `Content-Type` as `application/octet-stream`, and serves that type for older media stored without one. Downloads are `inline` only for the spec's list of safe types, and `attachment` otherwise. Thumbnails are served `inline` with a file name such as `thumbnail.jpg`. An original that answers a thumbnail request itself stays an `attachment` unless its type is safe |
+| [MSC2705](https://github.com/matrix-org/matrix-spec-proposals/pull/2705) | Animated thumbnails | 1.11 | Implemented: without `animated=true`, thumbnails are never animated. Zendrite replaces an animated GIF, APNG, or WebP that would answer the request itself with a still JPEG rendition. With `animated=true`, an animated image no larger than the requested size is served unchanged, and larger ones get a still thumbnail, which the spec allows |
+| [MSC3860](https://github.com/matrix-org/matrix-spec-proposals/pull/3860) | Media download redirects | 1.7 | Implemented: Zendrite accepts `allow_redirect` and always serves media itself, which the spec allows. When a remote server answers a federation media request with a `Location` instead of the media, Zendrite fetches the media from there. It follows up to five more redirects, and fetches only from public addresses |
 | [MSC4452](https://github.com/matrix-org/matrix-spec-proposals/pull/4452) | Preview URL capabilities API | N/A (accepted) | Implemented: see [URL previews](#url-previews) |
 
 ### Asynchronous uploads
 
-`POST /_matrix/media/v1/create` reserves an `mxc://` URI and returns it with `unused_expires_at`, after which an unused reservation lapses (`media_api.async_uploads.unused_expiry`, default `24h`).
-A user may hold `media_api.async_uploads.max_pending_per_user` reservations (default 10) that are not uploaded or expired; beyond that, `/create` fails with 429 `M_LIMIT_EXCEEDED`.
+`POST /_matrix/media/v1/create` reserves an `mxc://` URI and returns it with `unused_expires_at`.
+An unused reservation lapses at that time (`media_api.async_uploads.unused_expiry`, default `24h`).
+A user may have up to `media_api.async_uploads.max_pending_per_user` reservations (default 10) that are neither uploaded nor expired.
+Beyond that, `/create` fails with 429 `M_LIMIT_EXCEEDED`.
+
 `PUT /_matrix/media/v3/upload/{serverName}/{mediaId}` uploads the content.
 Only the user who created the URI may upload (403 `M_FORBIDDEN`), only once (409 `M_CANNOT_OVERWRITE_MEDIA`), and only before it expires (404 `M_NOT_FOUND`).
 
-Downloads and thumbnails of a reserved URI, over the client and federation APIs, wait for the upload for `timeout_ms` (default 20 seconds, at most `media_api.async_uploads.max_download_wait`, default `60s`), and then fail with 504 `M_NOT_YET_UPLOADED`.
+Downloads and thumbnails of a reserved URI, over the client and federation APIs, wait for the upload for `timeout_ms`, and then fail with 504 `M_NOT_YET_UPLOADED`.
+`timeout_ms` defaults to 20 seconds, and is at most `media_api.async_uploads.max_download_wait` (default `60s`).
 A download waiting on one replica sees an upload completed on another within half a second.
-Expired reservations are deleted every hour.
-When a remote server answers 504 for its own media, the client gets 504 `M_NOT_YET_UPLOADED` too, and nothing is cached.
+Zendrite deletes expired reservations every hour.
+When a remote server answers 504 for its own media, the client gets 504 `M_NOT_YET_UPLOADED` too, and Zendrite caches nothing.
 
 ### URL previews
 
-`GET /_matrix/client/v1/media/preview_url` (and the deprecated `/_matrix/media/v3/preview_url`) is opt-in with `media_api.url_preview.enabled`, as in Synapse, since it makes the server fetch URLs for its users; disabled, it answers 403 `M_FORBIDDEN`, as [MSC4452](https://github.com/matrix-org/matrix-spec-proposals/pull/4452) asks.
-`/capabilities` tells clients whether they may request previews with `m.preview_url` and its unstable name `io.element.msc4452.preview_url`, both `{"enabled": ...}`.
-It is `false` while previews are disabled, and always for guests and call guests, whom the endpoint refuses.
-For an HTML page it returns the `og:` properties of the page's head, falling back to `<title>` and the `description` meta tag.
-`og:image` is downloaded and stored as local media, and the preview carries its `mxc://` URI with `matrix:image:size`, `og:image:type`, `og:image:width` and `og:image:height`; a URL that points at an image gets the same fields for the image itself.
+`GET /_matrix/client/v1/media/preview_url` (and the deprecated `/_matrix/media/v3/preview_url`) is opt-in with `media_api.url_preview.enabled`, as in Synapse, because it makes the server fetch URLs for its users.
+When disabled, it answers 403 `M_FORBIDDEN`, as [MSC4452](https://github.com/matrix-org/matrix-spec-proposals/pull/4452) asks.
+`/capabilities` tells clients whether they may request previews, with `m.preview_url` and its unstable name `io.element.msc4452.preview_url`, both `{"enabled": ...}`.
+The value is `false` while previews are disabled, and always for guests and call guests, whom the endpoint refuses.
 
-Only public addresses are fetched: loopback, private, link-local, carrier-grade NAT and similar addresses are refused with 403 `M_FORBIDDEN`, also after redirects (at most five) and DNS changes, because the check applies to the address being connected to.
+For an HTML page, the endpoint returns the `og:` properties of the page's head, falling back to `<title>` and the `description` meta tag.
+Zendrite downloads `og:image` and stores it as local media.
+The preview includes its `mxc://` URI with `matrix:image:size`, `og:image:type`, `og:image:width`, and `og:image:height`.
+A URL that points at an image gets the same fields for the image itself.
+
+Zendrite fetches only public addresses.
+It refuses loopback, private, link-local, carrier-grade NAT, and similar addresses with 403 `M_FORBIDDEN`, also after redirects (at most five) and DNS changes, because the check applies to the address it connects to.
 `ip_range_whitelist` allows non-public ranges such as an internal wiki, and `ip_range_blacklist` refuses more ranges and takes precedence.
-Pages are read up to `max_page_size_bytes` (default 10 MiB) and images up to `max_file_size_bytes`; a failed fetch returns 502.
-Previews are cached in memory per URL for `cache_duration` (default `1h`), concurrent requests for the same URL share one fetch, and `ts` is ignored, which the spec allows.
+Zendrite reads pages up to `max_page_size_bytes` (default 10 MiB) and images up to `max_file_size_bytes`.
+A failed fetch returns 502.
+
+Zendrite caches previews in memory per URL for `cache_duration` (default `1h`), and concurrent requests for the same URL share one fetch.
+It ignores `ts`, which the spec allows.
 
 ## Encryption & Security
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
-| [MSC1219](https://github.com/matrix-org/matrix-spec-proposals/pull/1219) | Server-side key backup | 1.1 | Implemented: backup versions, and uploading, fetching and deleting keys for a version, a room or a session |
-| [MSC3916](https://github.com/matrix-org/matrix-spec-proposals/pull/3916) | Authenticated media | 1.11 | Implemented, including [URL previews](#url-previews). A `Location` in a remote multipart response is followed, see [MSC3860](#media) |
-| [MSC2732](https://github.com/matrix-org/matrix-spec-proposals/pull/2732) | OLM fallback keys | 1.2 | Implemented: ordinary and dehydrated devices upload reusable fallback keys; claims mark them used and sync reports unused algorithms |
+| [MSC1219](https://github.com/matrix-org/matrix-spec-proposals/pull/1219) | Server-side key backup | 1.1 | Implemented: backup versions, and uploading, fetching, and deleting keys for a version, a room, or a session |
+| [MSC3916](https://github.com/matrix-org/matrix-spec-proposals/pull/3916) | Authenticated media | 1.11 | Implemented, including [URL previews](#url-previews). Zendrite follows a `Location` in a remote multipart response (see [MSC3860](#media)) |
+| [MSC2732](https://github.com/matrix-org/matrix-spec-proposals/pull/2732) | Olm fallback keys | 1.2 | Implemented: ordinary and dehydrated devices upload reusable fallback keys. Claims mark them used, and sync reports unused algorithms |
 | [MSC3814](https://github.com/matrix-org/matrix-spec-proposals/pull/3814) | Dehydrated devices v2 | N/A | Opt-in (`msc3814`) |
 | [MSC4263](https://github.com/matrix-org/matrix-spec-proposals/pull/4263) | Preventing MXID enumeration via key queries | N/A | Opt-in (`msc4263`): see [MSC4263](#msc4263-key-queries-for-users-who-share-a-room) |
-| [MSC4115](https://github.com/matrix-org/matrix-spec-proposals/pull/4115) | Membership metadata on events | 1.11 | Implemented: `unsigned.membership` is the requesting user's membership at each event, including the change made by the user's own membership events, wherever events pass the history visibility filter (sync timelines, `/messages`, `/context`, `/event`, `/relations`, threads). Events without a known membership, such as the `state` section of `/sync`, carry none, which the spec allows |
+| [MSC4115](https://github.com/matrix-org/matrix-spec-proposals/pull/4115) | Membership metadata on events | 1.11 | Implemented: `unsigned.membership` is the requesting user's membership at each event, including the change made by the user's own membership events. It appears wherever events pass the history visibility filter (sync timelines, `/messages`, `/context`, `/event`, `/relations`, threads). Events without a known membership, such as the `state` section of `/sync`, have none, which the spec allows |
 
 ## Federation
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
-| [MSC3706](https://github.com/matrix-org/matrix-spec-proposals/pull/3706) | Partial state in `/send_join` (faster joins) | 1.6 | Implemented: Zendrite joins with `omit_members=true`, and answers `send_join` with partial state, `members_omitted` and `servers_in_room`, including the heroes' memberships of [MSC3943](https://github.com/matrix-org/matrix-spec-proposals/pull/3943). See [faster joins](#faster-joins) |
-| [MSC3902](https://github.com/matrix-org/matrix-spec-proposals/pull/3902) | Faster remote room joins | N/A | Implemented: Zendrite joins with partial state, tracks which events have partial state, resyncs the full state in the background and checks those events again against it, as Synapse does. See [faster joins](#faster-joins) |
+| [MSC3706](https://github.com/matrix-org/matrix-spec-proposals/pull/3706) | Partial state in `/send_join` (faster joins) | 1.6 | Implemented: Zendrite joins with `omit_members=true`. It answers `send_join` with partial state, `members_omitted`, and `servers_in_room`, including the heroes' memberships of [MSC3943](https://github.com/matrix-org/matrix-spec-proposals/pull/3943). See [faster joins](#faster-joins) |
+| [MSC3902](https://github.com/matrix-org/matrix-spec-proposals/pull/3902) | Faster remote room joins | N/A | Implemented: as Synapse does, Zendrite joins with partial state, tracks which events have partial state, resyncs the full state in the background, and checks those events again against it. See [faster joins](#faster-joins) |
 | [MSC3030](https://github.com/matrix-org/matrix-spec-proposals/pull/3030) | Jump to date API endpoint | 1.6 | Implemented: see [jump to date](#jump-to-date) |
-| [MSC3938](https://github.com/matrix-org/matrix-spec-proposals/pull/3938) | Remove deprecated `keyId` parameters from `/keys` endpoints | 1.6 | Implemented: `GET /_matrix/key/v2/query/{serverName}` returns all keys of the server. The deprecated forms with a key ID are still served |
+| [MSC3938](https://github.com/matrix-org/matrix-spec-proposals/pull/3938) | Remove deprecated `keyId` parameters from `/keys` endpoints | 1.6 | Implemented: `GET /_matrix/key/v2/query/{serverName}` returns all keys of the server. Zendrite still serves the deprecated forms with a key ID |
 | [MSC2444](https://github.com/matrix-org/matrix-spec-proposals/pull/2444) | Peeking over federation | N/A | Opt-in (`msc2444`) |
 | [MSC4436](https://github.com/matrix-org/matrix-spec-proposals/pull/4436) | Case-insensitive server ACLs | 1.19 | Implemented: `allow` and `deny` globs match the whole server name, ignoring case |
 | [MSC4284](https://github.com/matrix-org/matrix-spec-proposals/pull/4284) | Policy servers | 1.18 | Implemented: see [policy servers](#policy-servers) |
 | [MSC2753](https://github.com/matrix-org/matrix-spec-proposals/pull/2753) | Peeking via `/sync` | N/A | Opt-in (`msc2753`) |
 | [MSC3821](https://github.com/matrix-org/matrix-spec-proposals/pull/3821) | Update redaction rules, again | 1.8 | Implemented: from room version 11, redacting an `m.room.member` event keeps `content.third_party_invite.signed`, so redacted events hash to the same event ID as on other servers |
-| [MSC4311](https://github.com/matrix-org/matrix-spec-proposals/pull/4311) | Create event in invite and knock stripped state | 1.16 | Implemented: `invite_room_state` and `knock_room_state` are sent as full PDUs including `m.room.create`. From room version 12, invites whose state fails validation are rejected with `M_MISSING_PARAM`, including state that is missing, stripped-only or lacks `m.room.create`, as the spec's migration period has ended. In room versions 1 to 11 such invites are accepted with a warning. Knock state entries that fail validation are dropped, as the knock has already happened |
+| [MSC4311](https://github.com/matrix-org/matrix-spec-proposals/pull/4311) | Create event in invite and knock stripped state | 1.16 | Implemented: Zendrite sends `invite_room_state` and `knock_room_state` as full PDUs, including `m.room.create`. From room version 12, it rejects invites whose state fails validation with `M_MISSING_PARAM`, because the spec's migration period has ended. This includes state that is missing, stripped-only, or lacks `m.room.create`. In room versions 1 to 11, it accepts such invites with a warning. It drops knock state entries that fail validation, because the knock has already happened |
 | [MSC4514](https://github.com/matrix-org/matrix-spec-proposals/pull/4514) | EDU size limit | N/A | Implemented: see [EDU size limit](#edu-size-limit) |
 | [MSC4458](https://github.com/matrix-org/matrix-spec-proposals/pull/4458) | Handling incoming JSON in the server-server API | N/A (accepted) | Implemented: see [incoming federation JSON](#incoming-federation-json) |
 | [MSC4370](https://github.com/matrix-org/matrix-spec-proposals/pull/4370) | Federation endpoint for retrieving current extremities | N/A | Opt-in (`msc4370`, unstable prefix): see [MSC4370](#msc4370-current-extremities-over-federation) |
 
 ### Incoming federation JSON
 
-[MSC4458](https://github.com/matrix-org/matrix-spec-proposals/pull/4458) requires that every server reads incoming federation JSON the way it was hashed and signed.
-Zendrite re-encodes events and signed requests from other servers as Canonical JSON before checking hashes and signatures, and rejects JSON that has no unambiguous encoding: objects with duplicate keys (compared after unescaping), unpaired UTF-16 surrogates and invalid UTF-8.
-From room version 6, numbers must be integers in the safe range: `-0` counts as `0`, while fractions and exponents such as `0.0` or `1E10` are rejected, as Synapse does.
-Keys of events and of the content that event auth reads match only exactly, so an extra `"Type"` or `"Users"` key is ignored as on other servers rather than read as `type` or `users`.
-Client request bodies with duplicate keys, unpaired surrogates or invalid UTF-8 are refused with 400 `M_BAD_JSON`, since parts of them, such as event content and to-device messages, are passed on to other servers that would reject them.
-JSON that Zendrite already holds, such as stored events it redacts or signs, is encoded as before, so events stored earlier keep working.
+[MSC4458](https://github.com/matrix-org/matrix-spec-proposals/pull/4458) requires every server to read incoming federation JSON the way it was hashed and signed.
+Zendrite re-encodes events and signed requests from other servers as Canonical JSON before checking hashes and signatures.
+It rejects JSON that has no unambiguous encoding: objects with duplicate keys (compared after unescaping), unpaired UTF-16 surrogates, and invalid UTF-8.
+From room version 6, numbers must be integers in the safe range.
+`-0` counts as `0`, while Zendrite rejects fractions and exponents such as `0.0` or `1E10`, as Synapse does.
+
+Keys of events, and of the content that event auth reads, match only exactly.
+As on other servers, Zendrite ignores an extra `"Type"` or `"Users"` key rather than reading it as `type` or `users`.
+Zendrite refuses client request bodies with duplicate keys, unpaired surrogates, or invalid UTF-8 with 400 `M_BAD_JSON`.
+Parts of these bodies, such as event content and to-device messages, go on to other servers that would reject them.
+Zendrite encodes JSON it already has, such as stored events it redacts or signs, as before, so events stored earlier keep working.
 
 ### EDU size limit
 
-No EDU may be larger than 65536 bytes in canonical JSON ([MSC4514](https://github.com/matrix-org/matrix-spec-proposals/pull/4514)), the limit that events have.
-Client requests that would make a larger EDU fail with 413 `M_TOO_LARGE` before anything is sent:
+No EDU may be larger than 65536 bytes in canonical JSON ([MSC4514](https://github.com/matrix-org/matrix-spec-proposals/pull/4514)), the same limit as for events.
+Client requests that would create a larger EDU fail with 413 `M_TOO_LARGE` before Zendrite sends anything:
 
-- `PUT /sendToDevice`, for a message to a remote user that would not fit in the EDU that carries it; every message is checked before any is sent, and messages to local users are not limited.
-- `PUT /presence/{userId}/status`, for a status message.
-- `PUT /devices/{deviceId}`, for a display name.
-- `POST /keys/upload`, for device keys.
-- `POST /keys/device_signing/upload` and `POST /keys/signatures/upload`, for keys or signatures.
+- `PUT /sendToDevice`: a message to a remote user that would not fit in its EDU.
+  Zendrite checks every message before sending any, and does not limit messages to local users.
+- `PUT /presence/{userId}/status`: a status message.
+- `PUT /devices/{deviceId}`: a display name.
+- `POST /keys/upload`: device keys.
+- `POST /keys/device_signing/upload` and `POST /keys/signatures/upload`: keys or signatures.
 
-Some of these checks cannot see everything the EDU will hold, such as the keys sent along with a device's display name or the signatures a key already has.
-An EDU that still ends up over the limit is not sent, and the error is logged.
-EDUs over the limit in an incoming transaction are dropped with a warning, and the rest of the transaction is processed.
+Some of these checks cannot see everything the EDU will contain, such as the keys sent along with a device's display name, or the signatures a key already has.
+Zendrite does not send an EDU that still ends up over the limit, and logs the error.
+Zendrite drops EDUs over the limit in an incoming transaction with a warning, and processes the rest of the transaction.
 
 ### Policy servers
 
-A room names a policy server with an `m.room.policy` state event (empty state key) whose content holds the server in `via` and its signing key in `public_keys.ed25519`.
-The policy server only counts while at least one of its users is joined to the room.
-The unstable `org.matrix.msc4284.policy` event, which may carry the key as `public_key`, is read when the room has no `m.room.policy` event.
+A room names a policy server with an `m.room.policy` state event (empty state key).
+Its content gives the server in `via` and its signing key in `public_keys.ed25519`.
+The policy server counts only while at least one of its users is joined to the room.
+When the room has no `m.room.policy` event, Zendrite reads the unstable `org.matrix.msc4284.policy` event, which may give the key as `public_key`.
 An `m.room.policy` event with any other content, such as `{}`, turns the policy server off.
 
-While a room has a policy server, every new event must carry the policy server's signature, made with the key from the room's current state under the key ID `ed25519:policy_server`.
-Zendrite asks for a missing signature with `POST /_matrix/policy/v1/sign`, or the unstable `/_matrix/policy/unstable/org.matrix.msc4284/sign` when the policy server does not know the stable endpoint, and keeps the signature with the event.
-Answers are cached per event for 10 minutes, and a request gives up after 10 seconds.
-The `m.room.policy` events themselves are never checked, so that a room can always replace or turn off a policy server that stopped working.
+While a room has a policy server, every new event needs the policy server's signature.
+The signature uses the key from the room's current state, under the key ID `ed25519:policy_server`.
+
+Zendrite requests a missing signature with `POST /_matrix/policy/v1/sign`, or with the unstable `/_matrix/policy/unstable/org.matrix.msc4284/sign` when the policy server does not know the stable endpoint.
+Zendrite stores the signature with the event.
+It caches answers per event for 10 minutes, and a request gives up after 10 seconds.
+Zendrite never checks the `m.room.policy` events themselves, so a room can always replace or turn off a policy server that stopped working.
 
 Zendrite fails closed:
 
-- An event of a local user that the policy server refuses is neither stored nor sent, and the client gets 400 with the policy server's error, such as `M_FORBIDDEN`.
-  When the policy server cannot be reached, rate limits Zendrite, or answers with an invalid signature, the client gets 503 `M_UNKNOWN`, and can retry.
-  This applies to sending events and state, redactions, joins, knocks, invites, delayed events and profile updates.
-  A user's own leave, invite rejection or knock withdrawal without a reason is the exception: its content is only `{"membership": "leave"}`, so it is sent without the signature and nobody is trapped in a room, and other servers may soft fail it.
-- A remote event that lacks a valid signature, and for which Zendrite cannot get one, is [soft failed](https://spec.matrix.org/latest/server-server-api/#soft-failure): it is stored, but not shown to users or used as current state.
-  `send_join`, `send_leave` and `send_knock` fail with the same errors.
+- Zendrite neither stores nor sends a local user's event that the policy server refuses.
+  The client gets 400 with the policy server's error, such as `M_FORBIDDEN`.
+  When the policy server cannot be reached, rate limits Zendrite, or answers with an invalid signature, the client gets 503 `M_UNKNOWN` and can retry.
+  This applies to sending events and state, redactions, joins, knocks, invites, delayed events, and profile updates.
+  The exception is a user's own leave, invite rejection, or knock withdrawal without a reason.
+  Its content is only `{"membership": "leave"}`, so Zendrite sends it without the signature and nobody is trapped in a room.
+  Other servers may soft fail it.
+- A remote event that lacks a valid signature, and for which Zendrite cannot get one, is [soft failed](https://spec.matrix.org/latest/server-server-api/#soft-failure).
+  Zendrite stores it, but does not show it to users or use it as current state.
+  `send_join`, `send_leave`, and `send_knock` fail with the same errors.
 
-Events in rooms with partial state from a faster join, and local events that are not sent to other servers, are not checked.
+Zendrite does not check events in rooms with partial state from a faster join, or local events that are not sent to other servers.
 Zendrite does not act as a policy server itself, and does not serve `/.well-known/matrix/policy_server`.
 
 ### Jump to date
 
 `GET /_matrix/client/v1/rooms/{roomId}/timestamp_to_event` returns the event closest to `ts` in the direction `dir` that the user may see.
 `GET /_matrix/federation/v1/timestamp_to_event/{roomId}` answers the same question for another server, from local events only.
-It returns the closest event the requesting server may see, checking at most 1000 events, and a server banned by the room's ACL gets 403.
+It returns the closest event the requesting server may see, checking at most 1000 events.
+A server banned by the room's ACL gets 403.
 
-The local history of a room can have gaps, for example before the server joined it.
-Zendrite knows them from the backward extremities, the events whose `prev_events` it never fetched.
-When such a gap can hold an event closer to `ts` than the local result, and the user may see the event after the gap, the client endpoint asks up to five other servers in the room, those with the most joined members first.
-The first server that answers decides: if its event is closer, Zendrite backfills it with up to 20 events before it, so that `/context` and `/messages` can use it, and returns it when the user may see it.
+A room's local history can have gaps, for example before the server joined it.
+Zendrite finds them through the backward extremities: the events whose `prev_events` it never fetched.
+When such a gap can contain an event closer to `ts` than the local result, and the user may see the event after the gap, the client endpoint asks up to five other servers in the room.
+It asks the servers with the most joined members first.
+
+The first server that answers decides.
+If its event is closer, Zendrite backfills it with up to 20 events before it, so `/context` and `/messages` can use it, and returns it when the user may see it.
 Otherwise, or when no server answers, the local result stands.
 
 ### Faster joins
 
 Zendrite answers `PUT /_matrix/federation/v2/send_join/{roomId}/{eventId}` with `omit_members=true` (or the unstable `org.matrix.msc3706.partial_state=true`) as Synapse does:
 
-- `state` holds the state before the join without `m.room.member` events, except the joining user's own membership and, when the room has neither an `m.room.name` nor an `m.room.canonical_alias`, the memberships of up to five heroes, so that the joining server's clients can name the room.
-  Heroes are joined and invited members other than the joining user, oldest first; when there are none, members who left or were banned.
-  Memberships that the join event cites as auth events are kept too, unlike in Synapse, so that a restricted join carries the membership of the user who authorized it (`join_authorised_via_users_server`): joining servers, Zendrite among them, check the join against the returned state.
-- `auth_chain` holds the auth chain of that state and of the join event, without the events that are already in `state`.
+- `state` contains the state before the join without `m.room.member` events, with two exceptions.
+  It keeps the joining user's own membership.
+  When the room has neither an `m.room.name` nor an `m.room.canonical_alias`, it keeps the memberships of up to five heroes, so the joining server's clients can name the room.
+  Heroes are joined and invited members other than the joining user, oldest first.
+  When there are none, Zendrite uses members who left or were banned.
+  Unlike Synapse, Zendrite also keeps memberships that the join event cites as auth events.
+  A restricted join then includes the membership of the user who authorized it (`join_authorised_via_users_server`), because joining servers, Zendrite among them, check the join against the returned state.
+- `auth_chain` contains the auth chain of that state and of the join event, without the events already in `state`.
 - `members_omitted` is `true`, and `servers_in_room` lists the servers with a joined member before the join.
 
 Without the parameter, and on the v1 endpoint, the state is full.
-While Zendrite itself only has partial state of a room, it cannot give a full answer, so `make_join`, `send_join`, `make_knock`, `send_knock` and `send_leave` for the room fail with 404 `M_NOT_FOUND`, as if Zendrite were not in the room.
+While Zendrite itself has only partial state of a room, it cannot give a full answer.
+`make_join`, `send_join`, `make_knock`, `send_knock`, and `send_leave` for the room then fail with 404 `M_NOT_FOUND`, as if Zendrite were not in the room.
 
-Joining a remote room, Zendrite asks for partial state and follows MSC3902 as Synapse does:
+When joining a remote room, Zendrite asks for partial state and follows MSC3902 as Synapse does:
 
-- The partial state becomes the room's current state, and the join and every event that arrives or is sent before the resync is done are marked as having partial state.
-  Such an event is checked against its auth events and the partial state.
-- In the background, Zendrite resyncs the room one event with partial state at a time, oldest first.
-  For the prev events of the event that have no full state, it asks the join server, then the other servers in the room, for `/state_ids`, and fetches the events it lacks.
-  It then calculates the state before the event again and checks the event against it: an event that the full state rejects is rejected and no longer served, and one that the partial state rejected wrongly is accepted into the room's state.
-  Each event is done in a transaction of its own, so a resync that a restart or a failover interrupts goes on with the events that are left, on startup or on the server that takes over.
-- Once no event with partial state is left, Zendrite calculates the room's current state and memberships from the full state and clears the room's partial state in the same transaction.
+- The partial state becomes the room's current state.
+  Zendrite marks the join, and every event that arrives or is sent before the resync finishes, as having partial state.
+  It checks such an event against its auth events and the partial state.
+- In the background, Zendrite resyncs the room one partial-state event at a time, oldest first.
+  For the event's prev events that have no full state, it asks the join server, then the other servers in the room, for `/state_ids`, and fetches the events it lacks.
+  It then recalculates the state before the event and checks the event against it.
+  An event that the full state rejects is rejected and no longer served.
+  An event that the partial state rejected wrongly is accepted into the room's state.
+  Each event gets its own transaction.
+  A resync that a restart or a failover interrupts continues with the remaining events, on startup or on the server that takes over.
+- Once no partial-state event is left, Zendrite calculates the room's current state and memberships from the full state, and clears the room's partial state in the same transaction.
 
 Until then:
 
-- `GET /rooms/{roomId}/members`, `GET /rooms/{roomId}/joined_members`, `GET /rooms/{roomId}/state` and `GET /rooms/{roomId}/state/m.room.member/{userId}` for a remote user wait for the resync.
-  So does building an event whose authorization needs the membership of a remote user that the partial state lacks, such as an invite, kick or ban of that user; Synapse checks such events against the partial state instead, which lets an invite through a ban it does not know about.
-- An eager `/sync` leaves the room out, and sends it as newly joined, with its full state, once the resync is done; a leave from the room comes down at once.
-  A lazy-loading `/sync` includes it, with the memberships that its events cite as auth events.
-- Federation `/state`, `/state_ids`, `/backfill`, `/event_auth` and `/get_missing_events` for the room fail with 403 `ORG.MATRIX.MSC3895_UNABLE_DUE_TO_PARTIAL_STATE`, as MSC3895 and Synapse have it, so that the other server asks another one.
-- Local events go to the servers known to be in the room and the servers in `servers_in_room`, even when the resync finishes before they are sent, and backfill asks those servers too.
-  Remote events are not passed on to other servers.
-- No device list update is sent for the join.
+- `GET /rooms/{roomId}/members`, `GET /rooms/{roomId}/joined_members`, `GET /rooms/{roomId}/state`, and `GET /rooms/{roomId}/state/m.room.member/{userId}` for a remote user wait for the resync.
+  So does building an event whose authorization needs the membership of a remote user that the partial state lacks, such as an invite, kick, or ban of that user.
+  Synapse checks such events against the partial state instead, which lets an invite through a ban it does not know about.
+- An eager `/sync` leaves the room out, and sends it as newly joined, with its full state, once the resync finishes.
+  A leave from the room comes down at once.
+  A lazy-loading `/sync` includes the room, with the memberships that its events cite as auth events.
+- Federation `/state`, `/state_ids`, `/backfill`, `/event_auth`, and `/get_missing_events` for the room fail with 403 `ORG.MATRIX.MSC3895_UNABLE_DUE_TO_PARTIAL_STATE`, as in MSC3895 and Synapse, so the other server asks another one.
+- Local events go to the servers known to be in the room and the servers in `servers_in_room`, even when the resync finishes before Zendrite sends them.
+  Backfill asks those servers too.
+  Zendrite does not pass remote events on to other servers.
+- Zendrite sends no device list update for the join.
   Local device list updates go to the servers known to be in the room and the servers in `servers_in_room`.
   Zendrite tracks the device lists of the remote users it knows to be in a room.
   It does not cache those of other users, and keeps the updates they send, to report them once a resync shows that they share the room.
 
-After the resync, the servers that local device list updates may have missed get them, and Zendrite drops the device lists of the remote users the full state shows were not in the room, unless they share another room with it.
-The user directory reads the room's memberships, so it finds the remote members that the partial state lacked once the resync is done, and no longer finds those that the full state shows were not in the room.
-It also drops the device list of a remote user who no longer shares a room with a local user, as their server stops sending updates, and fetches it again when they share one.
+After the resync, Zendrite sends local device list updates to the servers that may have missed them.
+It drops the device lists of remote users that the full state shows were not in the room, unless they share another room with it.
+
+The user directory reads the room's memberships.
+Once the resync finishes, it finds the remote members that the partial state lacked, and no longer finds those that the full state shows were not in the room.
+Zendrite also drops the device list of a remote user who no longer shares a room with a local user, because their server stops sending updates.
+It fetches the list again when they share a room.
 
 ## Application services
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
-| [MSC3905](https://github.com/matrix-org/matrix-spec-proposals/pull/3905) | Application services should only be interested in local users | 1.5 | Implemented: `users` namespaces only match users on this server or its virtual hosts, so a remote sender, member or joined user no longer makes an event interesting to an application service |
+| [MSC3905](https://github.com/matrix-org/matrix-spec-proposals/pull/3905) | Application services should only be interested in local users | 1.5 | Implemented: `users` namespaces match only users on this server or its virtual hosts, so a remote sender, member, or joined user no longer makes an event interesting to an application service |
 | [MSC2409](https://github.com/matrix-org/matrix-spec-proposals/pull/2409) | Typing, receipts and presence for application services | 1.13 | Implemented: see [ephemeral data](#ephemeral-data-for-application-services) |
 | [MSC4203](https://github.com/matrix-org/matrix-spec-proposals/pull/4203) | To-device events for application services | N/A | Implemented (unstable prefix): see [ephemeral data](#ephemeral-data-for-application-services) |
-| [MSC2659](https://github.com/matrix-org/matrix-spec-proposals/pull/2659) | Application service ping endpoint | 1.7 | Implemented: `POST /_matrix/client/v1/appservice/{appserviceId}/ping`, authenticated with the application service's `as_token`, calls `POST /_matrix/app/v1/ping` with the `hs_token` and the `transaction_id`, and returns `duration_ms`. Failures return `M_URL_NOT_SET`, `M_CONNECTION_FAILED`, `M_CONNECTION_TIMEOUT` (after 30 seconds) or `M_BAD_STATUS` with the status and up to 4 KiB of the body |
+| [MSC2659](https://github.com/matrix-org/matrix-spec-proposals/pull/2659) | Application service ping endpoint | 1.7 | Implemented: `POST /_matrix/client/v1/appservice/{appserviceId}/ping`, authenticated with the application service's `as_token`, calls `POST /_matrix/app/v1/ping` with the `hs_token` and the `transaction_id`, and returns `duration_ms`. Failures return `M_URL_NOT_SET`, `M_CONNECTION_FAILED`, `M_CONNECTION_TIMEOUT` (after 30 seconds), or `M_BAD_STATUS` with the status and up to 4 KiB of the body |
 | [MSC4326](https://github.com/matrix-org/matrix-spec-proposals/pull/4326) | Device masquerading for appservices | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
 | [MSC4190](https://github.com/matrix-org/matrix-spec-proposals/pull/4190) | Device management for application services | 1.17 | Implemented: see [devices of application services](#devices-of-application-services) |
 | [MSC3983](https://github.com/matrix-org/matrix-spec-proposals/pull/3983), [MSC3984](https://github.com/matrix-org/matrix-spec-proposals/pull/3984) | Sending one-time key claims and key queries to application services | N/A | Opt-in (`msc3983`, `msc3984`, unstable prefix): see [keys of application service users](#keys-of-application-service-users) |
@@ -740,98 +919,122 @@ It also drops the device list of a remote user who no longer shares a room with 
 
 ### Ephemeral data for application services
 
-An application service whose registration sets `receive_ephemeral: true` gets `m.typing`, `m.receipt` and `m.presence` in the `ephemeral` field of its transactions, in transactions of their own.
+An application service whose registration sets `receive_ephemeral: true` gets `m.typing`, `m.receipt`, and `m.presence` in the `ephemeral` field of dedicated transactions.
 Older bridges that set the unstable `de.sorunome.msc2409.push_ephemeral: true` get the same data in `de.sorunome.msc2409.ephemeral`.
-Typing notifications and receipts are sent for rooms the application service is interested in through its room or alias namespaces or a joined user in its user namespaces, with a `room_id`.
-`m.typing` lists every user typing in the room, and a typing notification that times out sends an update without the user.
-Private read receipts are only sent for users in the user namespaces.
-Presence is sent for users in the user namespaces and for users who share a room with one of them.
-With either option, the to-device events for the devices of users in the user namespaces arrive in `de.sorunome.msc2409.to_device`, each with `to_user_id` and `to_device_id` (MSC4203).
+Zendrite sends typing notifications and receipts, with a `room_id`, for rooms the application service is interested in through its room or alias namespaces, or through a joined user in its user namespaces.
+`m.typing` lists every user typing in the room.
+When a typing notification times out, Zendrite sends an update without the user.
+
+Zendrite sends private read receipts only for users in the user namespaces.
+It sends presence for users in the user namespaces and for users who share a room with one of them.
+With either option, to-device events for the devices of users in the user namespaces arrive in `de.sorunome.msc2409.to_device`, each with `to_user_id` and `to_device_id` (MSC4203).
 Together with [device masquerading and device management](#devices-of-application-services), this lets an application service take part in end-to-end encryption.
-Ephemeral data from before the application service enabled the option, or from while Zendrite was not running, is not sent.
-Under HA, only the owner sends to-device events, and after a takeover the successor resumes with the first one the former owner did not deliver.
+
+Zendrite does not send ephemeral data from before the application service enabled the option, or from while Zendrite was not running.
+Under HA, only the owner sends to-device events.
+After a takeover, the successor resumes with the first event the former owner did not deliver.
 
 ### Devices of application services
 
-An application service may add `device_id` to the `user_id` it asserts with its `as_token`, and then acts as that device of the user, for example when uploading one-time keys (MSC4326).
+An application service may add `device_id` to the `user_id` it asserts with its `as_token`.
+It then acts as that device of the user, for example when uploading one-time keys (MSC4326).
 Without `user_id`, the device belongs to the application service's sender.
 A device the user does not have fails with 400 `M_UNKNOWN_DEVICE`.
-The unstable parameter `org.matrix.msc3202.device_id` is accepted too, and answered with `ORG.MATRIX.MSC4326.M_UNKNOWN_DEVICE`.
-For any other access token, `device_id` is ignored.
 
-Application services create devices for their users with `PUT /_matrix/client/v3/devices/{deviceId}`, which answers 201 when it created the device and 200 when it renamed an existing one (MSC4190).
-The device gets an access token that is never handed out: the application service keeps using its `as_token` with `device_id`.
-`DELETE /devices/{deviceId}`, `POST /delete_devices` and replacing cross-signing keys with `POST /keys/device_signing/upload` need no user-interactive authentication for application services.
-With [delegated authentication](#msc3861-oidc-delegated-authentication), these device endpoints stay available to application services only, and `m.login.application_service` logins as well as application service registrations without `inhibit_login: true` fail with 400 `M_APPSERVICE_LOGIN_UNSUPPORTED`.
+Zendrite also accepts the unstable parameter `org.matrix.msc3202.device_id`, and answers it with `ORG.MATRIX.MSC4326.M_UNKNOWN_DEVICE`.
+For any other access token, Zendrite ignores `device_id`.
+
+Application services create devices for their users with `PUT /_matrix/client/v3/devices/{deviceId}` (MSC4190).
+It answers 201 when it created the device and 200 when it renamed an existing one.
+The device gets an access token that Zendrite never hands out, and the application service keeps using its `as_token` with `device_id`.
+For application services, `DELETE /devices/{deviceId}`, `POST /delete_devices`, and replacing cross-signing keys with `POST /keys/device_signing/upload` need no user-interactive authentication.
+
+With [delegated authentication](#msc3861-oidc-delegated-authentication), these device endpoints stay available to application services only.
+`m.login.application_service` logins, and application service registrations without `inhibit_login: true`, fail with 400 `M_APPSERVICE_LOGIN_UNSUPPORTED`.
 An `as_token` without `user_id` then acts as the sender, as it does without delegated authentication.
 
 ### Keys of application service users
 
-Bridges that support end-to-end encryption can keep their users' keys themselves instead of uploading them, for users in their exclusive namespaces.
+For users in their exclusive namespaces, bridges that support end-to-end encryption can keep the users' keys themselves instead of uploading them.
 
-- With `msc3983`, a one-time key claim, from a client or another server, for a device without a stored one-time key asks the application service at `POST /_matrix/app/unstable/org.matrix.msc3983/keys/claim`, before falling back to the device's fallback key.
-  Stored one-time keys are still claimed first.
-- With `msc3984`, a key query, from a client or another server, asks the application service at `POST /_matrix/app/unstable/org.matrix.msc3984/keys/query`, and lays its answer over the stored keys: device keys device by device, and cross-signing keys user by user.
-  A user-signing key is only passed on to the user it belongs to.
+- With `msc3983`, a one-time key claim from a client or another server, for a device without a stored one-time key, asks the application service at `POST /_matrix/app/unstable/org.matrix.msc3983/keys/claim` before falling back to the device's fallback key.
+  Zendrite still claims stored one-time keys first.
+- With `msc3984`, a key query from a client or another server asks the application service at `POST /_matrix/app/unstable/org.matrix.msc3984/keys/query`.
+  Zendrite lays the answer over the stored keys: device keys device by device, and cross-signing keys user by user.
+  Zendrite passes a user-signing key only to the user it belongs to.
 
-Both use the application service's `hs_token` (also as `access_token` with `legacy_auth`), the unstable paths that Synapse calls, and a 10 second timeout, asking several application services at once.
-An application service that fails, times out, answers with something malformed, or does not know the endpoint is treated as having no keys.
-A device key it returns must name the user and device it is given for, and keeps the display name that Zendrite knows when it has none.
+Both use the application service's `hs_token` (also as `access_token` with `legacy_auth`), the unstable paths that Synapse calls, and a 10 second timeout.
+Zendrite asks several application services at once.
+
+An application service that fails, times out, answers with something malformed, or does not know the endpoint counts as having no keys.
+A device key it returns must name the user and device it is for.
+If it has no display name, it keeps the one Zendrite knows.
 The server's own checks, such as those on uploaded signatures, use the stored keys.
 
 ## Authentication
 
 | MSC | Title | Spec | Status |
 | --- | --- | --- | --- |
-| [MSC2265](https://github.com/matrix-org/matrix-spec-proposals/pull/2265) | Case folding of email addresses | 1.1 | Implemented: email 3PIDs are case-folded before they are stored, looked up or sent to an identity server. Addresses stored by older versions are folded on upgrade, except where the folded form is already in use, which is logged |
-| [MSC2713](https://github.com/matrix-org/matrix-spec-proposals/pull/2713) | Remove deprecated identity service endpoints | 1.1 | Implemented: identity servers are only called through the authenticated v2 API, with the client's `id_access_token` or, for `email_validation_server`, a token the homeserver registers for its server notices user. 3PID invites require `id_access_token` and use hashed lookups |
-| [MSC3288](https://github.com/matrix-org/matrix-spec-proposals/pull/3288) | Room type in `store-invite` | 1.2 | Implemented: 3PID invites send `room_type`, along with the room's name, avatar, join rule and alias |
+| [MSC2265](https://github.com/matrix-org/matrix-spec-proposals/pull/2265) | Case folding of email addresses | 1.1 | Implemented: Zendrite case-folds email 3PIDs before storing them, looking them up, or sending them to an identity server. The upgrade folds addresses stored by older versions, except where the folded form is already in use, which it logs |
+| [MSC2713](https://github.com/matrix-org/matrix-spec-proposals/pull/2713) | Remove deprecated identity service endpoints | 1.1 | Implemented: Zendrite calls identity servers only through the authenticated v2 API. It uses the client's `id_access_token` or, for `email_validation_server`, a token the homeserver registers for its server notices user. 3PID invites require `id_access_token` and use hashed lookups |
+| [MSC3288](https://github.com/matrix-org/matrix-spec-proposals/pull/3288) | Room type in `store-invite` | 1.2 | Implemented: 3PID invites send `room_type`, along with the room's name, avatar, join rule, and alias |
 | [MSC2858](https://github.com/matrix-org/matrix-spec-proposals/pull/2858) | Multiple SSO identity providers | 1.1 | Not applicable: SSO is only available through [MSC3861](#msc3861-oidc-delegated-authentication), where the authentication service offers the upstream providers, so the `m.login.sso` flow lists no `identity_providers` |
-| [MSC2918](https://github.com/matrix-org/matrix-spec-proposals/pull/2918) | Refresh tokens | 1.3 | Implemented: clients sending `refresh_token: true` to `/login` or `/register` get a refresh token and an access token that expires after `client_api.refreshable_access_token_lifetime` (default `5m`, `0s` disables refresh tokens), which `/refresh` renews. An expired access token returns 401 `M_UNKNOWN_TOKEN` with `soft_logout: true`. A used refresh token stays valid until its successor is used, so a lost `/refresh` response can be retried. With [MSC3861](#msc3861-oidc-delegated-authentication), the authentication service issues the tokens |
+| [MSC2918](https://github.com/matrix-org/matrix-spec-proposals/pull/2918) | Refresh tokens | 1.3 | Implemented: clients sending `refresh_token: true` to `/login` or `/register` get a refresh token and an access token that expires after `client_api.refreshable_access_token_lifetime` (default `5m`, and `0s` disables refresh tokens). `/refresh` renews it. An expired access token returns 401 `M_UNKNOWN_TOKEN` with `soft_logout: true`. A used refresh token stays valid until its successor is used, so a client can retry a lost `/refresh` response. With [MSC3861](#msc3861-oidc-delegated-authentication), the authentication service issues the tokens |
 | [MSC3882](https://github.com/matrix-org/matrix-spec-proposals/pull/3882) | Sign in a new session from an existing one | 1.7 | Implemented: `POST /_matrix/client/v1/login/get_token` asks for the password every time and returns a single-use `m.login.token` that expires after two minutes. `/login` lists the `m.login.token` flow with `get_login_token: true`, and `/capabilities` reports `m.get_login_token`. Redeeming a token deletes it first, so concurrent logins cannot share one. With [MSC3861](#msc3861-oidc-delegated-authentication), the endpoint returns 403 and the capability is disabled |
-| [MSC4178](https://github.com/matrix-org/matrix-spec-proposals/pull/4178) | Error codes for `requestToken` | 1.13 | Implemented: `/account/3pid/email/requestToken` (and `/register/email/requestToken`) return 400 `M_THREEPID_MEDIUM_NOT_SUPPORTED` without an email validation server and `M_INVALID_PARAM` for an invalid address; the `msisdn/requestToken` endpoints always return `M_THREEPID_MEDIUM_NOT_SUPPORTED` |
+| [MSC4178](https://github.com/matrix-org/matrix-spec-proposals/pull/4178) | Error codes for `requestToken` | 1.13 | Implemented: `/account/3pid/email/requestToken` (and `/register/email/requestToken`) return 400 `M_THREEPID_MEDIUM_NOT_SUPPORTED` without an email validation server, and `M_INVALID_PARAM` for an invalid address. The `msisdn/requestToken` endpoints always return `M_THREEPID_MEDIUM_NOT_SUPPORTED` |
 | [MSC3861](https://github.com/matrix-org/matrix-spec-proposals/pull/3861) | Next-gen auth (OIDC) | 1.15 | Opt-in (`msc3861`) |
 | [MSC4312](https://github.com/matrix-org/matrix-spec-proposals/pull/4312) | `m.oauth` user-interactive authentication | 1.17 | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): replacing cross-signing keys asks for confirmation through the provider's account management page |
-| [MSC4191](https://github.com/matrix-org/matrix-spec-proposals/pull/4191), [MSC3824](https://github.com/matrix-org/matrix-spec-proposals/pull/3824), [MSC4341](https://github.com/matrix-org/matrix-spec-proposals/pull/4341) | OAuth 2.0 account management, OAuth-aware clients, device authorization grant | 1.18 | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): `/auth_metadata` passes on the provider's account management URL, actions and grant types, and `GET /login` marks SSO as `oauth_aware_preferred` |
-| [MSC4108](https://github.com/matrix-org/matrix-spec-proposals/pull/4108), [MSC4388](https://github.com/matrix-org/matrix-spec-proposals/pull/4388) | QR code login and its rendezvous sessions | N/A | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): the MSC4388 rendezvous API and the 2024 MSC4108 rendezvous API that Element X still uses. See [QR code login](#qr-code-login) |
-| [MSC4127](https://github.com/matrix-org/matrix-spec-proposals/pull/4127) | Removal of query string auth | 1.20 (unreleased) | Opt-in: `client_api.disable_query_string_auth` refuses the `access_token` query parameter, so that only the `Authorization` header works. It stays accepted by default while Zendrite advertises spec versions up to v1.19, which allow it; the `zendrite_clientapi_query_string_auth_total` metric counts the requests that use it |
+| [MSC4191](https://github.com/matrix-org/matrix-spec-proposals/pull/4191), [MSC3824](https://github.com/matrix-org/matrix-spec-proposals/pull/3824), [MSC4341](https://github.com/matrix-org/matrix-spec-proposals/pull/4341) | OAuth 2.0 account management, OAuth-aware clients, device authorization grant | 1.18 | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): `/auth_metadata` passes on the provider's account management URL, actions, and grant types, and `GET /login` marks SSO as `oauth_aware_preferred` |
+| [MSC4108](https://github.com/matrix-org/matrix-spec-proposals/pull/4108), [MSC4388](https://github.com/matrix-org/matrix-spec-proposals/pull/4388) | QR code login and its rendezvous sessions | N/A | Implemented with [MSC3861](#msc3861-oidc-delegated-authentication): the MSC4388 rendezvous API, and the 2024 MSC4108 rendezvous API that Element X still uses. See [QR code login](#qr-code-login) |
+| [MSC4127](https://github.com/matrix-org/matrix-spec-proposals/pull/4127) | Removal of query string auth | 1.20 (unreleased) | Opt-in: `client_api.disable_query_string_auth` refuses the `access_token` query parameter, so only the `Authorization` header works. Zendrite accepts the parameter by default while it advertises spec versions up to v1.19, which allow it. The `zendrite_clientapi_query_string_auth_total` metric counts the requests that use it |
 
 ### QR code login
 
-[MSC4108](https://github.com/matrix-org/matrix-spec-proposals/pull/4108) signs in a new device by scanning a QR code shown on a device that is already signed in, or the other way round.
-The two devices exchange messages through a rendezvous session on the homeserver, encrypted end to end, and the new device then signs in with the OAuth 2.0 device authorization grant of [MSC3861](#msc3861-oidc-delegated-authentication).
-Zendrite only provides the rendezvous sessions; the provider handles the sign-in.
+[MSC4108](https://github.com/matrix-org/matrix-spec-proposals/pull/4108) signs in a new device by scanning a QR code shown on an already signed-in device, or the other way round.
+The two devices exchange end-to-end encrypted messages through a rendezvous session on the homeserver.
+The new device then signs in with the OAuth 2.0 device authorization grant of [MSC3861](#msc3861-oidc-delegated-authentication).
+Zendrite provides only the rendezvous sessions, and the provider handles the sign-in.
 Both rendezvous APIs below are on by default when MSC3861 is enabled, and unavailable without it.
 
 The current MSC4108 text moves the rendezvous session to [MSC4388](https://github.com/matrix-org/matrix-spec-proposals/pull/4388), served under `/_matrix/client/unstable/io.element.msc4388/rendezvous`:
 
 - `GET /rendezvous` reports `create_available`: whether the requester may create a session.
-- `POST /rendezvous` creates a session with an initial `data` payload and returns its `id`, `sequence_token` and `expires_in_ms`.
-- `GET /rendezvous/{id}` returns the payload, its `sequence_token` and `expires_in_ms`, without an access token.
-  A request that a browser makes to navigate to the URL (`Sec-Fetch-Dest` other than `empty`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-User: ?1` or `Sec-Fetch-Site: none`) is refused with 403 `M_FORBIDDEN`, so a session cannot serve content to someone who opens its link.
-- `PUT /rendezvous/{id}/{txnId}` replaces the payload if `sequence_token` is still the current one, and otherwise fails with 409 `IO_ELEMENT_MSC4388_CONCURRENT_WRITE`.
-  The `sequence_token` of a successful write is recorded against its transaction ID for the session's lifetime: a retry with that transaction ID gets the same answer and writes nothing, whatever its body.
+- `POST /rendezvous` creates a session with an initial `data` payload and returns its `id`, `sequence_token`, and `expires_in_ms`.
+- `GET /rendezvous/{id}` returns the payload, its `sequence_token`, and `expires_in_ms`, without an access token.
+  Zendrite refuses a request that a browser makes to navigate to the URL (`Sec-Fetch-Dest` other than `empty`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-User: ?1`, or `Sec-Fetch-Site: none`) with 403 `M_FORBIDDEN`.
+  So a session cannot serve content to someone who opens its link.
+- `PUT /rendezvous/{id}/{txnId}` replaces the payload if `sequence_token` is still current, and otherwise fails with 409 `IO_ELEMENT_MSC4388_CONCURRENT_WRITE`.
+  Zendrite records the `sequence_token` of a successful write against its transaction ID for the session's lifetime.
+  A retry with that transaction ID gets the same answer and writes nothing, whatever its body.
   A session remembers its last 100 transaction IDs.
 - `DELETE /rendezvous/{id}` ends a session.
 
 Payloads are limited to 4096 bytes (413 `M_TOO_LARGE`), and sequence tokens count the writes of a session, starting at `1`.
-Only users with an access token can create MSC4388 sessions by default; guests cannot.
-`msc4388_mode: open` lets anyone create them, which allows a new device that has not chosen its homeserver yet to use this one.
+By default, only users with an access token can create MSC4388 sessions, and guests cannot.
+`msc4388_mode: open` lets anyone create them, so a new device that has not chosen its homeserver yet can use this one.
 Even then, a request with an invalid access token fails with 401, as MSC4388 requires.
 
-Current Element X and matrix-rust-sdk releases still create their sessions through the 2024 version of MSC4108, under `/_matrix/client/unstable/org.matrix.msc4108/rendezvous`, and Element X only offers QR code login when `/versions` advertises `org.matrix.msc4108`.
-Zendrite serves it alongside MSC4388, as Synapse does.
-`POST` creates a session from a `text/plain` body and returns its `url`; `GET`, `PUT` and `DELETE` on that URL read, replace and end it, with the `ETag` as the sequence (`If-None-Match` for 304, `If-Match` for the compare-and-swap, 412 on a stale ETag).
-Its clients create sessions without an access token, so this API is always open; turn it off with `msc4108_enabled: false`.
-The session URL is built from `mscs.msc3861.public_base_url`, else `global.well_known_client_name`, else the request's host.
-MSC4388 has no `/versions` flag; clients discover it through `GET /rendezvous`.
+Current Element X and matrix-rust-sdk releases still create their sessions through the 2024 version of MSC4108, under `/_matrix/client/unstable/org.matrix.msc4108/rendezvous`.
+Element X offers QR code login only when `/versions` advertises `org.matrix.msc4108`.
+Zendrite serves this API alongside MSC4388, as Synapse does.
+`POST` creates a session from a `text/plain` body and returns its `url`.
+`GET`, `PUT`, and `DELETE` on that URL read, replace, and end the session, with the `ETag` as the sequence (`If-None-Match` for 304, `If-Match` for the compare-and-swap, 412 on a stale ETag).
 
-Sessions are stored in the user API database, so every replica of an HA deployment serves them, and a write is a compare-and-swap on the database row.
-They expire `session_lifetime` (default three minutes, between two and five allowed) after their creation, and expired sessions are deleted every five minutes.
-At most `max_sessions` (default 1000) sessions created without an access token, or by guest and suspended accounts in open mode, may be active at once; further such creations get 429.
-Other users do not count towards it, so anonymous callers cannot lock them out of QR code login; each of them may have ten active sessions instead.
-Every rendezvous request is rate limited per address by `rate_limiting` (default a burst of 20, then five per second), before any access token is checked.
-Creation is additionally limited by `create_rate_limiting` (default five per minute), per device for requests with an access token and per address otherwise.
+Clients of this API create sessions without an access token, so it is always open.
+Turn it off with `msc4108_enabled: false`.
+Zendrite builds the session URL from `mscs.msc3861.public_base_url`, else `global.well_known_client_name`, else the request's host.
+MSC4388 has no `/versions` flag, and clients discover it through `GET /rendezvous`.
+
+Zendrite stores sessions in the user API database, so every replica of an HA deployment serves them, and a write is a compare-and-swap on the database row.
+Sessions expire `session_lifetime` after creation (default three minutes, two to five allowed), and Zendrite deletes expired sessions every five minutes.
+
+At most `max_sessions` (default 1000) sessions created without an access token, or by guest and suspended accounts in open mode, may be active at once.
+Further such creations get 429.
+Other users do not count towards this limit, so anonymous callers cannot lock them out of QR code login.
+Instead, each of them may have ten active sessions.
+
+Zendrite rate limits every rendezvous request per address with `rate_limiting` (default a burst of 20, then five per second), before checking any access token.
+`create_rate_limiting` also limits creation (default five per minute), per device for requests with an access token and per address otherwise.
 Both devices poll the session about once a second, possibly from the same address.
 
 ```yaml
@@ -854,18 +1057,18 @@ mscs:
 | [MSC4075](https://github.com/matrix-org/matrix-spec-proposals/pull/4075) | MatrixRTC call notifications | N/A | Push rules implemented (unstable prefix): see [call notification push rules](#call-notification-push-rules) |
 | [MSC4140](https://github.com/matrix-org/matrix-spec-proposals/pull/4140) | Cancellable delayed events | N/A (accepted) | Implemented with stable and unstable endpoints, disabled by default: see [delayed events](#delayed-events) |
 | [MSC4143](https://github.com/matrix-org/matrix-spec-proposals/pull/4143) | MatrixRTC transport discovery | N/A (accepted) | Implemented with stable and unstable endpoints (configure via [`rtc_foci`](/administration/matrixrtc/)) |
-| [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195) | LiveKit transport for MatrixRTC | N/A (accepted) | Implemented when a focus has a LiveKit API key: Zendrite issues tokens for its SFUs on `POST /_matrix/client/v1/rtc/livekit/get_token` and the federation endpoint, and fetches tokens for remote SFUs, and advertises `org.matrix.msc4195.stable`; see [MatrixRTC](/administration/matrixrtc/#issuing-tokens-in-zendrite). Members who leave or are banned from the room are removed from the SFU and re-checked through its webhooks, and `delegate_delayed_leave` is served; both keep their state in memory, see [MatrixRTC](/administration/matrixrtc/#removing-members-who-leave). Without a key, `livekit` transports pointing at lk-jwt-service are advertised as before |
+| [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195) | LiveKit transport for MatrixRTC | N/A (accepted) | Implemented when a focus has a LiveKit API key: Zendrite issues tokens for its SFUs on `POST /_matrix/client/v1/rtc/livekit/get_token` and the federation endpoint, fetches tokens for remote SFUs, and advertises `org.matrix.msc4195.stable`. See [MatrixRTC](/administration/matrixrtc/#issuing-tokens-in-zendrite). Zendrite removes members who leave or are banned from the room from the SFU and re-checks them through its webhooks, and serves `delegate_delayed_leave`. Both features keep their state in memory (see [MatrixRTC](/administration/matrixrtc/#removing-members-who-leave)). Without a key, Zendrite advertises `livekit` transports pointing at lk-jwt-service as before |
 
 ### Delayed events
 
 [MSC4140](https://github.com/matrix-org/matrix-spec-proposals/pull/4140) lets a client schedule an event for the server to send later, unless the client restarts or cancels the schedule first.
-Element Call uses it to end the call membership of a client that crashes or loses its connection; see [MatrixRTC](/administration/matrixrtc/#delayed-events).
-The MSC has been accepted but is not part of a spec release yet.
-Zendrite implements its stable endpoints, which `org.matrix.msc4140.stable` in `/versions` announces:
+Element Call uses it to end the call membership of a client that crashes or loses its connection (see [MatrixRTC](/administration/matrixrtc/#delayed-events)).
+The MSC is accepted but not yet part of a spec release.
+Zendrite implements its stable endpoints and announces them with `org.matrix.msc4140.stable` in `/versions`:
 
-- `PUT /_matrix/client/v3/rooms/{roomId}/delayed_event/{eventType}/{txnId}` schedules an event from a body of `delay_ms`, `content` and an optional `state_key`, and returns `{"delay_id": ...}`.
+- `PUT /_matrix/client/v3/rooms/{roomId}/delayed_event/{eventType}/{txnId}` schedules an event from a body of `delay_ms`, `content`, and an optional `state_key`, and returns `{"delay_id": ...}`.
 - `POST /_matrix/client/v1/delayed_events/{delayId}/{cancel|restart|send}` manages one of the user's scheduled events.
-- `GET /_matrix/client/v1/delayed_events/{delayId}` returns one of the user's delayed events, including a `finalised` object once it was sent, canceled or failed.
+- `GET /_matrix/client/v1/delayed_events/{delayId}` returns one of the user's delayed events, including a `finalised` object once the event was sent, canceled, or failed.
 
 All three need an access token and are open to guests.
 There is no stable list endpoint, which the MSC leaves to [MSC4486](https://github.com/matrix-org/matrix-spec-proposals/pull/4486).
@@ -873,89 +1076,107 @@ There is no stable list endpoint, which the MSC leaves to [MSC4486](https://gith
 Zendrite also keeps the unstable API that matrix-js-sdk and Synapse use:
 
 - The `org.matrix.msc4140.delay` query parameter, in milliseconds, on `PUT /_matrix/client/v3/rooms/{roomId}/send/{eventType}/{txnId}` and `PUT /_matrix/client/v3/rooms/{roomId}/state/{eventType}/{stateKey}` schedules the event and returns `{"delay_id": ...}` instead of an event ID.
-- `PUT /_matrix/client/unstable/org.matrix.msc4140/rooms/{roomId}/delayed_event/{eventType}/{txnId}` schedules an event from a body of `delay_ms`, `content` and an optional `state_key`.
+- `PUT /_matrix/client/unstable/org.matrix.msc4140/rooms/{roomId}/delayed_event/{eventType}/{txnId}` schedules an event from a body of `delay_ms`, `content`, and an optional `state_key`.
 - `POST /_matrix/client/unstable/org.matrix.msc4140/delayed_events/{delayId}/{cancel|restart|send}`, and the older form `POST .../delayed_events/{delayId}` with `{"action": ...}`, manage a scheduled event.
-  As in Synapse, these work without an access token, since the delay ID identifies the event; with one, they are rate-limited per device instead of per address.
-- `GET /_matrix/client/unstable/org.matrix.msc4140/delayed_events/{delayId}` returns one of the user's delayed events, including a `finalised` object once it was sent, canceled or failed.
-- `GET /_matrix/client/unstable/org.matrix.msc4140/delayed_events` lists the user's scheduled events, or with `status=finalised` the finalized ones, optionally only those named by `delay_id` parameters, with the field names of earlier revisions (`delay`, `running_since`) included as Synapse does.
-  The list is not paginated, so `from` is ignored.
+  As in Synapse, these work without an access token, because the delay ID identifies the event.
+  With an access token, Zendrite rate limits them per device instead of per address.
+- `GET /_matrix/client/unstable/org.matrix.msc4140/delayed_events/{delayId}` returns one of the user's delayed events, including a `finalised` object once the event was sent, canceled, or failed.
+- `GET /_matrix/client/unstable/org.matrix.msc4140/delayed_events` lists the user's scheduled events, or with `status=finalised` the finalized ones.
+  It can filter to the events named by `delay_id` parameters, and includes the field names of earlier revisions (`delay`, `running_since`), as Synapse does.
+  The list is not paginated, so Zendrite ignores `from`.
 
-When scheduling, the event is built against the room's current state, so a malformed event, or one the user may not send, is refused at once.
-A delay must be a positive integer; one above the maximum fails with 400 `M_DELAY_TOO_LARGE` on the stable endpoint and `ORG.MATRIX.MSC4140_DELAY_TOO_LARGE` on the unstable ones, and a user with as many events scheduled as allowed gets 429 `M_LIMIT_EXCEEDED` with `Retry-After` set to when their next event is due.
+When scheduling, Zendrite builds the event against the room's current state, so it refuses a malformed event, or one the user may not send, at once.
+A delay must be a positive integer.
+A delay above the maximum fails with 400 `M_DELAY_TOO_LARGE` on the stable endpoint and `ORG.MATRIX.MSC4140_DELAY_TOO_LARGE` on the unstable ones.
+A user with as many events scheduled as allowed gets 429 `M_LIMIT_EXCEEDED`, with `Retry-After` set to when their next event is due.
 When delayed events are disabled, scheduling fails with 403 `M_FORBIDDEN`.
 
-At its send time, the event is built from the room state at that moment and sent through the same path as a client's send, including the authorization checks.
-A failure is recorded as the event's `finalised.error` and is not retried.
+At send time, Zendrite builds the event from the room state at that moment and sends it through the same path as a client's send, including the authorization checks.
+Zendrite records a failure as the event's `finalised.error` and does not retry it.
 The `send` action differs: if sending fails, it returns the error and keeps the event scheduled.
-The sent event carries its delay ID as both `delay_id` and `org.matrix.msc4140.delay_id` in its `unsigned` data in the sender's `/sync`, and no `transaction_id`.
-A message event scheduled with `org.matrix.msc4354.sticky_duration_ms`, through either scheduling endpoint, is sent as a [sticky event](#sticky-events), whose sticky period starts when it is sent.
-As for a direct send, the parameter is ignored for state events.
+
+In the sender's `/sync`, the sent event has its delay ID as both `delay_id` and `org.matrix.msc4140.delay_id` in its `unsigned` data, and no `transaction_id`.
+A message event scheduled with `org.matrix.msc4354.sticky_duration_ms`, through either scheduling endpoint, is sent as a [sticky event](#sticky-events).
+Its sticky period starts when it is sent.
+As for a direct send, Zendrite ignores the parameter for state events.
 
 Retrying an action is safe: `send` succeeds for an event that was already sent, and `cancel` for one that was already canceled or failed.
-On the stable endpoints, an action that conflicts with how the event was finalized, such as restarting one that was sent, returns 409, and another user's delay ID returns 404 `M_NOT_FOUND`.
+On the stable endpoints, an action that conflicts with how the event was finalized, such as restarting a sent event, returns 409.
+Another user's delay ID returns 404 `M_NOT_FOUND`.
 The unstable endpoints return 404 `M_NOT_FOUND` for a conflict, as Synapse does, because older matrix-js-sdk versions schedule a new delayed leave event only when a restart finds none.
 
-A user's scheduled state event is canceled when another user changes the same state, and all of a user's delayed events are deleted when the account is deactivated.
-Finalized events are kept for seven days, and at most 1000 per user.
+Zendrite cancels a user's scheduled state event when another user changes the same state, and deletes every delayed event of the user when the account is deactivated.
+Zendrite keeps finalized events for seven days, and at most 1000 per user.
 
-Delayed events are stored in the user API database and sent by the process that serves clients.
-In HA deployments, that is the active process: a successor picks up the schedule from the database, and resends any event its predecessor was sending when it stopped.
+Zendrite stores delayed events in the user API database, and the process that serves clients sends them.
+In HA deployments, that is the active process.
+A successor reads the schedule from the database, and resends any event its predecessor was sending when it stopped.
 The resend uses the same roomserver transaction, keyed by the delay ID, so an event that did reach the room is not sent twice.
 
-`/versions` advertises `org.matrix.msc4140` and `org.matrix.msc4140.stable` while delayed events are enabled, and `/capabilities` reports the limits as both `m.delayed_events` and `org.matrix.msc4140.delayed_events`, where a `max_delay_ms` of 0 means disabled.
+`/versions` advertises `org.matrix.msc4140` and `org.matrix.msc4140.stable` while delayed events are enabled.
+`/capabilities` reports the limits as both `m.delayed_events` and `org.matrix.msc4140.delayed_events`, where a `max_delay_ms` of 0 means disabled.
 
 ### Poll push rules
 
 Zendrite installs the MSC3930 default push rules with the unstable rule IDs and [MSC3381](https://github.com/matrix-org/matrix-spec-proposals/pull/3381) event types that Synapse and current clients use:
 
-- `.org.matrix.msc3930.rule.poll_response`, the last default `override` rule, keeps `org.matrix.msc3381.poll.response` events from notifying.
+- `.org.matrix.msc3930.rule.poll_response`, the last default `override` rule, stops `org.matrix.msc3381.poll.response` events from notifying.
 - `.org.matrix.msc3930.rule.poll_start_one_to_one` and `.org.matrix.msc3930.rule.poll_end_one_to_one` notify with the default sound for `org.matrix.msc3381.poll.start` and `org.matrix.msc3381.poll.end` in rooms with two members.
 - `.org.matrix.msc3930.rule.poll_start` and `.org.matrix.msc3930.rule.poll_end` notify for them in other rooms.
 
 The four `underride` rules come after the other default `underride` rules, each one-to-one rule before its counterpart.
 Polls in encrypted rooms are `m.room.encrypted` events, which the encryption rules handle.
-Existing accounts receive the rules when their push rules are next read; a rule the user disabled stays disabled.
-Unlike Synapse, where they need `msc3381_polls_enabled`, the rules are always installed, because MSC3930 is accepted.
+Existing accounts receive the rules when their push rules are next read.
+A rule the user disabled stays disabled.
+Synapse needs `msc3381_polls_enabled` for these rules, but Zendrite always installs them, because MSC3930 is accepted.
 
 ### Call notification push rules
 
 Element Call rings the people it calls with an `org.matrix.msc4075.rtc.notification` event that mentions them or the room.
-Zendrite installs the two default push rules of MSC4075 for it, with the unstable rule IDs and event type that Synapse and Element Call use, so that the push gateway is told to ring:
+Zendrite installs the two default push rules of MSC4075 for this event, with the unstable rule IDs and event type that Synapse and Element Call use, so the push gateway is told to ring:
 
 - `.org.matrix.msc4075.rule.rtc.invite_for_me` notifies with the `ring` sound for a call notification whose `m.mentions.user_ids` contains the user.
 - `.org.matrix.msc4075.rule.rtc.invite_for_room` does the same for one with `m.mentions.room: true` from a sender allowed to notify the room.
 
-Both come right before `.m.rule.is_user_mention`, in Synapse's order (the MSC places the second one before `.m.rule.is_room_mention`).
+Both come right before `.m.rule.is_user_mention`, in Synapse's order.
+The MSC places the second one before `.m.rule.is_room_mention`.
 
-Without them, a call notification that mentions the user is handled by the mention rule, which highlights it and plays the default sound instead.
-In encrypted rooms the server only sees `m.room.encrypted` events, so clients apply the rules themselves after decrypting.
-Existing accounts receive the rules when their push rules are next read; a rule the user disabled stays disabled.
-Unlike Synapse, where they need `msc4075_enabled`, the rules are always installed: they only match call notifications, which current Element Call releases send.
+Without these rules, the mention rule handles a call notification that mentions the user, which highlights it and plays the default sound instead.
+In encrypted rooms the server sees only `m.room.encrypted` events, so clients apply the rules themselves after decrypting.
+
+Existing accounts receive the rules when their push rules are next read.
+A rule the user disabled stays disabled.
+Synapse needs `msc4075_enabled` for these rules.
+Zendrite always installs them, because they match only call notifications, which current Element Call releases send.
 Older releases sent `org.matrix.msc4075.call.notify`, which no rule matches, as in Synapse.
 
 ## Client-only MSCs
 
-Some spec MSCs need no server support beyond storing events, account data, media or to-device messages, so they work with Zendrite as they are:
-[MSC4142](https://github.com/matrix-org/matrix-spec-proposals/pull/4142) (no intentional mentions from replies, 1.16),
-[MSC4313](https://github.com/matrix-org/matrix-spec-proposals/pull/4313) and [MSC4230](https://github.com/matrix-org/matrix-spec-proposals/pull/4230) (rendering, 1.18),
-[MSC4153](https://github.com/matrix-org/matrix-spec-proposals/pull/4153) (excluding devices that are not cross-signed, 1.18),
-[MSC4356](https://github.com/matrix-org/matrix-spec-proposals/pull/4356) (recent emoji, 1.18),
-[MSC2545](https://github.com/matrix-org/matrix-spec-proposals/pull/2545) (image packs, 1.19),
-[MSC4287](https://github.com/matrix-org/matrix-spec-proposals/pull/4287) (key backup preference, 1.19)
-and [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268) (encrypted history sharing, 1.19).
+Some spec MSCs need no server support beyond storing events, account data, media, or to-device messages, so they work with Zendrite unchanged:
 
-[MSC4095](https://github.com/matrix-org/matrix-spec-proposals/pull/4095) (bundled URL previews, accepted but not in a spec release) is client-only too: the sending client puts the preview data in the event content under `m.url_previews` (unstable `com.beeper.linkpreviews`), and receiving clients read it from there.
+- [MSC4142](https://github.com/matrix-org/matrix-spec-proposals/pull/4142): no intentional mentions from replies (1.16)
+- [MSC4313](https://github.com/matrix-org/matrix-spec-proposals/pull/4313) and [MSC4230](https://github.com/matrix-org/matrix-spec-proposals/pull/4230): rendering (1.18)
+- [MSC4153](https://github.com/matrix-org/matrix-spec-proposals/pull/4153): excluding devices that are not cross-signed (1.18)
+- [MSC4356](https://github.com/matrix-org/matrix-spec-proposals/pull/4356): recent emoji (1.18)
+- [MSC2545](https://github.com/matrix-org/matrix-spec-proposals/pull/2545): image packs (1.19)
+- [MSC4287](https://github.com/matrix-org/matrix-spec-proposals/pull/4287): key backup preference (1.19)
+- [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268): encrypted history sharing (1.19)
+
+[MSC4095](https://github.com/matrix-org/matrix-spec-proposals/pull/4095) (bundled URL previews, accepted but not in a spec release) is client-only too.
+The sending client puts the preview data in the event content under `m.url_previews` (unstable `com.beeper.linkpreviews`), and receiving clients read it from there.
 `/preview_url` stays available for clients that ask the server instead.
 
 [MSC4402](https://github.com/matrix-org/matrix-spec-proposals/pull/4402) (consistent redirects for `.well-known` files, merged) asks clients to follow redirects for `/.well-known/matrix/client`, as servers already do for `/.well-known/matrix/server`.
 Zendrite's server discovery follows up to 10 redirects, only over https and with certificate validation, and stops at a URL it already visited.
-The `/.well-known/matrix/client` that Zendrite serves carries CORS headers and answers preflight requests, as the MSC asks of each hop.
+The `/.well-known/matrix/client` that Zendrite serves sends CORS headers and answers preflight requests, as the MSC asks of each hop.
 
-[MSC4455](https://github.com/matrix-org/matrix-spec-proposals/pull/4455) (catch-all property for spaces, open) is client-only: `m.space.catch_all` (unstable `de.spiritcroc.space.catch_all`) is an ordinary state event in the space, and the MSC keeps `/hierarchy` to `m.space.child` relations.
+[MSC4455](https://github.com/matrix-org/matrix-spec-proposals/pull/4455) (catch-all property for spaces, open) is client-only.
+`m.space.catch_all` (unstable `de.spiritcroc.space.catch_all`) is an ordinary state event in the space, and the MSC limits `/hierarchy` to `m.space.child` relations.
 
 ## Opt-in MSCs
 
-The following MSCs are not enabled by default and must be activated in the `mscs` section of the config file:
+These MSCs are off by default.
+Enable them in the `mscs` section of the config file:
 
 ```yaml
 mscs:
@@ -980,31 +1201,33 @@ mscs:
     - msc4512
 ```
 
-### MSC2836: Threading
+### MSC2836 (threading)
 
-The relationship index behind `POST /_matrix/client/unstable/event_relationships` is built from the roomserver output stream by the durable JetStream consumer `MSC2836RoomServerConsumer`.
+The durable JetStream consumer `MSC2836RoomServerConsumer` builds the relationship index behind `POST /_matrix/client/unstable/event_relationships` from the roomserver output stream.
 A relationship is therefore queryable shortly after its event is sent, not necessarily by the time the send request returns.
-A failed index write is retried until it succeeds, including by an HA successor, so a stored event never permanently loses its relationship.
-Disabling the MSC removes the consumer at the next start, except in HA mode, where it must be removed during the offline upgrade.
+Zendrite retries a failed index write until it succeeds, including on an HA successor, so a stored event never permanently loses its relationship.
+Disabling the MSC removes the consumer at the next start.
+In HA mode, remove the consumer during the offline upgrade instead.
 
-### MSC2444 and MSC2753: Peeking
+### MSC2444 and MSC2753 (peeking)
 
 Peeking into a room whose ID names no server, as in room version 12, works locally when this server is in the room.
-Any other such room needs `?server_name=` on `POST /_matrix/client/v3/peek/{roomIdOrAlias}` to peek over federation.
-Only world-readable, unencrypted rooms can be peeked, locally or by a remote server.
-Remote peeks ask to be renewed hourly; peeking again after the interval renews an expired outbound peek.
+For any other such room, peeking over federation needs `?server_name=` on `POST /_matrix/client/v3/peek/{roomIdOrAlias}`.
+Local and remote peeks work only for world-readable, unencrypted rooms.
+Remote peeks ask to be renewed hourly.
+Peeking again after the interval renews an expired outbound peek.
 
-### MSC3814: Dehydrated Devices v2
+### MSC3814 (dehydrated devices v2)
 
-MSC3814 allows clients to store a "dehydrated" device on the server so that encrypted to-device messages (e.g. key shares) can be delivered while the user is offline.
-When the user signs in again, the client rehydrates the device and retrieves messages it missed.
+MSC3814 lets clients store a "dehydrated" device on the server, so Zendrite can deliver encrypted to-device messages, such as key shares, while the user is offline.
+When the user signs in again, the client rehydrates the device and retrieves the messages it missed.
 
 **What changes when MSC3814 is enabled:**
 
-- `PUT /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device` — store a dehydrated device with its keys.
-- `GET /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device` — retrieve the current dehydrated device metadata.
-- `DELETE /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device` — remove the dehydrated device.
-- `POST /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device/{deviceID}/events` — retrieve to-device events addressed to the dehydrated device.
+- `PUT /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device` stores a dehydrated device with its keys.
+- `GET /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device` returns the current dehydrated device metadata.
+- `DELETE /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device` removes the dehydrated device.
+- `POST /_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device/{deviceID}/events` returns to-device events addressed to the dehydrated device.
 
 **Configuration:**
 
@@ -1014,68 +1237,79 @@ mscs:
     - msc3814
 ```
 
-No additional configuration is needed beyond enabling the MSC.
+Enabling the MSC is the only configuration needed.
 
-### MSC3664: Push rules for related events
+### MSC3664 (push rules for related events)
 
-With `msc3664`, push rules can match on the event that an event relates to, such as the event a reply answers, and a default rule notifies users of replies to their own events.
-Zendrite follows Synapse, where it needs `msc3664_enabled`: it uses the unstable names and is off by default.
+With `msc3664`, push rules can match on the event that an event relates to, such as the event a reply answers.
+A default rule notifies users of replies to their own events.
+Zendrite follows Synapse, where this needs `msc3664_enabled`: it uses the unstable names and is off by default.
 
-- Rules may use the condition `im.nheko.msc3664.related_event_match`, with `rel_type`, and optionally `key` and `pattern`, which must be given together, and `include_fallbacks`.
-  It matches when the event relates to an event with `rel_type`, stored and not rejected in the same room, whose `key` matches `pattern`; without `key` and `pattern` any such event matches.
-  Replies match as `rel_type` `m.in_reply_to`, and the reply of a thread event marked `is_falling_back` only matches with `include_fallbacks: true`.
-- `key` and `pattern` match as Synapse does: ignoring case, against the whole value, or against whole words of `content.body`.
+- Rules may use the condition `im.nheko.msc3664.related_event_match` with `rel_type`, optionally `key` and `pattern` (given together), and `include_fallbacks`.
+  It matches when the event relates with `rel_type` to an event stored and not rejected in the same room, whose `key` matches `pattern`.
+  Without `key` and `pattern`, any such event matches.
+  Replies match as `rel_type` `m.in_reply_to`.
+  The reply of a thread event marked `is_falling_back` matches only with `include_fallbacks: true`.
+- `key` and `pattern` match as in Synapse: ignoring case, against the whole value, or against whole words of `content.body`.
   This is stricter than `event_match` in Zendrite, which also matches a pattern without wildcards anywhere in the value.
 - The override rule `.im.nheko.msc3664.reply` follows `.m.rule.member_event`, and notifies with a highlight and the default sound for replies to the user's own events.
-  It is added to every account's rules, keeping a user's changes to it, and dropped again when the MSC is turned off.
-- `/capabilities` gives `im.nheko.msc3664.related_event_match: {"enabled": true}`.
+  Zendrite adds it to every account's rules, keeping a user's changes to it, and drops it again when the MSC is turned off.
+- `/capabilities` returns `im.nheko.msc3664.related_event_match: {"enabled": true}`.
 - Without the MSC, the condition can still be stored, as in Synapse, but never matches.
 
-The related event is looked up once per event, whatever the number of users it is evaluated for.
+Zendrite looks up the related event once per event, however many users it evaluates the event for.
 In rooms with pseudo IDs (MSC4014), the related event's `sender` is a pseudo ID, so the reply rule does not match there.
 
-### MSC3848: Specific errcodes for refused events
+### MSC3848 (specific errcodes for refused events)
 
-With `msc3848`, a request refused because of the user's membership or power level says which, so clients do not have to read the `error` text.
-Zendrite follows Synapse, where it needs `msc3848_enabled`: `errcode` stays `M_FORBIDDEN`, and the specific errcode is added as `org.matrix.msc3848.unstable.errcode`, with Synapse's unstable names:
+With `msc3848`, a request refused because of the user's membership or power level says which, so clients do not have to parse the `error` text.
+Zendrite follows Synapse, where this needs `msc3848_enabled`.
+`errcode` stays `M_FORBIDDEN`, and Zendrite adds the specific errcode as `org.matrix.msc3848.unstable.errcode`, with Synapse's unstable names:
 
 - `ORG.MATRIX.MSC3848.NOT_JOINED`: the user is not joined to the room.
 - `ORG.MATRIX.MSC3848.ALREADY_JOINED`: the user being invited, or the user knocking, is already joined.
-- `ORG.MATRIX.MSC3848.INSUFFICIENT_POWER`: the user's power level is below the one needed for the event, an invite, a kick, a ban or an unban, or not above the target's for a kick or ban.
+- `ORG.MATRIX.MSC3848.INSUFFICIENT_POWER`: the user's power level is below the level needed for the event, invite, kick, ban, or unban, or not above the target's for a kick or ban.
 
-These are given by the endpoints the MSC lists: `PUT /rooms/{roomId}/send/{eventType}/{txnId}`, `PUT /rooms/{roomId}/state/{eventType}/{stateKey}`, `POST /rooms/{roomId}/invite`, `/kick`, `/ban` and `/unban`, and `POST /knock/{roomIdOrAlias}`.
-The errcode is worked out from the room's current state with the checks Synapse tags, in the same order; when another rule refuses the request, such as a join rule that does not allow knocking or a change to the power levels above the user's own, no errcode is added.
+The endpoints the MSC lists return these errcodes: `PUT /rooms/{roomId}/send/{eventType}/{txnId}`, `PUT /rooms/{roomId}/state/{eventType}/{stateKey}`, `POST /rooms/{roomId}/invite`, `/kick`, `/ban`, and `/unban`, and `POST /knock/{roomIdOrAlias}`.
+Zendrite works out the errcode from the room's current state with the checks Synapse tags, in the same order.
+When another rule refuses the request, such as a join rule that does not allow knocking or a power level change above the user's own, Zendrite adds no errcode.
 
-### MSC3391: Removing account data
+### MSC3391 (removing account data)
 
 With `msc3391`, clients can delete global and room account data.
-Zendrite follows Synapse, where it needs `msc3391_enabled`, and uses the unstable endpoints:
+Zendrite follows Synapse, where this needs `msc3391_enabled`, and uses the unstable endpoints:
 
 - `DELETE /_matrix/client/unstable/org.matrix.msc3391/user/{userId}/account_data/{type}` deletes global account data, and `DELETE /_matrix/client/unstable/org.matrix.msc3391/user/{userId}/rooms/{roomId}/account_data/{type}` deletes room account data.
   Deleting a type that is not set succeeds.
   The types that `PUT` refuses, such as `m.push_rules` and `m.fully_read`, cannot be deleted either.
-- `PUT /user/{userId}/[rooms/{roomId}/]account_data/{type}` with empty content (`{}`) deletes the entry as well.
+- `PUT /user/{userId}/[rooms/{roomId}/]account_data/{type}` with empty content (`{}`) also deletes the entry.
 - `GET /user/{userId}/[rooms/{roomId}/]account_data/{type}` returns 404 `M_NOT_FOUND` for a deleted type, and for one stored with empty content before the MSC was enabled.
-- The next incremental `/sync` or sliding sync `account_data` extension response carries a deleted type with empty content, so clients drop it; initial syncs leave it out.
-  As in Synapse, `/sync` writes `account_data` for every joined room, with an empty `events` array when there is none.
+- The next incremental `/sync` or sliding sync `account_data` extension response includes a deleted type with empty content, so clients drop it.
+  Initial syncs leave it out.
+  As in Synapse, `/sync` returns `account_data` for every joined room, with an empty `events` array when there is none.
 - Deleting `m.ignored_user_list` stops ignoring every user.
 
 Like Synapse, Zendrite does not advertise the MSC in `unstable_features`.
-Without `msc3391`, the `DELETE` endpoints return 404 `M_UNRECOGNIZED` and empty content is stored like any other.
+Without `msc3391`, the `DELETE` endpoints return 404 `M_UNRECOGNIZED`, and empty content is stored like any other.
 
-### MSC4028: Push all encrypted events
+### MSC4028 (push all encrypted events)
 
-MSC4028 lets clients that decrypt notifications themselves, such as Element X, receive a push for every encrypted event and decide after decrypting it whether to show it.
+MSC4028 lets clients that decrypt notifications themselves, such as Element X, receive a push for every encrypted event and decide after decrypting whether to show it.
 It is off by default, as in Synapse, where it needs `msc4028_push_encrypted_events`.
 
 **What changes when MSC4028 is enabled:**
 
 - `/versions` advertises `org.matrix.msc4028` in `unstable_features`.
-- The default `override` rule `.org.matrix.msc4028.encrypted_event` (Synapse's unstable ID; the MSC calls it `.m.rule.encrypted_event`) notifies for every `m.room.encrypted` event. As in Synapse, it is enabled and comes right after `.m.rule.master`.
-- Rules the user added take precedence, so muted rooms stay muted, but encrypted events in a room set to mentions and keywords only notify, and count as unread notifications.
-- New accounts get the rule, and existing accounts receive it when their push rules are next read. Users can disable it like any default rule.
+- The default `override` rule `.org.matrix.msc4028.encrypted_event` notifies for every `m.room.encrypted` event.
+  This is Synapse's unstable ID, and the MSC calls it `.m.rule.encrypted_event`.
+  As in Synapse, the rule is enabled and comes right after `.m.rule.master`.
+- Rules the user added take precedence, so muted rooms stay muted.
+  But encrypted events in a room set to mentions and keywords only do notify, and count as unread notifications.
+- New accounts get the rule, and existing accounts receive it when their push rules are next read.
+  Users can disable it like any default rule.
 
-Removing `msc4028` from the configuration removes the rule from every account when its push rules are next read, including a user's choice to disable it; enabling the MSC again adds it back enabled.
+Removing `msc4028` from the configuration removes the rule from every account when its push rules are next read, including a user's choice to disable it.
+Enabling the MSC again adds the rule back, enabled.
 
 ```yaml
 mscs:
@@ -1083,12 +1317,12 @@ mscs:
     - msc4028
 ```
 
-### MSC3861: OIDC Delegated Authentication
+### MSC3861 (OIDC delegated authentication)
 
 MSC3861 delegates authentication to an external OpenID Connect (OIDC) provider such as [Matrix Authentication Service (MAS)](https://github.com/element-hq/matrix-authentication-service).
-When enabled, Zendrite validates access tokens via OAuth 2.0 token introspection instead of managing passwords directly, and provisions accounts and devices on demand.
+When enabled, Zendrite validates access tokens through OAuth 2.0 token introspection instead of managing passwords itself, and provisions accounts and devices on demand.
 
-This changes the behaviour of a large part of the client-server API: password login and registration are disabled, session management moves to the provider, and clients without native OIDC support go through a legacy SSO compatibility layer.
+This changes much of the client-server API: password login and registration are disabled, session management moves to the provider, and clients without native OIDC support go through a legacy SSO compatibility layer.
 
 **Configuration:**
 
@@ -1102,91 +1336,119 @@ mscs:
     client_secret: "secret"
 ```
 
-See [Delegated authentication (OIDC)](/administration/oidc/) for the full setup guide, the complete configuration reference, client support, account provisioning rules, migration caveats and troubleshooting.
-It is qualified for active-passive HA; [High availability](/administration/oidc/#high-availability) there lists what a takeover loses and how clients recover.
+See [Delegated authentication (OIDC)](/administration/oidc/) for the setup guide, the configuration reference, client support, account provisioning rules, migration caveats, and troubleshooting.
+MSC3861 is qualified for active-passive HA.
+The [high availability](/administration/oidc/#high-availability) section of that page lists what a takeover loses and how clients recover.
 
-### MSC4293: Redact on kick and ban
+### MSC4293 (redact on kick and ban)
 
 With `msc4293`, a moderator can remove everything a user sent while kicking or banning them, without sending a redaction event for each message.
 
-- `POST /rooms/{roomId}/kick` and `/ban` accept `org.matrix.msc4293.redact_events`, and copy it into the membership event, as `reason` is.
-- When a kick or ban with `org.matrix.msc4293.redact_events: true` is accepted, local or from another server, Zendrite redacts the events the target sent during their current stay in the room: since the join that began it, profile changes aside.
-  Each redacted event names the kick or ban as its `redacted_because`, also when served by sync, `/messages` or federation, and leaves the search index.
-  No redaction events are sent: clients that support the MSC apply the kick or ban themselves, and others see the redacted events when they fetch them again.
-- An event the target sends afterwards, which arrives soft-failed while the kick or ban is still their membership, is redacted when it is stored.
-- The flag only counts if the kick or ban's sender may redact the target's events: a power level at least that of `redact` and of `m.room.redaction` events, if set, or a creator in room versions with privileged creators.
-  It has no effect on voluntary leaves, unbans or other memberships, and a kick or ban received late, from history, redacts nothing.
-- Redactions are not undone when the user is unbanned; events from before the previous membership, and events from before a kick or ban without the flag, are kept.
+- `POST /rooms/{roomId}/kick` and `/ban` accept `org.matrix.msc4293.redact_events`, and copy it into the membership event, as they do with `reason`.
+- When Zendrite accepts a kick or ban with `org.matrix.msc4293.redact_events: true`, local or from another server, it redacts the events the target sent during their current stay in the room.
+  The stay began with the join that started it, ignoring profile changes.
+  Each redacted event names the kick or ban as its `redacted_because`, also when served by sync, `/messages`, or federation, and leaves the search index.
+  Zendrite sends no redaction events.
+  Clients that support the MSC apply the kick or ban themselves, and others see the redacted events when they fetch them again.
+- Zendrite also redacts, when storing it, an event the target sends afterwards that arrives soft-failed while the kick or ban is still their membership.
+- The flag counts only if the sender of the kick or ban may redact the target's events.
+  That needs a power level at least that of `redact` and of `m.room.redaction` events (if set), or a creator in room versions with privileged creators.
+  The flag has no effect on voluntary leaves, unbans, or other memberships.
+  A kick or ban received late, from history, redacts nothing.
+- Unbanning the user does not undo the redactions.
+  Zendrite keeps events from before the previous membership, and events from before a kick or ban without the flag.
 
 Synapse needs `msc4293_enabled` for the same behaviour.
 Moderation bots may still send redaction events for servers and clients without the MSC, for example with [MSC4194](#msc4194-redacting-a-users-events).
 
-### MSC4194: Redacting a user's events
+### MSC4194 (redacting a user's events)
 
 MSC4194 lets a room moderator, or a moderation bot such as Meowlnir, redact everything one user sent to a room with one request per page, for example after banning a spammer.
-It also reaches events the server soft failed, which clients never received and so cannot redact one by one.
+It also covers events the server soft failed, which clients never received and so cannot redact one by one.
 It is off by default and uses the unstable names.
 
 **What changes when MSC4194 is enabled:**
 
-- `/versions` advertises `org.matrix.msc4194: true` in `unstable_features`. Without the MSC the endpoint answers 404 `M_UNRECOGNIZED`.
-- `POST /_matrix/client/unstable/org.matrix.msc4194/rooms/{roomId}/redact/user/{userId}?limit={limit}` sends an `m.room.redaction` for each of the user's events in the room, newest first, as the requester. The optional body `{"reason": "..."}` becomes the reason of each redaction.
+- `/versions` advertises `org.matrix.msc4194: true` in `unstable_features`.
+  Without the MSC, the endpoint answers 404 `M_UNRECOGNIZED`.
+- `POST /_matrix/client/unstable/org.matrix.msc4194/rooms/{roomId}/redact/user/{userId}?limit={limit}` sends an `m.room.redaction` for each of the user's events in the room, newest first, as the requester.
+  The optional body `{"reason": "..."}` becomes the reason of each redaction.
 - It answers with how many events it redacted and whether any are left:
 
   ```json
   {"is_more_events": true, "redacted_events": {"total": 25, "soft_failed": 3}}
   ```
 
-  Events that are already redacted are skipped and not counted, so a client calls again while `is_more_events` is `true`, and each call makes progress.
-- `limit` defaults to 25. A larger value is capped at 100, so the server may redact fewer events than asked for while `is_more_events` is `true`, as the MSC allows. A `limit` that is not a positive integer is 400 `M_INVALID_PARAM`.
-- The requester must be joined to the room. Redacting another user's events needs the room's redact power level, as `/redact` does; a user may always redact their own, also while suspended. Otherwise the answer is 403 `M_FORBIDDEN`, or `M_USER_SUSPENDED` for a suspended user redacting someone else's events.
-- Create events and redactions are not redacted. Every other event of the user is, state events such as their membership included, whose redaction removes for example the display name and avatar it carried.
+  Zendrite skips events that are already redacted and does not count them.
+  A client calls again while `is_more_events` is `true`, and each call makes progress.
+- `limit` defaults to 25.
+  Zendrite caps a larger value at 100, so it may redact fewer events than asked for while `is_more_events` is `true`, as the MSC allows.
+  A `limit` that is not a positive integer returns 400 `M_INVALID_PARAM`.
+- The requester must be joined to the room.
+  Redacting another user's events needs the room's redact power level, as `/redact` does.
+  A user may always redact their own events, even while suspended.
+  Otherwise the answer is 403 `M_FORBIDDEN`, or `M_USER_SUSPENDED` for a suspended user redacting someone else's events.
+- Create events and redactions are not redacted.
+  Every other event of the user is, including state events such as their membership.
+  For example, redacting a membership removes its display name and avatar.
 - A request counts once against the client rate limit, however many events it redacts.
 
-Zendrite only finds the events it has stored, which are those since this server joined the room and the history it has fetched since.
-It does not apply history visibility: a moderator can redact events from before they joined.
-Zendrite does not record soft failure, so `soft_failed` counts the redacted events that were stored with state but never delivered to clients as new events: soft-failed events, and also older history fetched by backfill.
-The room's events have no index by sender, so a request reads the room's unredacted events from the newest down until it has found enough of the user's; in a very large room, a user whose last event is old takes longer to find.
+Zendrite finds only the events it has stored: those since this server joined the room, and the history it has fetched since.
+It does not apply history visibility, so a moderator can redact events from before they joined.
+Zendrite does not record soft failure.
+So `soft_failed` counts the redacted events that were stored with state but never delivered to clients as new events: soft-failed events, and also older history fetched by backfill.
+
+The room's events have no index by sender.
+A request reads the room's unredacted events from the newest down until it finds enough of the user's, so in a very large room, a user whose last event is old takes longer to find.
 
 MSC4194 is qualified for active-passive HA.
-Each redaction is a roomserver write to the global database, and nothing is kept in memory between requests.
-When the owner changes during a request, the redactions already made stay, and the client's next request carries on from the newest unredacted event.
-If the owner made a redaction but its answer was lost, the retried request may redact a few of the events once more; that is harmless.
+Each redaction is a roomserver write to the global database, and nothing stays in memory between requests.
+When the owner changes during a request, the redactions already made stay, and the client's next request continues from the newest unredacted event.
+If the owner made a redaction but its answer was lost, the retried request may redact a few events once more, which is harmless.
 
-### MSC4263: Key queries for users who share a room
+### MSC4263 (key queries for users who share a room)
 
 `POST /_matrix/client/v3/keys/query` answers for any user by default, which lets a client find out which user IDs exist.
-With `msc4263`, it leaves out the users who neither share a room with the requester nor are in a room published in the room directory, as if they had no keys.
-A user shares a room with the requester when the requester is joined or invited to it and the user has any membership in it, including an invite, a knock, a leave or a ban, so that clients still get the keys of invited users.
-The requester's own keys are always returned, and so are those of the users who invited the requester, even into a room that Zendrite is not in yet.
-In rooms with pseudo IDs (the experimental room version `org.matrix.msc4014`), memberships belong to keys made for the room, not to user IDs, so the limit does not apply to a user in such a room.
-The federation endpoint `/_matrix/federation/v1/user/keys/query`, which the MSC allows servers to refuse, stays open, since remote servers need it to encrypt for local users.
+With `msc4263`, it leaves out users who neither share a room with the requester nor are in a room published in the room directory, as if they had no keys.
+A user shares a room with the requester when the requester is joined or invited to it, and the user has any membership in it, including an invite, a knock, a leave, or a ban.
+Clients then still get the keys of invited users.
 
-Synapse has the same option as `msc4263_limit_key_queries_to_users_who_share_rooms`, but only keeps users who are joined or invited to a room that the requester is joined or invited to, while the MSC also requires the members of public rooms and users with any membership.
+The requester's own keys are always returned, and so are those of users who invited the requester, even into a room that Zendrite is not in yet.
+In rooms with pseudo IDs (the experimental room version `org.matrix.msc4014`), memberships belong to keys made for the room, not to user IDs.
+The limit does not apply to a user in such a room.
+The federation endpoint `/_matrix/federation/v1/user/keys/query`, which the MSC allows servers to refuse, stays open, because remote servers need it to encrypt for local users.
 
-### MSC4370: Current extremities over federation
+Synapse has the same option as `msc4263_limit_key_queries_to_users_who_share_rooms`.
+It keeps only users who are joined or invited to a room that the requester is joined or invited to.
+The MSC also requires the members of public rooms, and users with any membership.
+
+### MSC4370 (current extremities over federation)
 
 MSC4370 lets a server that does not track the room DAG itself, such as a [policy server](#policy-servers), ask another server for the room's current forward extremities, and fetch the current state from there.
-Zendrite follows Synapse, where it needs `msc4370_enabled`: it serves only the unstable endpoint and is off by default.
+Zendrite follows Synapse, where this needs `msc4370_enabled`: it serves only the unstable endpoint and is off by default.
 
 - `GET /_matrix/federation/unstable/org.matrix.msc4370/extremities/{roomId}` answers `{"prev_events": [...]}` with the event IDs Zendrite would put in `prev_events` if it sent an event to the room now.
   Zendrite does not resolve them into one first, so there can be more than one.
-- A server with no joined member in the room gets 403 `M_FORBIDDEN`, and so does a server the room's server ACL denies; as in Synapse, the ACL is only checked for servers in the room, so it is not disclosed to others.
-- A room Zendrite does not know answers 404 `M_NOT_FOUND`, and a room it joined with partial state answers 403 `ORG.MATRIX.MSC3895_UNABLE_DUE_TO_PARTIAL_STATE` until its state is complete, since its view of the room's members is incomplete until then.
-- A room Zendrite has left answers 404 `M_NOT_FOUND` to servers still in it, since its extremities are no longer current.
-- Without the MSC, the endpoint answers 404 `M_UNRECOGNIZED`.
+- A server with no joined member in the room gets 403 `M_FORBIDDEN`, and so does a server the room's server ACL denies.
+  As in Synapse, Zendrite checks the ACL only for servers in the room, so it is not disclosed to others.
+- A room Zendrite does not know returns 404 `M_NOT_FOUND`.
+  A room it joined with partial state returns 403 `ORG.MATRIX.MSC3895_UNABLE_DUE_TO_PARTIAL_STATE` until its state is complete, because its view of the room's members is incomplete until then.
+- A room Zendrite has left returns 404 `M_NOT_FOUND` to servers still in it, because its extremities are no longer current.
+- Without the MSC, the endpoint returns 404 `M_UNRECOGNIZED`.
 
-### MSC4502: Room member queries
+### MSC4502 (room member queries)
 
 MSC4502 lets application services, such as moderation tools, and OAuth clients granted a dedicated scope ask whether one user, or any user of one server, is joined to a room, without being in the room themselves.
-Zendrite follows Synapse, where it needs `msc4502_enabled`: it uses the unstable names and is off by default.
+Zendrite follows Synapse, where this needs `msc4502_enabled`: it uses the unstable names and is off by default.
 
 **What changes when MSC4502 is enabled:**
 
-- `/versions` advertises `io.element.msc4502: true` in `unstable_features`. Without the MSC the flag is `false` and the endpoint answers 404 `M_UNRECOGNIZED`.
+- `/versions` advertises `io.element.msc4502: true` in `unstable_features`.
+  Without the MSC, the flag is `false` and the endpoint answers 404 `M_UNRECOGNIZED`.
 - `GET /_matrix/client/unstable/io.element.msc4502/rooms/{roomId}/is_joined?mxid={userId}` answers `{"joined": true}` when the user's membership in the room's current state is `join`, and `{"joined": false}` otherwise.
 - With `?server_name={serverName}` instead, it answers whether any user of that server is joined.
-- The caller needs the scope `urn:matrix:client:io.element.msc4502:rooms:is_joined`. Application services get it by listing it in their registration file:
+- The caller needs the scope `urn:matrix:client:io.element.msc4502:rooms:is_joined`.
+  Application services get it by listing it in their registration file:
 
   ```yaml
   io.element.msc4502.scopes:
@@ -1194,19 +1456,21 @@ Zendrite follows Synapse, where it needs `msc4502_enabled`: it uses the unstable
   ```
 
   An application service keeps the scope while it acts as one of its users with `user_id`.
-  With [delegated authentication](#msc3861-oidc-delegated-authentication), an access token the provider granted the scope may call the endpoint too.
+  With [delegated authentication](#msc3861-oidc-delegated-authentication), an access token that the provider granted the scope may call the endpoint too.
   Anyone else, server admins included, gets 403 `M_FORBIDDEN`, as in Synapse.
   A registration listing any other scope, including the stable `urn:matrix:client:rooms:is_joined`, fails to load.
-- Giving both `mxid` and `server_name`, or neither, is 400 `M_MISSING_PARAM`. An invalid room ID, user ID or server name is 400 `M_INVALID_PARAM`.
+- Giving both `mxid` and `server_name`, or neither, returns 400 `M_MISSING_PARAM`.
+  An invalid room ID, user ID, or server name returns 400 `M_INVALID_PARAM`.
 - A room this server does not know, or a user or server it has never seen in the room, answers `{"joined": false}`.
 
-Zendrite only knows the membership of rooms it is in.
-In rooms with pseudo IDs (MSC4014), a `server_name` query does not find remote servers, as memberships there are keyed by pseudo ID rather than user ID.
+Zendrite knows only the membership of rooms it is in.
+In rooms with pseudo IDs (MSC4014), a `server_name` query does not find remote servers, because memberships there are keyed by pseudo ID rather than user ID.
 
-### MSC4512: Application services serving parts of the APIs
+### MSC4512 (application services serving parts of the APIs)
 
-MSC4512 lets an application service serve a part of the client-server and federation APIs behind the homeserver, such as [lk-jwt-service](https://github.com/element-hq/lk-jwt-service) serving the LiveKit token endpoints of [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195).
-Zendrite follows Synapse, where it needs `msc4512_enabled`: it uses the unstable names and is off by default.
+MSC4512 lets an application service serve part of the client-server and federation APIs behind the homeserver.
+For example, [lk-jwt-service](https://github.com/element-hq/lk-jwt-service) can serve the LiveKit token endpoints of [MSC4195](https://github.com/matrix-org/matrix-spec-proposals/pull/4195).
+Zendrite follows Synapse, where this needs `msc4512_enabled`: it uses the unstable names and is off by default.
 
 An application service claims a prefix in its registration file:
 
@@ -1215,34 +1479,41 @@ io.element.msc4512.proxy_prefix: "rtc/livekit"
 io.element.msc4512.proxy_url: "http://127.0.0.1:1234"
 ```
 
-Both properties must be set together, and the URL must be an `http` or `https` URL without a query or fragment.
-Like Synapse, only `rtc/livekit` may be claimed, and only by one application service, so that an application service cannot take over the endpoints Zendrite serves itself.
-A registration claiming any other prefix fails to load, whether or not the MSC is enabled.
+Both properties must be set together, and `proxy_url` must be an `http` or `https` URL without a query or fragment.
+As in Synapse, only `rtc/livekit` may be claimed, and only by one application service, so an application service cannot take over the endpoints Zendrite serves itself.
+A registration claiming any other prefix fails to load, even when the MSC is disabled.
 
 **What changes when MSC4512 is enabled:**
 
-- Requests to `/_matrix/client/{version}/rtc/livekit` and below, where `{version}` is `v1`, `v3` and so on or `unstable/{namespace}`, go to the application service once the access token is checked and the request is rate limited.
-  Users, guests and call guests may use them, as they may use Zendrite's own LiveKit endpoints.
-- Federation requests to `/_matrix/federation/{version}/rtc/livekit` and below go to the application service once their signature is checked, at most 10 requests a second per server with bursts of 50.
-- The proxied request keeps its method, path, query string and body, and only the `Content-Type`, `Accept` and `Accept-Language` headers.
+- Requests to `/_matrix/client/{version}/rtc/livekit` and below go to the application service once Zendrite has checked the access token and rate limited the request.
+  `{version}` is a version such as `v1` or `v3`, or `unstable/{namespace}`.
+  Users, guests, and call guests may use these endpoints, as they may use Zendrite's own LiveKit endpoints.
+- Federation requests to `/_matrix/federation/{version}/rtc/livekit` and below go to the application service once Zendrite has checked their signature.
+  Each server may send at most 10 such requests a second, with bursts of 50.
+- The proxied request keeps its method, path, query string, and body, but only the `Content-Type`, `Accept`, and `Accept-Language` headers.
   Zendrite authenticates it with the application service's `hs_token`, and adds `X-Matrix-User-Identifier` with the requesting user's ID, or `X-Matrix-Origin` with the requesting server's name.
-  An `access_token` in the query string is removed; with `app_service_api.legacy_auth`, the `hs_token` is added as `access_token`, as for the other requests to application services.
-- The response is streamed back with its status and headers, without the hop-by-hop headers of RFC 2616 and those named in `Connection`, and redirects are passed on rather than followed.
-  An application service that does not start answering within 30 seconds gives 502 `M_UNKNOWN`; the response itself may stream for longer.
-- A path with a `.` or `..` segment, also percent-encoded, is refused with 400 `M_INVALID_PARAM`, and `GET`, `POST`, `PUT` and `DELETE` are the only methods forwarded.
+  Zendrite removes an `access_token` from the query string.
+  With `app_service_api.legacy_auth`, it adds the `hs_token` as `access_token`, as for other requests to application services.
+- Zendrite streams the response back with its status and headers, without the hop-by-hop headers of RFC 2616 and those named in `Connection`.
+  It passes redirects on rather than following them.
+  An application service that does not start answering within 30 seconds gives 502 `M_UNKNOWN`, but the response itself may stream for longer.
+- Zendrite refuses a path with a `.` or `..` segment (percent-encoded or not) with 400 `M_INVALID_PARAM`, and forwards only `GET`, `POST`, `PUT`, and `DELETE`.
   Client request bodies are limited to 10 MiB (413 `M_TOO_LARGE`).
-- The application service takes over Zendrite's own `rtc/livekit` endpoints, `get_token` and `delegate_delayed_leave`, so they are answered by it even when `rtc_foci` holds a LiveKit API key, and Zendrite logs a warning at startup.
+- The application service takes over Zendrite's own `rtc/livekit` endpoints, `get_token` and `delegate_delayed_leave`.
+  It answers them even when `rtc_foci` has a LiveKit API key, and Zendrite logs a warning at startup.
   `/versions` advertises `org.matrix.msc4195.stable` while an application service serves `rtc/livekit`.
-- `POST /_matrix/client/unstable/io.element.msc4512/appservice/fed_proxy` signs and sends a federation request for an application service and answers `{"status": ..., "content": ...}` with the destination's status and JSON body.
-  A successful answer is relayed as status 200, and a body that is not JSON is left out of `content`.
-  - Only application services may call it; anyone else gets 403 `M_FORBIDDEN`.
-  - `destination`, `method` and `path` are required (400 `M_MISSING_PARAM`).
-    `method` must be `GET`, `POST`, `PUT` or `DELETE`, the `query` values strings, and `body` an object that `GET` and `DELETE` do not take (400 `M_INVALID_PARAM`).
-  - This server, also with an explicit port, or any server when federation is disabled, is refused with 403 `IO.ELEMENT.MSC4512.M_FEDPROXY_DESTINATION_DENIED`.
-  - A path that is not under `/_matrix/federation/{version}/` and the application service's own prefix, or has a query string, fragment or `.` or `..` segment, is refused with 403 `IO.ELEMENT.MSC4512.M_FEDPROXY_PATH_NOT_ALLOWED`.
+- `POST /_matrix/client/unstable/io.element.msc4512/appservice/fed_proxy` signs and sends a federation request for an application service.
+  It answers `{"status": ..., "content": ...}` with the destination's status and JSON body.
+  Zendrite relays a successful answer as status 200, and leaves a body that is not JSON out of `content`.
+  - Only application services may call it, and anyone else gets 403 `M_FORBIDDEN`.
+  - `destination`, `method`, and `path` are required (400 `M_MISSING_PARAM`).
+    `method` must be `GET`, `POST`, `PUT`, or `DELETE`, the `query` values must be strings, and `body` must be an object, which `GET` and `DELETE` do not take (400 `M_INVALID_PARAM`).
+  - Zendrite refuses this server, also with an explicit port, or any server when federation is disabled, with 403 `IO.ELEMENT.MSC4512.M_FEDPROXY_DESTINATION_DENIED`.
+  - Zendrite refuses with 403 `IO.ELEMENT.MSC4512.M_FEDPROXY_PATH_NOT_ALLOWED` a path that is not under `/_matrix/federation/{version}/` and the application service's own prefix, or that has a query string, fragment, or `.` or `..` segment.
   - A destination that cannot be reached within 30 seconds gives 502 `IO.ELEMENT.MSC4512.M_FEDPROXY_CONNECTION_FAILED`.
 
 The error codes are spelled as in Synapse, while the MSC's unstable prefix table writes them as `IO.ELEMENT.MSC4512_FEDPROXY_*`.
-The MSC does not cover an application service without a prefix calling `fed_proxy`: Zendrite refuses it with `M_FEDPROXY_PATH_NOT_ALLOWED`, where Synapse answers 400 `M_FEDPROXY_NO_PROXY_PREFIX`.
-Requests to servers that `federation_api.deny_networks` refuses fail with `M_FEDPROXY_CONNECTION_FAILED`, as Zendrite has no list of server names it refuses to federate with.
-The stable `/_matrix/client/v1/appservice/fed_proxy` path is not served yet, as in Synapse.
+The MSC does not cover an application service without a prefix calling `fed_proxy`.
+Zendrite refuses it with `M_FEDPROXY_PATH_NOT_ALLOWED`, where Synapse answers 400 `M_FEDPROXY_NO_PROXY_PREFIX`.
+Requests to servers that `federation_api.deny_networks` refuses fail with `M_FEDPROXY_CONNECTION_FAILED`, because Zendrite has no list of server names it refuses to federate with.
+As in Synapse, Zendrite does not serve the stable `/_matrix/client/v1/appservice/fed_proxy` path yet.

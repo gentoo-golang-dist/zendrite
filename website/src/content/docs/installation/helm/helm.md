@@ -22,8 +22,7 @@ helm install zendrite codefloe.com/zendrite
 
 ## Configuration
 
-Create a `values.yaml` file and configure it to your liking.
-All possible values can be found in the [chart README](https://codefloe.com/devxy/helm-zendrite/src/branch/main/charts/zendrite/README.md), but at least you need to configure a `server_name`:
+Create a `values.yaml` file and set at least `server_name`:
 
 ```yaml
 zendrite_config:
@@ -31,7 +30,9 @@ zendrite_config:
     server_name: "localhost"
 ```
 
-If you are going to use an existing Postgres database, you'll also need to configure this connection:
+The [chart README](https://codefloe.com/devxy/helm-zendrite/src/branch/main/charts/zendrite/README.md) lists all values.
+
+To use an existing PostgreSQL database, configure the connection:
 
 ```yaml
 zendrite_config:
@@ -45,8 +46,10 @@ zendrite_config:
 
 ## Element Call
 
-The chart can deploy the backend that [Element Call](/administration/matrixrtc/#deploying-element-call) needs: two LiveKit nodes and two lk-jwt-service replicas, sharing their state through an external Valkey or Redis.
-It then adds the backend to `rtc_foci`, enables delayed events for up to 24 hours, and serves LiveKit and lk-jwt-service on a host of their own through the Ingress or HTTPRoute the chart already creates.
+The chart can deploy the backend that [Element Call](/administration/matrixrtc/#deploying-element-call) needs.
+It runs two LiveKit nodes and two lk-jwt-service replicas, which share their state through an external Valkey or Redis.
+The chart adds this backend to `rtc_foci` and enables delayed events for up to 24 hours.
+It serves LiveKit and lk-jwt-service on a separate host through the Ingress or HTTPRoute the chart already creates.
 
 ```yaml
 matrixRTC:
@@ -61,7 +64,8 @@ matrixRTC:
     existingSecret: valkey
 ```
 
-Each LiveKit pod runs with host networking on a node of its own, and clients send media straight to it on 7881/TCP and 7882/UDP, so open these ports on every node that may run LiveKit.
+Each LiveKit pod runs with host networking on a dedicated node.
+Clients send media straight to it on 7881/TCP and 7882/UDP, so open these ports on every node that may run LiveKit.
 A namespace that enforces the `baseline` Pod Security level rejects host networking and needs `privileged`.
 A stopping LiveKit pod serves its running calls until they end, for up to five hours, so a rollout waits for each node's calls.
 The [chart README](https://codefloe.com/devxy/helm-zendrite/src/branch/main/charts/zendrite/README.md) lists all `matrixRTC` values.
@@ -69,10 +73,12 @@ The [chart README](https://codefloe.com/devxy/helm-zendrite/src/branch/main/char
 ## High availability
 
 The chart can run several candidates with one ready, safely active homeserver.
-HA is experimental; read [High availability](/administration/high-availability/) and [HA storage and recovery](/installation/manual/high-availability/) before enabling it.
+HA is experimental.
+Read [High availability](/administration/high-availability/) and [HA storage and recovery](/installation/manual/high-availability/) before you enable it.
 
 The values below require the chart release that adds HA support, tracked in [devxy/helm-zendrite#35](https://codefloe.com/devxy/helm-zendrite/pulls/35).
-Earlier releases have no `ha` or `replicaCount` values, no Lease RBAC and no status Service, and enabling HA against them leaves pods without permission to acquire their Lease.
+Earlier releases have no `ha` or `replicaCount` values, no Lease RBAC, and no status Service.
+If you enable HA on them, pods lack permission to acquire their Lease.
 
 ```yaml
 replicaCount: 3
@@ -89,14 +95,15 @@ strategy:
     maxUnavailable: 1
 ```
 
-This restarts candidates one at a time and lets a standby take over, which is what you want for a configuration change or a same-version restart.
+Kubernetes then restarts candidates one at a time and a standby takes over, which suits a configuration change or a same-version restart.
 
 A **version change is different**.
 Candidates pin themselves to one executable fingerprint recorded on the Lease, so new-version pods cannot acquire it and the deployment ends with no owner at all.
-Use the maintenance window described in [High availability](/administration/high-availability/#upgrades) for any version change.
+Use the maintenance window described in [High availability](/administration/high-availability/#offline-upgrades) for any version change.
 
-`replicaCount` above 1 without `ha.enabled` is rejected, because running several active replicas without leader election corrupts shared state.
-A rolling update with a nonzero `maxSurge` is rejected as well: a surged candidate cannot be promoted while the old one still holds ownership, so the rollout would deadlock.
+The chart rejects `replicaCount` above 1 without `ha.enabled`, because running several active replicas without leader election corrupts shared state.
+The chart also rejects a rolling update with a nonzero `maxSurge`.
+A surged candidate can't be promoted while the old one still has ownership, so the rollout would deadlock.
 
 The chart creates a service account with `get`, `update` and `create` on the homeserver's Lease, a headless status Service so standbys can be scraped, a disruption budget, and alert rules.
 It does not provision the HA prerequisites.
@@ -104,7 +111,8 @@ Point the chart at an external HA PostgreSQL, an external replicated JetStream, 
 
 ## Installing with PostgreSQL
 
-The chart comes with a dependency on Postgres, which can be installed alongside Zendrite. Enable it in your `values.yaml`:
+The chart can install PostgreSQL alongside Zendrite as a dependency.
+Enable it in your `values.yaml`:
 
 ```yaml
 postgresql:
@@ -118,4 +126,4 @@ zendrite_config:
     server_name: "localhost"
 ```
 
-Using this option, the `database.connection_string` will be set for you automatically.
+The chart then sets `database.connection_string` for you.

@@ -1,11 +1,12 @@
 ---
 title: HA qualification report
-description: Measured recovery, durability and ownership results for active-passive high availability.
+description: Measured recovery, durability, and ownership results for active-passive high availability.
 ---
 
-This report is the release evidence for [#352](https://codefloe.com/pat-s/zendrite/issues/352).
-It records the configuration, the measured recovery times, the defects the qualification found, and what it could not cover.
-Every number comes from the [HA qualification](/development/ha-qualification/) harness; rerun it to reproduce them.
+This report is the HA release evidence for [#352](https://codefloe.com/pat-s/zendrite/issues/352).
+It records the configuration, the measured recovery times, the defects the qualification found, and what it couldn't cover.
+Every number comes from the [HA qualification](/development/ha-qualification/) suite.
+Rerun it to reproduce them.
 
 ## Configuration
 
@@ -24,7 +25,7 @@ Every number comes from the [HA qualification](/development/ha-qualification/) h
 | Reference workload | 100 users and 1,000 rooms with three members each, seeded before the scenario (ADR 0001) |
 | Host | one Linux container, amd64, 12 CPUs |
 
-Run with:
+To reproduce the results, run:
 
 ```sh
 HACHAOS_CONTAINER=1 HACHAOS_TIER=full build/scripts/ha-qualification.sh
@@ -35,9 +36,10 @@ HACHAOS_CONTAINER=1 HACHAOS_TIER=reference HACHAOS_SCENARIOS=leader-sigkill,post
 
 Every scenario meets the safety contract and the recovery objective:
 
-- No acknowledged write was lost in any scenario, and every one reached `/messages`, a `/sync` client that kept its token across takeover, and the remote server.
+- No scenario lost an acknowledged write.
+  Every one reached `/messages`, a `/sync` client that kept its token across takeover, and the remote server.
 - The database audit found no overlap: in every scenario each generation's commits all precede the next generation's first commit.
-- No retired generation published to the broker, wrote media or sent federation after the bound its freshness window allows.
+- No retired generation published to the broker, wrote media, or sent federation after the bound its freshness window allows.
 - A resumed or partitioned former leader refused every direct write sent to it after its successor was promoted.
 - The router never saw two active candidates, and no status sample showed two candidates ready.
 - No event was stored twice, although a client retried a write across the fault in 14 of the 16 scenarios.
@@ -46,7 +48,7 @@ Every scenario meets the safety contract and the recovery objective:
 ## Recovery at the reference timings
 
 Times run from fault injection to the first success after the first failure the fault caused, or to the first success when nothing failed.
-Scenarios marked *suspends* stop serving by design while the fault lasts, so the objective does not apply to them.
+Scenarios marked *suspends* stop serving by design while the fault lasts, so the objective doesn't apply to them.
 Scenarios marked *no failed writes* delayed some requests but failed none.
 Inbound federation recovers with the rest, because the remote server retries its backlog as soon as the successor contacts it.
 
@@ -120,13 +122,15 @@ Scenario notes:
 - `leader-partitioned-from-kubernetes`: the former leader refused all 15 direct writes sent to it after its successor was promoted.
 - `leader-partitioned-from-everything`: the former leader refused all 15 direct writes sent to it after the partition healed.
   Two of its publications arrived after its successor acquired ownership, within the 7 s freshness bound.
-- `fencing-cannot-be-proven`: no candidate became active while the old owner's backend could not be terminated.
+- `fencing-cannot-be-proven`: no candidate became active while the old owner's PostgreSQL backend couldn't be terminated.
   Blocked candidates exit and restart, so none happened to be reporting the blocked boundary when the hold ended.
-- `leadership-lost-during-startup`: one write got no response from the killed leader but had been committed; it appears exactly once.
+- `leadership-lost-during-startup`: one write got no response from the killed leader but had been committed.
+  It appears exactly once.
 
 ## Recovery with the reference workload
 
-Seeding 1,000 rooms adds about 30 s to promotion, mostly rebuilding the search index and recovering sync state; the objective still holds.
+Seeding 1,000 rooms adds about 30 s to promotion, mostly to rebuild the search index and recover sync state.
+The objective still holds.
 The sync API also works through a larger backlog after a fault, so clients briefly receive limited timelines and fill them from `prev_batch`.
 
 | Scenario | Result | Client write | Sync | Federation in | Federation out | Generations |
@@ -148,18 +152,19 @@ The sync API also works through a larger backlog after a fault, so clients brief
 
 ## Findings
 
-The qualification found these defects; each is fixed in its own pull request, and every result above includes the fixes.
+The qualification found these defects.
+Each is fixed in its own pull request, and every result above includes the fixes.
 
 | Defect | Effect | Fix |
 | --- | --- | --- |
 | Receipt, send-to-device and signing-key consumers refused messages they had handled | Every receipt and to-device message was sent to remote servers again every 30 s, and remote cross-signing keys were re-uploaded, forever | [#392](https://codefloe.com/pat-s/zendrite/pulls/392) |
-| A JetStream publication whose broker died before acknowledging it waited on the caller's context | Client writes stalled for 30 s after losing the stream leader; an inbound federation transaction hung indefinitely and blocked the remote server's queue | [#393](https://codefloe.com/pat-s/zendrite/pulls/393) |
+| A JetStream publication whose broker died before acknowledging it waited on the caller's context | Client writes stalled for 30 s after losing the stream leader. An inbound federation transaction hung indefinitely and blocked the remote server's queue | [#393](https://codefloe.com/pat-s/zendrite/pulls/393) |
 | A destination queue loaded its backlog unordered, after events queued since the restart | After a takeover, the remote server rejected all 53 queued events for missing `prev_events` | [#394](https://codefloe.com/pat-s/zendrite/pulls/394) |
 | Backward pagination stepped over events that share a depth | `/messages` and `prev_batch` skipped acknowledged messages whenever a late remote event forked the room at the same depth | [#395](https://codefloe.com/pat-s/zendrite/pulls/395) |
-| A Lease holder partitioned from PostgreSQL kept renewing the Lease | No standby could take over while the partition lasted; after the first fix, renewing through the drain still pushed takeover to 141.6 s with the reference workload | [#399](https://codefloe.com/pat-s/zendrite/pulls/399) |
+| A Lease holder partitioned from PostgreSQL kept renewing the Lease | No standby could take over while the partition lasted. After the first fix, renewing through the drain still pushed takeover to 141.6 s with the reference workload | [#399](https://codefloe.com/pat-s/zendrite/pulls/399) |
 | The sync and federation consumers panicked when a database write failed transiently | With the reference workload, a 3 s PostgreSQL failover crashed the leader and became a 64 s leadership change | [#397](https://codefloe.com/pat-s/zendrite/pulls/397) |
 | Transaction IDs were deduplicated only in a process-local cache | If the old owner accepted a message into the room input stream but stopped before answering, the successor applied it and the client's retry created a second event | [#404](https://codefloe.com/pat-s/zendrite/pulls/404) |
-| The federation API consumed its streams before the roomserver was wired | A successor that found a federation backlog crashed with a nil pointer on every promotion attempt; after a graceful shutdown, no candidate served for 2m50s | [#405](https://codefloe.com/pat-s/zendrite/pulls/405) |
+| The federation API consumed its streams before the roomserver was connected | A successor that found a federation backlog crashed with a nil pointer on every promotion attempt. After a graceful shutdown, no candidate served for 2m50s | [#405](https://codefloe.com/pat-s/zendrite/pulls/405) |
 | Missing-state resolution dropped the transaction's origin while backing off from it | After a takeover delivered events out of order, the remote server rejected 13 acknowledged messages instead of fetching the gap from the sender | [#406](https://codefloe.com/pat-s/zendrite/pulls/406) |
 | A candidate took a free Lease without being able to reach PostgreSQL | The restarted leader, still partitioned from the database, won the Lease back and held it through a failed 45 s fencing attempt, pushing takeover to 2m37s | [#407](https://codefloe.com/pat-s/zendrite/pulls/407) |
 | A server woke its queue for a backing-off peer at most once a minute | When that wakeup reached the successor before it was routable, the remote ignored its traffic for the rest of the minute and none of 118 remote messages arrived within 2 minutes | [#408](https://codefloe.com/pat-s/zendrite/pulls/408) |
@@ -167,29 +172,31 @@ The qualification found these defects; each is fixed in its own pull request, an
 Two observations need no code change but affect operation:
 
 - The routing layer marks a backend down after one failed 500 ms check and closes its in-flight requests.
-  A single slow probe under load did this once during setup; clients retried and succeeded, but a less aggressive `fall` would avoid it.
+  A single slow probe under load did this once during setup.
+  Clients retried and succeeded, but a less aggressive `fall` would avoid it.
 - When the Kubernetes API or fencing is unavailable, no candidate serves, by design.
   Recovery then starts when the dependency returns, and the measured times include the fault's duration.
 
 ## Limitations
 
-The harness trades fidelity for reproducibility in a few places, so these still need exercising on real infrastructure:
+The suite trades fidelity for reproducibility in a few places, so these still need testing on real infrastructure:
 
-- Every process shares one host and one clock, and partitions are emulated by proxies, not by packet loss between machines.
+- Every process shares one host and one clock, and proxies emulate partitions instead of packet loss between machines.
 - The routing layer reimplements the chart's HAProxy check rather than running HAProxy.
-- The S3 server is gofakes3, so S3 and shared-filesystem failover are not exercised.
-- The PostgreSQL operator is emulated: the harness promotes the standby, moves the service address, and relaxes synchronous commit while no standby exists.
+- The S3 server is gofakes3, so the suite doesn't exercise S3 or shared-filesystem failover.
+- The PostgreSQL operator is emulated: the suite promotes the standby, moves the service address, and relaxes synchronous commit while no standby exists.
 - Candidates restart one second after exiting, not with the kubelet's crash-loop backoff.
-- Power loss, correlated storage failure and schema migrations between versions are out of scope; the upgrade scenario uses two builds of the same code.
-- Appservice and push deliveries are not verified end to end.
+- Power loss, correlated storage failure, and schema migrations between versions are out of scope.
+  The upgrade scenario uses two builds of the same code.
+- The suite doesn't verify appservice and push deliveries end to end.
 
 ## Acceptance criteria
 
 | Criterion from #352 | Evidence |
 | --- | --- |
-| A resumed or partitioned old leader cannot perform stale authoritative work after successor promotion | Database audit, broker, media and federation attribution, and refused direct writes in the pause and partition scenarios |
+| A resumed or partitioned old leader cannot perform stale authoritative work after successor promotion | Database audit, broker, media, and federation attribution, and refused direct writes in the pause and partition scenarios |
 | All documented failover scenarios meet the safety contract and measured recovery targets | 16 scenarios at the reference timings and 3 with the reference workload, all within 120 s or suspended by design |
 | Acknowledged data and logical client transaction behavior meet the documented durability and idempotency guarantees | No lost acknowledged writes and no duplicated events in any scenario, including client retries across takeover |
-| Recovery maintains sync, media, search and federation correctness | `/sync` with existing tokens, `/messages`, to-device, receipts, media, search and federation in both directions are verified after every scenario |
-| Relevant Go race tests and standalone regressions pass | Every fix above adds regression tests and passes under `-race` against PostgreSQL and SQLite; full CI passes on each pull request |
+| Recovery maintains sync, media, search, and federation correctness | `/sync` with existing tokens, `/messages`, to-device, receipts, media, search, and federation in both directions are verified after every scenario |
+| Relevant Go race tests and standalone regressions pass | Every fix above adds regression tests and passes under `-race` against PostgreSQL and SQLite. Full CI passes on each pull request |
 | A release evidence report records configuration, observed recovery times, failures, and remaining limitations | This page |

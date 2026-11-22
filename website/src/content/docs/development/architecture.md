@@ -1,63 +1,64 @@
 ---
 title: Architecture
-description: How Zendrite and gomatrixserverlib relate to each other.
+description: How Zendrite and gomatrixserverlib divide the work.
 ---
 
-Zendrite is built on top of [gomatrixserverlib](https://codefloe.com/pat-s/gomatrixserverlib), a Go library that implements the core Matrix protocol.
-Understanding the boundary between the two is important when contributing or implementing new [MSCs](https://spec.matrix.org/proposals/).
+Zendrite uses [gomatrixserverlib](https://codefloe.com/pat-s/gomatrixserverlib), a Go library that implements the core Matrix protocol.
+Before you contribute or implement a new [MSC](https://spec.matrix.org/proposals/), learn where the boundary between the two runs.
 
 ## gomatrixserverlib (protocol layer)
 
 gomatrixserverlib is a standalone library with no knowledge of Zendrite.
 It provides the building blocks of the Matrix protocol:
 
-- **Event types and formats** — PDU interface, event versions (V1–V12), event builders
-- **Room versions** — version metadata, stability flags, format differences
-- **State resolution** — algorithms for resolving conflicting room state (V1, V2, V2.1)
-- **Event authentication** — rules for validating events against auth state
-- **Federation types** — request/response structs (`PublicRoom`, `RoomHierarchyRoom`, `RespSend`, etc.)
-- **Error codes** — Matrix spec error types (`M_FORBIDDEN`, `M_NOT_FOUND`, `M_TOO_LARGE`, etc.)
-- **Cryptographic operations** — event signing and signature verification
-- **Redaction logic** — spec-compliant event content stripping
-- **Identity types** — user IDs, room IDs, server names, sender IDs
+- **Event types and formats:** PDU interface, event versions (V1 to V12), and event builders.
+- **Room versions:** version metadata, stability flags, and format differences.
+- **State resolution:** algorithms that resolve conflicting room state (V1, V2, and V2.1).
+- **Event authentication:** rules that validate events against auth state.
+- **Federation types:** request and response structs (`PublicRoom`, `RoomHierarchyRoom`, `RespSend`, and others).
+- **Error codes:** Matrix spec error types (`M_FORBIDDEN`, `M_NOT_FOUND`, `M_TOO_LARGE`, and others).
+- **Cryptographic operations:** event signing and signature verification.
+- **Redaction logic:** spec-compliant stripping of event content.
+- **Identity types:** user IDs, room IDs, server names, and sender IDs.
 
 ## Zendrite (application layer)
 
 Zendrite is the homeserver application that uses gomatrixserverlib.
 It handles everything above the protocol layer:
 
-- **HTTP endpoints** — Client-Server API, Federation API, Admin API routing
-- **Database storage** — event persistence, state snapshots, device data
-- **Configuration** — which room version is default, which MSCs are enabled
-- **Business logic** — access control, sync, presence, push notifications
-- **MSC feature toggles** — opt-in MSCs via config (`setup/mscs/`)
+- **HTTP endpoints:** routing for the Client-Server API, Federation API, and Admin API.
+- **Database storage:** event persistence, state snapshots, and device data.
+- **Configuration:** the default room version and the enabled MSCs.
+- **Business logic:** access control, sync, presence, and push notifications.
+- **MSC feature toggles:** opt-in MSCs through config (`setup/mscs/`).
 
-## Where do MSC changes go?
+## Where MSC changes go
 
-| Change type                                                 | Where                                           |
-| ----------------------------------------------------------- | ----------------------------------------------- |
-| New error codes (e.g. `M_TOO_LARGE`)                        | gomatrixserverlib (`spec/`)                     |
-| New fields on protocol types (e.g. `PublicRoom.Encryption`) | gomatrixserverlib (`fclient/`)                  |
-| New room version definitions or state resolution changes    | gomatrixserverlib (`eventversion.go`)           |
-| New event types or content formats                          | gomatrixserverlib (`spec/`)                     |
-| New API endpoints or handlers                               | Zendrite (`clientapi/`, `federationapi/`, etc.) |
-| New server behavior or business logic                       | Zendrite                                        |
-| New configuration options                                   | Zendrite (`setup/config/`)                      |
-| New database tables or queries                              | Zendrite (`storage/`)                           |
+| Change type                                                        | Where                                           |
+| ------------------------------------------------------------------ | ----------------------------------------------- |
+| New error codes (for example `M_TOO_LARGE`)                        | gomatrixserverlib (`spec/`)                     |
+| New fields on protocol types (for example `PublicRoom.Encryption`) | gomatrixserverlib (`fclient/`)                  |
+| New room version definitions or state resolution changes           | gomatrixserverlib (`eventversion.go`)           |
+| New event types or content formats                                 | gomatrixserverlib (`spec/`)                     |
+| New API endpoints or handlers                                      | Zendrite (`clientapi/`, `federationapi/`, etc.) |
+| New server behavior or business logic                              | Zendrite                                        |
+| New configuration options                                          | Zendrite (`setup/config/`)                      |
+| New database tables or queries                                     | Zendrite (`storage/`)                           |
 
-Many MSCs require changes in **both** — protocol types in gomatrixserverlib and endpoint handlers in Zendrite.
+Many MSCs need changes in **both**: protocol types in gomatrixserverlib and endpoint handlers in Zendrite.
 
-### Example: MSC3266 (room summary)
+### MSC3266 (room summary)
 
-- **gomatrixserverlib**: adds `Encryption` and `RoomVersion` fields to `PublicRoom` struct
-- **Zendrite**: implements the `/summary` endpoint in `clientapi/routing/room_summary.go`, populates the new fields from room state
+- **gomatrixserverlib** adds the `Encryption` and `RoomVersion` fields to the `PublicRoom` struct.
+- **Zendrite** implements the `/summary` endpoint in `clientapi/routing/room_summary.go` and fills the new fields from room state.
 
-### Example: MSC2836 (threading)
+### MSC2836 (threading)
 
-- **gomatrixserverlib**: defines `MSC2836EventRelationshipsResponse` federation type
-- **Zendrite**: implements the `/event_relationships` endpoint, database tables for parent-child tracking, and the opt-in config toggle in `setup/mscs/msc2836/`
+- **gomatrixserverlib** defines the `MSC2836EventRelationshipsResponse` federation type.
+- **Zendrite** implements the `/event_relationships` endpoint, the database tables for parent-child tracking, and the opt-in config toggle in `setup/mscs/msc2836/`.
 
-## Changing gomatrixserverlib
+## Change gomatrixserverlib
 
 Zendrite depends on its own [gomatrixserverlib](https://codefloe.com/pat-s/gomatrixserverlib) module, `codefloe.com/pat-s/gomatrixserverlib`, at the version pinned in `go.mod`.
-A change that needs new protocol types lands in gomatrixserverlib first, gets a release, and is then picked up in Zendrite by bumping that version.
+To change protocol types, merge the change into gomatrixserverlib first and release it.
+Then bump that version in Zendrite's `go.mod`.

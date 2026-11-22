@@ -3,8 +3,9 @@ title: Docker Setup
 description: Installing and running Zendrite with Docker
 ---
 
-Zendrite provides an example Docker compose file in `build/docker/docker-compose.yaml`, which needs some preparation to start successfully.
-Please note that this compose file only has Postgres as a dependency, and you need to configure a [reverse proxy](/installation/planning#reverse-proxy).
+Zendrite provides an example Docker Compose file in `build/docker/docker-compose.yaml`.
+Before it starts, generate a private key and a config as described below.
+The compose file includes only PostgreSQL as a dependency, so you also need to configure a [reverse proxy](/installation/planning#reverse-proxy).
 
 Docker images are available from:
 
@@ -15,8 +16,8 @@ Docker images are available from:
 
 ### Generate a private key
 
-First we'll generate a private key, which is used to sign events.
-The following will create one in `./config`:
+Generate a private key, which Zendrite uses to sign events.
+This command creates it in `./config`:
 
 ```bash
 mkdir -p ./config
@@ -26,12 +27,12 @@ docker run --rm --entrypoint="/usr/bin/generate-keys" \
   -private-key /mnt/matrix_key.pem
 ```
 
-(**NOTE**: This only needs to be executed **once**, as you otherwise overwrite the key)
+Run this command only **once**, because running it again overwrites the key.
 
 ### Generate a config
 
-Similar to the command above, we can generate a config to be used, which will use the correct paths as specified in the example docker-compose file.
-Change `server` to your domain and `db` according to your changes to the docker-compose file (`services.postgres.environment` values):
+Generate a config that uses the paths from the example compose file.
+Set `server` to your domain, and set `db` to match the `services.postgres.environment` values in your compose file:
 
 ```bash
 mkdir -p ./config
@@ -44,11 +45,12 @@ docker run --rm --entrypoint="/bin/sh" \
     -server YourDomainHere > /mnt/zendrite.yaml"
 ```
 
-You can then change `config/zendrite.yaml` to your liking.
+Then edit `config/zendrite.yaml` to suit your installation.
+See [Configuring Zendrite](/installation/manual/configuration) for the options.
 
 ## Starting Zendrite
 
-Once you're done changing the config, you can now start up Zendrite with
+Start Zendrite:
 
 ```bash
 docker compose up

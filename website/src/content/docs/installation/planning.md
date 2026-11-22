@@ -3,45 +3,51 @@ title: Planning your installation
 description: Database choices, system requirements, and dependencies for Zendrite
 ---
 
+Before you install Zendrite, choose a database, size your server, and install the dependencies.
+Then [set up your domain name](/installation/domainname).
+
 ## Database
 
-Zendrite can run with either a PostgreSQL or a SQLite backend.
-There are considerable tradeoffs to consider:
+Zendrite stores its data in PostgreSQL or SQLite.
+Use **PostgreSQL for all production deployments**.
 
-- **PostgreSQL**: Needs to run separately to Zendrite, needs to be installed and configured separately and will use more resources over all, but will be **considerably faster** than SQLite.
-  PostgreSQL has much better write concurrency which will allow Zendrite to process more tasks in parallel.
-  This will be necessary for federated deployments to perform adequately.
+- **PostgreSQL**: runs as a separate service that you install and configure yourself.
+  It uses more resources overall, but it's **considerably faster** than SQLite.
+  PostgreSQL handles concurrent writes much better, so Zendrite can process more tasks in parallel.
+  Federated deployments need this to perform adequately.
 
-- **SQLite**: Built into Zendrite, therefore no separate database engine is necessary and is quite a bit easier to set up, but will be much slower than PostgreSQL in most cases.
-  SQLite only allows a single writer on a database at a given time, which will significantly restrict Zendrite's ability to process multiple tasks in parallel.
-
-At this time, we **recommend the PostgreSQL database engine** for all production deployments.
+- **SQLite**: built into Zendrite, so you don't install a separate database engine, and setup is easier.
+  It's usually much slower than PostgreSQL.
+  SQLite allows only one writer per database at a time, which limits how many tasks Zendrite can process in parallel.
 
 ## Requirements
 
-Zendrite will run on Linux, macOS and Windows Server.
-It should also run fine on variants of BSD such as FreeBSD and OpenBSD.
-We have not tested Zendrite on AIX, Solaris, Plan 9 or z/OS — your mileage may vary with these platforms.
+Zendrite runs on Linux, macOS, and Windows Server.
+It should also run on BSD variants such as FreeBSD and OpenBSD.
+Zendrite is untested on AIX, Solaris, Plan 9, and z/OS.
 
-It is difficult to state explicitly the amount of CPU, RAM or disk space that a Zendrite installation will need, as this varies considerably based on a number of factors.
-In particular:
+The CPU, RAM, and disk space Zendrite needs vary considerably.
+The main factors are:
 
-- The number of users using the server;
-- The number of rooms that the server is joined to — federated rooms in particular will typically use more resources than rooms with only local users;
-- **The complexity of rooms that the server is joined to** — rooms with more members coming and going will typically be of a much higher complexity.
+- The number of users on the server.
+- The number of rooms the server has joined.
+  Federated rooms typically use more resources than rooms with only local users.
+- **The complexity of the joined rooms.**
+  Rooms where many members come and go are typically much more complex.
 
-Some tasks are more expensive than others, such as joining rooms over federation, running state resolution or sending messages into very large federated rooms with lots of remote users.
-Therefore you should plan accordingly and ensure that you have enough resources available to endure spikes in CPU or RAM usage, as these may be considerably higher than the idle resource usage.
+Some tasks cost more than others, such as joining rooms over federation, running state resolution, or sending messages into large federated rooms with many remote users.
+CPU and RAM spikes during these tasks can be considerably higher than idle usage, so plan enough headroom for them.
 
-At an absolute minimum, Zendrite will expect 1GB RAM.
-For a comfortable day-to-day deployment which can participate in federated rooms for a number of local users, be prepared to assign 2-4 CPU cores and 8GB RAM — more if your room count increases.
+Zendrite needs at least 1GB RAM.
+For a comfortable day-to-day deployment where several local users take part in federated rooms, assign 2-4 CPU cores and 8GB RAM.
+Add more as your room count grows.
 
-If you are running PostgreSQL on the same machine, allow extra headroom for this too, as the database engine will also have CPU and RAM requirements of its own.
-Running too many heavy services on the same machine may result in resource starvation and processes may end up being killed by the operating system if they try to use too much memory.
+If PostgreSQL runs on the same machine, add headroom for its own CPU and RAM needs.
+Too many heavy services on one machine can starve each other of resources, and the operating system may kill processes that use too much memory.
 
 ### Saving memory
 
-If necessary for your environment you could save some RAM at the cost of greater database CPU load by disabling the cache in zendrite.yaml
+To save RAM at the cost of more database CPU load, disable the cache in `zendrite.yaml`:
 
 ```yaml
 global:
@@ -51,29 +57,32 @@ global:
 
 ## Dependencies
 
-In order to install Zendrite, you will need to satisfy the following dependencies.
+Install the following dependencies before you install Zendrite.
 
 ### Go
 
-At this time, Zendrite supports being built with Go 1.26 or later.
-We do not support building Zendrite with older versions of Go than this.
-Go 1.21 and later supports downloading newer Go versions automatically as needed.
-If you are installing Go using a package manager, you should check (by running `go version`) that you are using a suitable version before you start.
+Build Zendrite with Go 1.26 or later.
+Older Go versions are unsupported.
+Go 1.21 and later download newer Go versions automatically as needed.
+If you install Go with a package manager, run `go version` to check the version before you start.
 
 ### PostgreSQL
 
-If using the PostgreSQL database engine, you should install PostgreSQL 17 or later.
+If you use PostgreSQL, install PostgreSQL 17 or later.
 
 ### NATS Server
 
-Zendrite comes with a built-in [NATS Server](https://github.com/nats-io/nats-server) and therefore does not need this to be manually installed.
+Zendrite includes a built-in [NATS Server](https://github.com/nats-io/nats-server), so you don't need to install one.
 
 ### Reverse proxy
 
-A reverse proxy such as [Caddy](https://caddyserver.com), [NGINX](https://www.nginx.com) or [HAProxy](http://www.haproxy.org) is useful for deployments.
-Configuring these is not covered in this documentation, but please be aware default request timeouts and POST payload limits may need to be disabled or increased. Matrix clients expect to control when (or if) a request times out, and homeservers expect to control the media file size limits. Caddy has no timeouts or payload limits by default.
+Most deployments use a reverse proxy such as [Caddy](https://caddyserver.com), [NGINX](https://www.nginx.com), or [HAProxy](http://www.haproxy.org).
+This documentation doesn't cover proxy configuration.
+You may need to disable or raise the proxy's default request timeouts and POST payload limits.
+Matrix clients expect to control when, or if, a request times out, and homeservers expect to control media file size limits.
+Caddy has no timeouts or payload limits by default.
 
 ### Windows
 
-Finally, if you want to build Zendrite on Windows, you will need `gcc` in the path.
-The best way to achieve this is by installing and building Zendrite under [MinGW-w64](https://www.mingw-w64.org/).
+To build Zendrite on Windows, you need `gcc` in the path.
+The best way to get it is to install and build Zendrite under [MinGW-w64](https://www.mingw-w64.org/).

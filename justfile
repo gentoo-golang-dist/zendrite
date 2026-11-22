@@ -16,6 +16,11 @@ fmt: install-dev-deps
 		golangci-lint run --fix
 		gci write --skip-vendor --skip-generated -s standard -s default -s "prefix(codefloe.com/pat-s/zendrite)" --custom-order .
 
+# Lint the website docs for spelling, grammar, and style with Vale
+vale *paths="website/src/content/docs":
+    [ -d .vale/Microsoft ] || vale sync
+    vale {{paths}}
+
 # Run golangci-lint
 lint:
     prek run golangci-lint --all-files

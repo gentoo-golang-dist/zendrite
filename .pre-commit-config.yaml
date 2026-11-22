@@ -44,11 +44,19 @@ repos:
         args: [--strict, -c=.yamllint.yaml]
   - repo: local
     hooks:
+      - id: vale
+        name: vale
+        # Run `vale sync` once to download the Microsoft package into .vale/.
+        entry: vale
+        language: system
+        files: ^website/src/content/docs/.*\.mdx?$
       - id: yaml-file-extension
         name: Check if YAML files has *.yaml extension.
         entry: YAML filenames must have .yaml extension.
         language: fail
         files: .yml$
+        # Vale only loads styles named *.yml.
+        exclude: ^\.vale/
   - repo: https://github.com/editorconfig-checker/editorconfig-checker
     rev: v4.0.2
     hooks:

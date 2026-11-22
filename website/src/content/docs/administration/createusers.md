@@ -1,37 +1,38 @@
 ---
 title: Creating user accounts
-description: Methods for creating user accounts on your Zendrite server
+description: Create user accounts on your Zendrite server
 ---
 
-User accounts can be created on a Zendrite instance in a number of ways.
+Create accounts with the `create-account` tool or the shared secret registration endpoint.
 
 ## From the command line
 
-The `create-account` tool is built in the `bin` folder when [building](/installation/manual/build) Zendrite.
+[Building](/installation/manual/build) Zendrite puts the `create-account` tool in the `bin` folder.
+The tool reads `zendrite.yaml` to connect to a **running** Zendrite instance.
+It needs [shared secret registration](#using-shared-secret-registration) enabled.
 
-It uses the `zendrite.yaml` configuration file to connect to a **running** Zendrite instance and requires shared secret registration to be enabled as explained below.
-
-An example of using `create-account` to create a **normal account**:
+Create a **normal account**:
 
 ```bash
 ./bin/create-account -config /path/to/zendrite.yaml -username USERNAME
 ```
 
-You will be prompted to enter a new password for the new account.
+The tool prompts you for the new account's password.
 
-To create a new **admin account**, add the `-admin` flag:
+Add the `-admin` flag to create an **admin account**:
 
 ```bash
 ./bin/create-account -config /path/to/zendrite.yaml -username USERNAME -admin
 ```
 
-By default `create-account` uses `http://localhost:8008` to connect to Zendrite, this can be overwritten using the `-url` flag:
+`create-account` connects to `http://localhost:8008` by default.
+Set a different address with the `-url` flag:
 
 ```bash
 ./bin/create-account -config /path/to/zendrite.yaml -username USERNAME -url https://localhost:8448
 ```
 
-An example of using `create-account` when running in **Docker**, having found the `CONTAINERNAME` from `docker ps`:
+In **Docker**, find the `CONTAINERNAME` with `docker ps`, then run the tool inside the container:
 
 ```bash
 docker exec -it CONTAINERNAME /usr/bin/create-account -config /path/to/zendrite.yaml -username USERNAME
@@ -45,8 +46,7 @@ docker exec -it CONTAINERNAME /usr/bin/create-account -config /path/to/zendrite.
 
 Zendrite supports the Synapse-compatible shared secret registration endpoint.
 
-To enable shared secret registration, you must first enable it in the `zendrite.yaml` configuration file by specifying a shared secret.
-In the `client_api` section of the config, enter a new secret into the `registration_shared_secret` field:
+Enable it by setting a secret in the `registration_shared_secret` field of the `client_api` section in `zendrite.yaml`:
 
 ```yaml
 client_api:
@@ -54,7 +54,7 @@ client_api:
   registration_shared_secret: ""
 ```
 
-You can then use the `/_synapse/admin/v1/register` endpoint as per the [Synapse documentation](https://element-hq.github.io/synapse/latest/admin_api/register_api.html).
+Then call the `/_synapse/admin/v1/register` endpoint as described in the [Synapse documentation](https://element-hq.github.io/synapse/latest/admin_api/register_api.html).
 
-Shared secret registration is only enabled once a secret is configured.
-To disable shared secret registration again, remove the secret from the configuration file.
+The endpoint stays disabled until you set a secret.
+Remove the secret from the config to disable it again.
