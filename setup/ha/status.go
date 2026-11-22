@@ -52,7 +52,16 @@ type Status struct {
 	// preparation is set once a standby checks whether it may take over.
 	// Until then, and without HA preparation at all, a standby is healthy.
 	preparation *preparation
+	// missedPreparations counts consecutive failed checks that were not
+	// recorded because the standby was prepared before them.
+	missedPreparations int
 }
+
+// preparationGrace is how many consecutive failed checks a prepared standby
+// tolerates before it reports that it cannot take over. A single check that
+// times out on a short DNS or network outage would otherwise make the
+// standby unhealthy until the next check, which follows right after it.
+const preparationGrace = 1
 
 // preparation is a standby's latest check of whether it may take over.
 type preparation struct {
@@ -247,11 +256,23 @@ func (s *Status) ExpectPreparation(version string, contract Contract) {
 // its build. A standby that may not take over is not healthy, so a rollout
 // that replaces the running build with an incompatible one stalls with the
 // old candidates still serving, instead of discovering the problem at
-// takeover.
+// takeover. A prepared standby that fails to reach the database keeps its
+// previous result for preparationGrace checks, so a short outage is not
+// reported.
 func (s *Status) Prepared(version string, contract Contract, recorded Recorded, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	previous := s.preparation
+	// Only a failure to reach the database is tolerated: an incompatible
+	// build is not transient, and a standby that was never prepared has
+	// nothing to keep.
+	transient := err != nil && !errors.Is(err, ErrIncompatibleBuild) && !errors.Is(err, errPreparationPending)
+	if transient && previous != nil && previous.err == nil && s.missedPreparations < preparationGrace {
+		s.missedPreparations++
+		logrus.WithError(err).Debug("HA standby check failed; keeping the previous result until the next check")
+		return
+	}
+	s.missedPreparations = 0
 	s.preparation = &preparation{version: version, contract: contract, recorded: recorded, err: err}
 	compatible := 1.0
 	if errors.Is(err, ErrIncompatibleBuild) {

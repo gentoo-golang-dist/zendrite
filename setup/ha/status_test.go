@@ -349,10 +349,26 @@ func TestStandbyPreparation(t *testing.T) {
 	require.Contains(t, body.Upgrade.Reason, "offline upgrade")
 	require.NotContains(t, recorder.Body.String(), "deployment\"", "the fingerprint is not reported")
 
-	status.Prepared("v3", contract, recorded, errors.New("connect to the HA database: refused"))
+	unreachable := errors.New("connect to the HA database: refused")
+	status.Prepared("v3", contract, recorded, unreachable)
 	require.False(t, status.Healthy(), "a standby that cannot reach the database cannot take over")
 
 	recorded.Level, recorded.Floor = 3, 3
 	status.Prepared("v3", contract, recorded, nil)
 	require.True(t, status.Healthy())
+
+	status.Prepared("v3", contract, recorded, unreachable)
+	require.True(t, status.Healthy(), "a prepared standby tolerates one failed check")
+	status.Prepared("v3", contract, recorded, nil)
+	require.True(t, status.Healthy())
+	status.Prepared("v3", contract, recorded, unreachable)
+	require.True(t, status.Healthy(), "a successful check resets the tolerance")
+	status.Prepared("v3", contract, recorded, unreachable)
+	require.False(t, status.Healthy(), "a second consecutive failure is reported")
+
+	status.Prepared("v3", contract, recorded, nil)
+	require.True(t, status.Healthy())
+	recorded.Level, recorded.Floor = 1, 1
+	status.Prepared("v3", contract, recorded, contract.Admit("deployment", recorded))
+	require.False(t, status.Healthy(), "an incompatible build is reported at once")
 }
