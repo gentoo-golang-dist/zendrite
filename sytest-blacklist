@@ -1,16 +1,9 @@
 # Blacklisted due to https://github.com/matrix-org/matrix-spec/issues/942
 The only membership state included in a gapped incremental sync is for senders in the timeline
 
-# Flakey
-AS-ghosted users can use rooms themselves
-AS-ghosted users can use rooms via AS
-Events in rooms with AS-hosted room aliases are sent to AS server
-Inviting an AS-hosted user asks the AS server
-Accesing an AS-hosted room alias asks the AS server
-If user leaves room, remote user changes device and rejoins we see update in /sync and /keys/changes
-New federated private chats get full presence information (SYN-115)
-
-# Tests Synapse specific behavior
+# Zendrite answers M_NOT_FOUND here, as the spec allows for /state_ids, and both pass with --room-version 10.
+# In room version 12 (the Sytest default) Sytest's redaction keeps origin and prev_state, which room version 11 dropped.
+# Zendrite's events still carry both fields, so Sytest computes the wrong event IDs and fails before the request.
 /state returns M_NOT_FOUND for an outlier
 /state_ids returns M_NOT_FOUND for an outlier
 

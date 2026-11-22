@@ -341,9 +341,39 @@ func SendInvite(
 		}
 	}
 
+	askAppServiceForInvitee(req.Context(), body.UserID, cfg, profileAPI, asAPI)
+
 	// We already received the return value, so no need to check for an error here.
 	response, _ := sendInvite(req.Context(), device, roomID, body.UserID, body.Reason, cfg, rsAPI, evTime)
 	return response
+}
+
+// askAppServiceForInvitee asks the application services whether a local
+// invitee the server has no profile for exists, before the invite is sent.
+// The application service API says a homeserver queries
+// /_matrix/app/v1/users/{userId} when it sees an unknown user in an
+// application service's namespace, such as a room invite, which gives the
+// application service the chance to register the user first.
+// The invite goes ahead whatever the answer, as it does for any other
+// unknown local user.
+func askAppServiceForInvitee(
+	ctx context.Context,
+	invitee string,
+	cfg *config.ClientAPI,
+	profileAPI userapi.ProfileAPI,
+	asAPI appserviceAPI.AppServiceInternalAPI,
+) {
+	if asAPI == nil || profileAPI == nil {
+		return
+	}
+	_, serverName, err := gomatrixserverlib.SplitID('@', invitee)
+	if err != nil || !cfg.Matrix.IsLocalServerName(serverName) {
+		return
+	}
+	if _, err = appserviceAPI.RetrieveUserProfile(ctx, invitee, asAPI, profileAPI); err != nil &&
+		!errors.Is(err, appserviceAPI.ErrProfileNotExists) {
+		util.GetLogger(ctx).WithError(err).WithField("invitee", invitee).Warn("Failed to ask application services about the invitee")
+	}
 }
 
 // sendInvite sends an invitation to a user. Returns a JSONResponse and an error.
