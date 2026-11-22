@@ -34,12 +34,14 @@ func (s stateByTuple) GetState(_ context.Context, _ spec.RoomID, wanted []gomatr
 }
 
 // TestInviteStrippedState checks that an invite's stripped state includes
-// the topic and the inviter's membership (MSC4319), and no other member.
+// the topic, the guest access rule and the inviter's membership (MSC4319),
+// and no other member.
 func TestInviteStrippedState(t *testing.T) {
 	alice := test.NewUser(t)
 	bob := test.NewUser(t)
 	room := test.NewRoom(t, alice)
 	room.CreateAndInsert(t, alice, spec.MRoomTopic, map[string]any{"topic": "Lunch"}, test.WithStateKey(""))
+	room.CreateAndInsert(t, alice, spec.MRoomGuestAccess, map[string]any{"guest_access": "can_join"}, test.WithStateKey(""))
 	room.CreateAndInsert(t, bob, spec.MRoomMember, map[string]any{"membership": spec.Join}, test.WithStateKey(bob.ID))
 
 	querier := stateByTuple{events: map[gomatrixserverlib.StateKeyTuple]gomatrixserverlib.PDU{}}
@@ -62,5 +64,6 @@ func TestInviteStrippedState(t *testing.T) {
 	}
 	assert.True(t, types[spec.MRoomCreate])
 	assert.True(t, types[spec.MRoomTopic], "the topic is part of the stripped state")
+	assert.True(t, types[spec.MRoomGuestAccess], "the guest access rule is part of the stripped state")
 	assert.Equal(t, map[string]bool{alice.ID: true}, members, "the inviter's membership, and only it")
 }

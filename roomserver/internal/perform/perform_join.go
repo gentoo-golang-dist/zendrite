@@ -274,8 +274,12 @@ func (r *Joiner) performJoinRoomByID(
 	// and we aren't in the room, or our copy of the room has not seen the
 	// invite yet: /invite can arrive before the inviting server's /send
 	// carrying the same event, and a local join would then be refused.
+	var pendingInvite gomatrixserverlib.PDU
 	if checkInvitePending {
 		isInvitePending, inviteSender, _, inviteEvent, inviteErr := helpers.IsInvitePending(ctx, r.DB, req.RoomIDOrAlias, senderID)
+		if inviteErr == nil && isInvitePending {
+			pendingInvite = inviteEvent
+		}
 		if inviteErr == nil && isInvitePending && (!serverInRoom || !r.stateHasInvite(ctx, req.RoomIDOrAlias, *userID)) {
 			inviter, queryErr := r.RSAPI.QueryUserIDForSender(ctx, *roomID, inviteSender)
 			if queryErr != nil {
@@ -330,11 +334,20 @@ func (r *Joiner) performJoinRoomByID(
 		var guestAccessEvent *types.HeaderedEvent
 		guestAccess := "forbidden"
 		guestAccessEvent, err = r.DB.GetStateEvent(ctx, req.RoomIDOrAlias, spec.MRoomGuestAccess, "")
-		if (err != nil && !errors.Is(err, sql.ErrNoRows)) || guestAccessEvent == nil {
-			logrus.WithError(err).Warn("unable to get m.room.guest_access event, defaulting to 'forbidden'")
+		strippedAccess, inStrippedState := "", false
+		if !serverInRoom && pendingInvite != nil {
+			// This server is not in the room, so it has no state to check.
+			// The invite's stripped state is all it knows about the room,
+			// so use the m.room.guest_access event in it, if it has one.
+			strippedAccess, inStrippedState = strippedGuestAccess(pendingInvite)
 		}
-		if guestAccessEvent != nil {
+		switch {
+		case guestAccessEvent != nil:
 			guestAccess = gjson.GetBytes(guestAccessEvent.Content(), "guest_access").String()
+		case inStrippedState:
+			guestAccess = strippedAccess
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			logrus.WithError(err).Warn("unable to get m.room.guest_access event, defaulting to 'forbidden'")
 		}
 
 		// Servers MUST only allow guest users to join rooms if the m.room.guest_access state event
@@ -550,6 +563,18 @@ func (r *Joiner) stateHasInvite(ctx context.Context, roomID string, userID spec.
 		return false
 	}
 	return res.Membership == spec.Invite
+}
+
+// strippedGuestAccess returns the guest_access value of the
+// m.room.guest_access event in an invite's stripped state, and whether the
+// stripped state has one.
+func strippedGuestAccess(invite gomatrixserverlib.PDU) (string, bool) {
+	for _, entry := range gjson.GetBytes(invite.Unsigned(), "invite_room_state").Array() {
+		if entry.Get("type").Str == spec.MRoomGuestAccess && entry.Get("state_key").Str == "" {
+			return entry.Get("content.guest_access").Str, true
+		}
+	}
+	return "", false
 }
 
 // otherServersInRoom lists the other servers joined to a room.

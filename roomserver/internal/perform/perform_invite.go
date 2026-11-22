@@ -287,8 +287,10 @@ func (r *Inviter) PerformInvite(
 
 // inviteStrippedState returns the stripped state sent with an invite: the
 // state gomatrixserverlib.GenerateStrippedState includes, the topic, which
-// the spec recommends too, and the inviter's membership, so that the invitee
-// can show who invited them (MSC4319).
+// the spec recommends too, the guest access rule, so that a guest invited
+// from another server can be let in before this server has the room's state,
+// and the inviter's membership, so that the invitee can show who invited
+// them (MSC4319).
 func inviteStrippedState(ctx context.Context, querier gomatrixserverlib.StateQuerier, roomID spec.RoomID, inviter spec.SenderID) ([]gomatrixserverlib.InviteStrippedState, error) {
 	wanted := []gomatrixserverlib.StateKeyTuple{
 		{EventType: spec.MRoomName},
@@ -298,6 +300,7 @@ func inviteStrippedState(ctx context.Context, querier gomatrixserverlib.StateQue
 		{EventType: spec.MRoomEncryption},
 		{EventType: spec.MRoomCreate},
 		{EventType: spec.MRoomTopic},
+		{EventType: spec.MRoomGuestAccess},
 		{EventType: spec.MRoomMember, StateKey: string(inviter)},
 	}
 	events, err := querier.GetState(ctx, roomID, wanted)
