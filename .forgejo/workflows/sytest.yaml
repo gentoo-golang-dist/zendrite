@@ -1,0 +1,48 @@
+name: Sytest
+
+# A selection of https://github.com/matrix-org/sytest, the test files whose
+# tests all pass, which keeps the entries taken off sytest-blacklist passing.
+# See build/scripts/sytest.sh.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'sytest-blacklist'
+      - 'build/scripts/Sytest.Dockerfile'
+      - 'build/scripts/sytest*.sh'
+      - '.forgejo/workflows/sytest.yaml'
+  workflow_dispatch:
+
+# No concurrency group, see zendrite.yaml.
+
+jobs:
+  sytest:
+    name: Sytest (${{ matrix.backend }})
+    runs-on: docker
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - sqlite
+          - postgres
+    env:
+      # Sytest commit on its develop branch.
+      SYTEST_REF: 2ba2e5f665eb0917e741125a5ef66b0fe928b4f8
+    steps:
+      - name: Install runner dependencies
+        run: apk add --no-cache bash git nodejs docker-cli-buildx
+      - uses: actions/checkout@v7
+      - name: Run Sytest
+        run: build/scripts/sytest.sh ${{ matrix.backend }}
+      - name: Upload results
+        if: ${{ !cancelled() }}
+        uses: forgejo/upload-artifact@v5
+        with:
+          name: sytest-${{ matrix.backend }}
+          path: .sytest/${{ matrix.backend }}

@@ -78,6 +78,7 @@ export default defineConfig({
             { label: 'Profiling', slug: 'development/profiling' },
             { label: 'Coverage', slug: 'development/coverage' },
             { label: 'Complement', slug: 'development/complement' },
+            { label: 'Sytest', slug: 'development/sytest' },
             { label: 'HA qualification', slug: 'development/ha-qualification' },
             { label: 'HA qualification report', slug: 'development/ha-qualification-report' },
           ],

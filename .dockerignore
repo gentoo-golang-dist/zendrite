@@ -12,6 +12,7 @@ cover.out
 .zendrite-dev
 complement
 .complement
+.sytest
 website
 helm
 node_modules

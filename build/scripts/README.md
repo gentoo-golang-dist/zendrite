@@ -14,3 +14,4 @@ Linting does not use `--fix` or back up and overwrite module files.
 Set `GOGC` to control garbage collection during linting if needed.
 
 Run `build/scripts/complement.sh <sqlite|postgres> [pr|full]` to run the Complement conformance tests as CI does; see the Complement page of the development docs.
+Run `build/scripts/sytest.sh <sqlite|postgres> [test file...]` to run the Sytest files CI runs, or others; see the Sytest page of the development docs.

@@ -66,6 +66,8 @@ test/wasm/node_modules
 /complement/
 # Results of build/scripts/complement.sh
 /.complement/
+# Results of build/scripts/sytest.sh
+/.sytest/
 
 media_store/
 build
