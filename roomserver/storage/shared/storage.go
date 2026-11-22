@@ -2944,6 +2944,13 @@ func (d *Database) EventSentToOutput(ctx context.Context, eventNID types.EventNI
 	return d.EventsTable.SelectEventSentToOutput(ctx, nil, eventNID)
 }
 
+// UnvalidateRedaction implements storage.RoomDatabase.
+func (d *Database) UnvalidateRedaction(ctx context.Context, redactionEventID string) error {
+	return d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+		return d.RedactionsTable.MarkRedactionValidated(ctx, txn, redactionEventID, false)
+	})
+}
+
 // ExpireClientTransactions implements storage.RoomDatabase.
 func (d *Database) ExpireClientTransactions(ctx context.Context, before time.Time) (removed int64, err error) {
 	err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {

@@ -2104,6 +2104,9 @@ type outputRecorder struct {
 	mu        sync.Mutex
 	failAfter bool
 	published []string
+	// redacted lists the events that OutputTypeRedactedEvent outputs told
+	// consumers to redact.
+	redacted []string
 }
 
 func (o *outputRecorder) PublishMsg(msg *nats.Msg, opts ...nats.PubOpt) (*nats.PubAck, error) {
@@ -2119,6 +2122,9 @@ func (o *outputRecorder) PublishMsg(msg *nats.Msg, opts ...nats.PubOpt) (*nats.P
 	defer o.mu.Unlock()
 	if output.NewRoomEvent != nil {
 		o.published = append(o.published, output.NewRoomEvent.Event.EventID())
+	}
+	if output.RedactedEvent != nil {
+		o.redacted = append(o.redacted, output.RedactedEvent.RedactedEventID)
 	}
 	if o.failAfter {
 		o.failAfter = false
@@ -2180,6 +2186,76 @@ func TestTransactionNotRecordedWhenOutputFails(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []string{eventID}, output.publishedEvents(), "the retry was answered with an event that was never published")
 	})
+}
+
+// redactedEvents returns the events that consumers were told to redact.
+func (o *outputRecorder) redactedEvents() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Clone(o.redacted)
+}
+
+// A redaction that the roomserver applied but whose output events could not
+// be published, for example because the broker was failing over, must not
+// count as done: consumers never learnt of it, so clients still see the event.
+// The next MSC4194 request must find the event and redact it, and the client's
+// retry must still publish the redaction.
+func TestRedactionAppliedAgainWhenOutputFails(t *testing.T) {
+	alice := test.NewUser(t)
+	ctx := context.Background()
+
+	for name, redactAgain := range map[string]func(t *testing.T, rsAPI api.RoomserverInternalAPI, room *test.Room, message *types.HeaderedEvent){
+		"retried transaction": func(t *testing.T, rsAPI api.RoomserverInternalAPI, room *test.Room, message *types.HeaderedEvent) {
+			retry := room.CreateEvent(t, alice, spec.MRoomRedaction, map[string]any{}, test.WithRedacts(message.EventID()))
+			_, err := api.SendEventForTransaction(ctx, rsAPI, retry, "test", "test", "test", &api.TransactionID{SessionID: 1, TransactionID: "txn-1"})
+			require.NoError(t, err)
+		},
+		"new redaction": func(t *testing.T, rsAPI api.RoomserverInternalAPI, room *test.Room, message *types.HeaderedEvent) {
+			// MSC4194 looks for the sender's events that are not redacted yet.
+			validRoomID, err := spec.NewRoomID(room.ID)
+			require.NoError(t, err)
+			events, err := rsAPI.QueryUnredactedEventsBySender(ctx, *validRoomID, spec.SenderID(alice.ID), 10)
+			require.NoError(t, err)
+			require.True(t, slices.ContainsFunc(events, func(e types.SenderEvent) bool { return e.EventID == message.EventID() }),
+				"MSC4194 skips an event whose redaction was never published")
+
+			again := room.CreateEvent(t, alice, spec.MRoomRedaction, map[string]any{}, test.WithRedacts(message.EventID()))
+			_, err = api.SendEventForTransaction(ctx, rsAPI, again, "test", "test", "test", nil)
+			require.NoError(t, err)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+				room := test.NewRoom(t, alice)
+				cfg, processCtx, close := testrig.CreateConfig(t, dbType)
+				defer close()
+				caches := caching.NewRistrettoCache(128*1024*1024, time.Hour, caching.DisableMetrics)
+				natsInstance := jetstream.NATSInstance{}
+				cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+				rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+				rsAPI.SetFederationAPI(nil, nil)
+				message := room.CreateAndInsert(t, alice, "m.room.message", map[string]any{"body": "spam"})
+				require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
+
+				internalAPI, ok := rsAPI.(*rsinternal.RoomserverInternalAPI)
+				require.True(t, ok)
+				producer := internalAPI.OutputProducer
+				output := &outputRecorder{JetStreamContext: producer.JetStream}
+				producer.JetStream = output
+				topic := producer.Topic
+				// No stream binds this subject, so publishing the output fails.
+				producer.Topic = "nowhere"
+				first := room.CreateEvent(t, alice, spec.MRoomRedaction, map[string]any{}, test.WithRedacts(message.EventID()))
+				_, err := api.SendEventForTransaction(ctx, rsAPI, first, "test", "test", "test", &api.TransactionID{SessionID: 1, TransactionID: "txn-1"})
+				producer.Topic = topic
+				require.Error(t, err, "the output events could not be published")
+				require.Empty(t, output.redactedEvents())
+
+				redactAgain(t, rsAPI, room, message)
+				require.Equal(t, []string{message.EventID()}, output.redactedEvents(), "the redaction was not published")
+			})
+		})
+	}
 }
 
 // A client transaction whose output events were published but whose database

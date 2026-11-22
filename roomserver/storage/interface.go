@@ -264,6 +264,7 @@ type Database interface {
 	ClientTransactionEventID(ctx context.Context, roomID, senderID string, sessionID int64, transactionID string) (string, error)
 	StoreClientTransaction(ctx context.Context, roomID, senderID string, sessionID int64, transactionID, eventID string) error
 	EventSentToOutput(ctx context.Context, eventNID types.EventNID) (bool, error)
+	UnvalidateRedaction(ctx context.Context, redactionEventID string) error
 	ExpireClientTransactions(ctx context.Context, before time.Time) (int64, error)
 	StoreAnnotation(ctx context.Context, roomInfo *types.RoomInfo, event gomatrixserverlib.PDU) error
 	// AnnotationExists reports whether the sender has an unredacted annotation
@@ -424,6 +425,10 @@ type RoomDatabase interface {
 	// EventSentToOutput reports whether the event's output events were
 	// published and the room updated with it.
 	EventSentToOutput(ctx context.Context, eventNID types.EventNID) (bool, error)
+	// UnvalidateRedaction marks a redaction as not applied, for one whose
+	// output events could not be published, so that MSC4194 offers the
+	// event it covers for redaction again.
+	UnvalidateRedaction(ctx context.Context, redactionEventID string) error
 	// ExpireClientTransactions forgets transactions recorded before the given time.
 	ExpireClientTransactions(ctx context.Context, before time.Time) (int64, error)
 	// ExpireRedactedContent forgets the content of events redacted longer

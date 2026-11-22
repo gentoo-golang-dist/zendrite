@@ -1427,6 +1427,7 @@ MSC4194 is qualified for active-passive HA.
 Each redaction is a roomserver write to the global database, and nothing stays in memory between requests.
 When the owner changes during a request, the redactions already made stay, and the client's next request continues from the newest unredacted event.
 If the owner made a redaction but its answer was lost, the retried request may redact a few events once more, which is harmless.
+A redaction that the roomserver applied but could not publish, for example while the message broker fails over, does not count: the client's next request redacts that event again, so that clients see it redacted.
 
 ### MSC4263 (key queries for users who share a room)
 

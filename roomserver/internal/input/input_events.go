@@ -720,6 +720,20 @@ func (r *Inputer) processRoomEvent(
 			redactedEventID = redactedEvent.EventID()
 		}
 	}
+	// A redaction applied above counts as done from now on, so MSC4194 no
+	// longer offers the event it covers for redaction. If its output events
+	// are not published, clients never see it redacted, so it is marked as
+	// not applied again, and the next MSC4194 request redacts the event.
+	unpublished := func(err error) error {
+		if redactedEventID == "" {
+			return err
+		}
+		if uerr := r.DB.UnvalidateRedaction(context.WithoutCancel(ctx), redactionEvent.EventID()); uerr != nil {
+			logger.WithError(uerr).WithField("redacted_event_id", redactedEventID).
+				Error("Failed to mark an unpublished redaction as not applied")
+		}
+		return err
+	}
 
 	// We stop here if the event is rejected: We've stored it but won't update
 	// forward extremities or notify downstream components about it.
@@ -787,7 +801,7 @@ func (r *Inputer) processRoomEvent(
 				input.TransactionID.SessionID, input.TransactionID.TransactionID, event.EventID(),
 			); err != nil {
 				// Nothing is published yet: the retry stores a new event.
-				return fmt.Errorf("r.DB.StoreClientTransaction: %w", err)
+				return unpublished(fmt.Errorf("r.DB.StoreClientTransaction: %w", err))
 			}
 		}
 		// State fetched to bridge a gap is merged like any other state.
@@ -803,7 +817,7 @@ func (r *Inputer) processRoomEvent(
 			historyVisibility,   // the history visibility before the event
 		)
 		if err != nil {
-			return fmt.Errorf("r.updateLatestEvents: %w", err)
+			return unpublished(fmt.Errorf("r.updateLatestEvents: %w", err))
 		}
 		if localLeftJoin {
 			r.ScheduleAutoPurgeIfEmpty(ctx, roomInfo)
@@ -819,7 +833,7 @@ func (r *Inputer) processRoomEvent(
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("r.WriteOutputEvents (old): %w", err)
+			return unpublished(fmt.Errorf("r.WriteOutputEvents (old): %w", err))
 		}
 	}
 
@@ -872,7 +886,7 @@ func (r *Inputer) processRoomEvent(
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("r.WriteOutputEvents (redactions): %w", err)
+			return unpublished(fmt.Errorf("r.WriteOutputEvents (redactions): %w", err))
 		}
 	}
 
