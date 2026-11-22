@@ -5,7 +5,7 @@ import starlightThemeNova from 'starlight-theme-nova';
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://zendrite.pat-s.me',
+  site: 'https://docs.zendrite.xyz',
   integrations: [
     starlight({
       customCss: ['./src/styles/custom.css'],

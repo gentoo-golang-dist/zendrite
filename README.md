@@ -16,7 +16,7 @@ Chat about Zendrite happens in the [#matrix:zendrite.xyz](https://matrix.to/#/#m
 
 ## Getting Started
 
-See the [documentation site](https://zendrite.pat-s.me) for installation, administration, and development guides.
+See the [documentation site](https://docs.zendrite.xyz) for installation, administration, and development guides.
 
 ## Downloads
 
@@ -29,7 +29,7 @@ The first public release of this fork is v0.15.3.
 
 ## Migrating from Dendrite
 
-If you are upgrading from an existing Dendrite installation, see the [migration guide](https://zendrite.pat-s.me/administration/migration-from-dendrite/) for details on config, API endpoint, and JetStream changes.
+If you are upgrading from an existing Dendrite installation, see the [migration guide](https://docs.zendrite.xyz/administration/migration-from-dendrite/) for details on config, API endpoint, and JetStream changes.
 
 ## License
 

@@ -121,7 +121,7 @@ website-links:
     lychee \
         --root-dir "$(pwd)/dist" \
         --exclude-path dist/pagefind \
-        --exclude '^https://zendrite\.pat-s\.me/404/$' \
+        --exclude '^https://docs\.zendrite\.xyz/' \
         'dist/**/*.html'
 
 # Regenerate the repo avatars plus the Matrix space and room avatars and space banner from the logo SVG

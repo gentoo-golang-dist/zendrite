@@ -90,7 +90,7 @@ jobs:
           args: >-
             --root-dir ${{ github.workspace }}/dist
             --exclude-path ${{ github.workspace }}/dist/pagefind
-            --exclude '^https://zendrite\.pat-s\.me/'
+            --exclude '^https://docs\.zendrite\.xyz/'
             --no-progress
             '${{ github.workspace }}/dist/**/*.html'
           fail: true
