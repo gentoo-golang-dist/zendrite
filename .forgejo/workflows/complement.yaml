@@ -34,7 +34,7 @@ jobs:
           - postgres
     env:
       # Complement commit; Renovate keeps it on the tip of main (renovate.json).
-      COMPLEMENT_REF: a41aab8d8ca74d83946aa9e601a256355ef541ae
+      COMPLEMENT_REF: 2858e44b4fcd4a13b8dfe8c15056515cc76db34a
       MODE: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'pr' }}
     steps:
       - name: Install runner dependencies
