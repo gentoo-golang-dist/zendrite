@@ -65,6 +65,11 @@ Set `max_payload: 8MB` in the NATS server configuration to match the embedded se
 Room events include their state delta, so joins to large rooms can exceed the 1 MiB NATS default, and those events then fail to publish.
 Zendrite logs a warning at startup when the server advertises a smaller limit.
 
+The roomserver keeps a NATS consumer for every room that saw activity in the last day.
+Zendrite gives its streams their own consumer limit, so the 1000 consumer default of NATS Server 2.15 and later doesn't apply to them.
+A consumer limit on the NATS account still applies: keep it unset, or above the number of rooms active on a busy day.
+Zendrite logs a warning at startup when the account limits consumers.
+
 ### Authenticating to NATS
 
 If your NATS deployment requires authentication, Zendrite supports the following methods:

@@ -374,6 +374,47 @@ func (w *worker) subscribe(ctx context.Context) error {
 	return nil
 }
 
+// errConsumerLimit is returned to synchronous callers whose input cannot be
+// processed because the broker will not create the room's consumer.
+var errConsumerLimit = errors.New("the roomserver cannot process events for this room: the NATS consumer limit is reached; " +
+	"raise default_max_consumers or the account's consumer limit on the NATS server")
+
+// failHeldSyncInputs answers the synchronous inputs held for this room with
+// an error once the broker refuses the room's consumer for its consumer
+// limit. That refusal persists until other rooms' consumers expire, so a
+// caller such as createRoom would otherwise wait out its whole timeout and
+// fail without a reason. Their announcements are acknowledged, which lets the
+// stream discard events the caller has been told failed; asynchronous inputs,
+// such as federated events, stay held and are retried. It reports whether no
+// announcement is left held, and must only be called by the worker's
+// goroutine.
+func (w *worker) failHeldSyncInputs(cause error) bool {
+	if !w.ownedForAck() {
+		return false
+	}
+	w.Lock()
+	defer w.Unlock()
+	for seq, announcement := range w.announcements {
+		replyTo := announcement.Header.Get("sync")
+		if replyTo == "" {
+			continue
+		}
+		reply := &nats.Msg{Subject: replyTo, Data: []byte(errConsumerLimit.Error()), Header: nats.Header{}}
+		if err := w.r.NATSClient.PublishMsg(reply); err != nil {
+			logrus.WithError(err).WithField("room_id", w.roomID).Warn("Roomserver failed to respond for sync event")
+			continue
+		}
+		_ = announcement.Ack()
+		delete(w.announcements, seq)
+		roomserverInputBackpressure.With(prometheus.Labels{"room_id": w.roomID}).Dec()
+	}
+	if len(w.announcements) > 0 {
+		return false
+	}
+	w.cancel(fmt.Errorf("no held input left after %w", cause))
+	return true
+}
+
 // Start creates an ephemeral non-durable consumer on the roomserver
 // input topic. It is configured to deliver us headers only because we
 // don't actually care about the contents of the message at this point,
@@ -556,6 +597,11 @@ func (w *worker) _next() {
 				return
 			}
 			logrus.WithError(err).WithField("room_id", w.roomID).Error("Failed to subscribe to the room's input consumer, retrying")
+			if jetstream.IsConsumerLimitError(err) && w.failHeldSyncInputs(err) {
+				// Nothing is left waiting for this room's consumer, so stop
+				// retrying until the room sees new activity.
+				return
+			}
 			// The room has queued events, so try again now rather than when
 			// the room next sees activity, which may never happen.
 			if process.Sleep(w.r.ProcessContext.Context(), consumerSetupRetryDelay) {

@@ -341,6 +341,7 @@ func TestStandaloneReplicaPolicy(t *testing.T) {
 				original.Name = name
 				original.Subjects = []string{name, name + ".>"}
 				original.Replicas = tc.existing
+				original.MaxConsumers = streamMaxConsumers
 				if tc.changeAge {
 					original.MaxAge = 48 * time.Hour
 				}

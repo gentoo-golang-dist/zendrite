@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -74,6 +75,10 @@ func (s *NATSInstance) Prepare(process *process.ProcessContext, cfg *config.JetS
 			NoSigs:          true,
 			NoLog:           cfg.NoLog,
 			SyncAlways:      true,
+			// Since 2.15 the server caps every stream at 1000 consumers
+			// unless told otherwise, and the roomserver keeps a durable
+			// consumer for every room active in the last day (issue #745).
+			JetStreamLimits: natsserver.JSLimitOpts{DefaultMaxConsumers: -1},
 		}
 		if s.Server, err = natsserver.NewServer(opts); err != nil {
 			panic(err)
@@ -359,8 +364,18 @@ func configureStream(process *process.ProcessContext, cfg *config.JetStream, js 
 	if info == nil || info.Config.Replicas != desired.Replicas {
 		*establishReplication = true
 	}
+	if desired.MaxConsumers == 0 {
+		desired.MaxConsumers = streamMaxConsumers
+	}
 	if info == nil {
 		info, err = js.AddStream(&desired, natsclient.Context(process.Context()))
+		if IsConsumerLimitError(err) {
+			// The account caps consumers below our stream limit, so leave the
+			// stream to inherit the account's limit.
+			logConsumerLimitFallback(desired.Name)
+			desired.MaxConsumers = 0
+			info, err = js.AddStream(&desired, natsclient.Context(process.Context()))
+		}
 		if err != nil && !ha && desired.Storage == natsclient.FileStorage {
 			desired.Storage = natsclient.MemoryStorage
 			info, err = js.AddStream(&desired, natsclient.Context(process.Context()))
@@ -377,13 +392,29 @@ func configureStream(process *process.ProcessContext, cfg *config.JetStream, js 
 		if ha && (current.Storage != desired.Storage || current.Retention != desired.Retention || current.MaxAge != desired.MaxAge || !slices.Equal(current.Subjects, desired.Subjects)) {
 			return fmt.Errorf("stream %s requires an offline storage/retention/subject migration; refusing to discard queued data", desired.Name)
 		}
-		if current.Storage != desired.Storage || current.Retention != desired.Retention || current.MaxAge != desired.MaxAge || !slices.Equal(current.Subjects, desired.Subjects) || current.Replicas != desired.Replicas {
+		// An operator's own positive consumer limit is kept; only an unset
+		// one is raised, so the server's default limit stops applying.
+		previousMaxConsumers := current.MaxConsumers
+		raiseConsumers := current.MaxConsumers <= 0
+		if current.Storage != desired.Storage || current.Retention != desired.Retention || current.MaxAge != desired.MaxAge || !slices.Equal(current.Subjects, desired.Subjects) || current.Replicas != desired.Replicas || raiseConsumers {
 			current.Storage = desired.Storage
 			current.Retention = desired.Retention
 			current.MaxAge = desired.MaxAge
 			current.Subjects = desired.Subjects
 			current.Replicas = desired.Replicas
+			if raiseConsumers {
+				current.MaxConsumers = desired.MaxConsumers
+			}
+			unchanged := info
 			info, err = js.UpdateStream(&current, natsclient.Context(process.Context()))
+			if raiseConsumers && IsConsumerLimitError(err) {
+				logConsumerLimitFallback(desired.Name)
+				current.MaxConsumers = previousMaxConsumers
+				info, err = unchanged, nil
+				if unchanged.Config.Storage != current.Storage || unchanged.Config.Retention != current.Retention || unchanged.Config.MaxAge != current.MaxAge || !slices.Equal(unchanged.Config.Subjects, current.Subjects) || unchanged.Config.Replicas != current.Replicas {
+					info, err = js.UpdateStream(&current, natsclient.Context(process.Context()))
+				}
+			}
 		}
 	}
 	if err != nil {
@@ -396,6 +427,30 @@ func configureStream(process *process.ProcessContext, cfg *config.JetStream, js 
 		return waitForReplicas(process.Context(), js, desired.Name, desired.Replicas, *establishReplication)
 	}
 	return nil
+}
+
+// streamMaxConsumers is the consumer limit given to every stream. Since 2.15
+// a NATS server applies its default_max_consumers (1000 unless configured) to
+// any stream without a positive limit of its own, and an explicit -1 does not
+// opt out. The roomserver keeps a durable consumer for each room active in
+// the last day, so a busy server exceeds 1000 and could neither create rooms
+// nor restart (issue #745). An account limit, if lower, still applies.
+const streamMaxConsumers = math.MaxInt32
+
+// IsConsumerLimitError reports whether err is the broker refusing a consumer,
+// or a stream's consumer limit, because a consumer limit is reached.
+func IsConsumerLimitError(err error) bool {
+	var apiErr *natsclient.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorCode == jsErrCodeMaximumConsumersLimit
+}
+
+// jsErrCodeMaximumConsumersLimit is JSMaximumConsumersLimitErr, which the
+// client library has no constant for.
+const jsErrCodeMaximumConsumersLimit natsclient.ErrorCode = 10026
+
+func logConsumerLimitFallback(stream string) {
+	logrus.WithField("stream", stream).Warn("The NATS account limits consumers per stream, so the stream keeps the account's limit; " +
+		"the roomserver needs a consumer for every room active in the last day and cannot process rooms beyond that limit")
 }
 
 // GenerationHeader records the activation that published a message. A
