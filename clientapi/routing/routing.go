@@ -1691,13 +1691,13 @@ func Setup(
 				return util.ErrorResponse(err)
 			}
 			return User(req, asAPI, device, vars["protocolID"], req.URL.Query())
-		}, httputil.WithAllowGuests()),
+		}, httputil.WithAllowGuests(), httputil.WithAllowRepeatedQueryParams()),
 	).Methods(http.MethodGet, http.MethodOptions)
 
 	v3mux.Handle("/thirdparty/user",
 		httputil.MakeAuthAPI("thirdparty_user", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 			return User(req, asAPI, device, "", req.URL.Query())
-		}, httputil.WithAllowGuests()),
+		}, httputil.WithAllowGuests(), httputil.WithAllowRepeatedQueryParams()),
 	).Methods(http.MethodGet, http.MethodOptions)
 
 	v3mux.Handle("/thirdparty/location/{protocolID}",
@@ -1707,13 +1707,13 @@ func Setup(
 				return util.ErrorResponse(err)
 			}
 			return Location(req, asAPI, device, vars["protocolID"], req.URL.Query())
-		}, httputil.WithAllowGuests()),
+		}, httputil.WithAllowGuests(), httputil.WithAllowRepeatedQueryParams()),
 	).Methods(http.MethodGet, http.MethodOptions)
 
 	v3mux.Handle("/thirdparty/location",
 		httputil.MakeAuthAPI("thirdparty_location", userAPI, func(req *http.Request, device *userapi.Device) util.JSONResponse {
 			return Location(req, asAPI, device, "", req.URL.Query())
-		}, httputil.WithAllowGuests()),
+		}, httputil.WithAllowGuests(), httputil.WithAllowRepeatedQueryParams()),
 	).Methods(http.MethodGet, http.MethodOptions)
 
 	v3mux.Handle("/rooms/{roomID}/initialSync",

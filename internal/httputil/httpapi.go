@@ -41,6 +41,8 @@ type AuthAPIOpts struct {
 	LockedAccessAllowed    bool
 	SuspendedAccessDenied  bool
 	WithAuth               bool
+	// RepeatedQueryParamsAllowed skips RejectRepeatedQueryParams.
+	RepeatedQueryParamsAllowed bool
 }
 
 // AuthAPIOption is an option to MakeAuthAPI to add additional checks (e.g. guest access) to verify
@@ -119,6 +121,7 @@ func MakeAuthAPI(
 	f func(*http.Request, *userapi.Device) util.JSONResponse,
 	checks ...AuthAPIOption,
 ) http.Handler {
+	opts := buildAuthAPIOpts(checks)
 	h := func(req *http.Request) util.JSONResponse {
 		logger := util.GetLogger(req.Context())
 		device, err := auth.VerifyUserFromRequest(req, userAPI)
@@ -150,12 +153,6 @@ func MakeAuthAPI(
 			}
 		}()
 
-		// apply additional checks, if any
-		opts := AuthAPIOpts{}
-		for _, opt := range checks {
-			opt(&opts)
-		}
-
 		if resErr := accountAccessForbidden(device, &opts); resErr != nil {
 			return *resErr
 		}
@@ -168,7 +165,7 @@ func MakeAuthAPI(
 		}
 		return jsonRes
 	}
-	return MakeExternalAPI(metricsName, h)
+	return makeExternalAPI(metricsName, h, opts)
 }
 
 // VerifyDevice authenticates the request and applies the account checks of
@@ -217,6 +214,7 @@ func MakeOptionalAuthAPI(
 	f func(*http.Request, *userapi.Device) util.JSONResponse,
 	checks ...AuthAPIOption,
 ) http.Handler {
+	opts := buildAuthAPIOpts(checks)
 	h := func(req *http.Request) util.JSONResponse {
 		logger := util.GetLogger(req.Context())
 
@@ -238,12 +236,6 @@ func MakeOptionalAuthAPI(
 			}
 		}
 
-		// apply additional checks, if any
-		opts := AuthAPIOpts{}
-		for _, opt := range checks {
-			opt(&opts)
-		}
-
 		if resErr := accountAccessForbidden(device, &opts); resErr != nil {
 			return *resErr
 		}
@@ -251,12 +243,27 @@ func MakeOptionalAuthAPI(
 		// Call handler with device (may be nil for unauthenticated requests)
 		return f(req, device)
 	}
-	return MakeExternalAPI(metricsName, h)
+	return makeExternalAPI(metricsName, h, opts)
 }
 
 // MakeExternalAPI turns a util.JSONRequestHandler function into an http.Handler.
-// This is used for APIs that are called from the internet.
-func MakeExternalAPI(metricsName string, f func(*http.Request) util.JSONResponse) http.Handler {
+// This is used for APIs that are called from the internet. It rejects a
+// repeated single-valued query parameter unless WithAllowRepeatedQueryParams
+// is given; the other options only apply to authenticated endpoints.
+func MakeExternalAPI(metricsName string, f func(*http.Request) util.JSONResponse, checks ...AuthAPIOption) http.Handler {
+	return makeExternalAPI(metricsName, f, buildAuthAPIOpts(checks))
+}
+
+func makeExternalAPI(metricsName string, handler func(*http.Request) util.JSONResponse, opts AuthAPIOpts) http.Handler {
+	f := handler
+	if !opts.RepeatedQueryParamsAllowed {
+		f = func(req *http.Request) util.JSONResponse {
+			if res := RejectRepeatedQueryParams(req); res != nil {
+				return *res
+			}
+			return handler(req)
+		}
+	}
 	// TODO: We shouldn't be directly reading env vars here, inject it in instead.
 	// Refactor this when we split out config structs.
 	verbose := os.Getenv("ZENDRITE_TRACE_HTTP") == "1" || os.Getenv("DENDRITE_TRACE_HTTP") == "1"
