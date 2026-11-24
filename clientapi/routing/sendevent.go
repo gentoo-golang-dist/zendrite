@@ -535,6 +535,9 @@ func generateSendEvent(
 	if res := validateRetentionEvent(eventType, stateKey, proto.Content); res != nil {
 		return nil, res
 	}
+	if res := validateMessageContent(eventType, r); res != nil {
+		return nil, res
+	}
 	if proto.Type == spec.MRoomCreate && proto.StateKey != nil && *proto.StateKey == "" {
 		return nil, &util.JSONResponse{
 			Code: http.StatusBadRequest,
@@ -635,6 +638,35 @@ func generateSendEvent(
 // msc4354StickyDurationParam is the unstable query parameter that asks for a
 // sticky event (MSC4354).
 const msc4354StickyDurationParam = "org.matrix.msc4354.sticky_duration_ms"
+
+// messageStringFields are the m.room.message content keys a locally sent
+// event must carry as strings, as Synapse requires.
+var messageStringFields = []string{"body", "msgtype"}
+
+// validateMessageContent rejects an m.room.message whose body or msgtype is
+// missing or not a string. Only events created here are checked: an event
+// received over federation is never rejected for its content.
+func validateMessageContent(eventType string, content map[string]any) *util.JSONResponse {
+	if eventType != "m.room.message" {
+		return nil
+	}
+	for _, key := range messageStringFields {
+		value, ok := content[key]
+		if !ok {
+			return &util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.BadJSON("'" + key + "' not in content"),
+			}
+		}
+		if _, ok := value.(string); !ok {
+			return &util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.BadJSON("'" + key + "' not a string type"),
+			}
+		}
+	}
+	return nil
+}
 
 // parseStickyDuration reads the MSC4354 sticky duration of a send request,
 // which is nil if the request does not ask for a sticky event. As in Synapse,

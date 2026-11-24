@@ -71,9 +71,13 @@ func TestDuplicateAnnotation(t *testing.T) {
 		}
 		react := func(routers httputil.Routers, user *test.User, eventType, key, txnID string) *httptest.ResponseRecorder {
 			t.Helper()
-			return put(routers, user, fmt.Sprintf("send/%s/%s", eventType, txnID), map[string]any{
+			content := map[string]any{
 				"m.relates_to": map[string]any{"rel_type": "m.annotation", "event_id": target.EventID(), "key": key},
-			})
+			}
+			if eventType == "m.room.message" {
+				content["msgtype"], content["body"] = "m.text", key
+			}
+			return put(routers, user, fmt.Sprintf("send/%s/%s", eventType, txnID), content)
 		}
 		requireOK := func(rec *httptest.ResponseRecorder) string {
 			t.Helper()

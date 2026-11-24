@@ -1203,7 +1203,7 @@ func TestMSC3848Errcodes(t *testing.T) {
 			user                     *test.User
 			want                     string
 		}{
-			{"message from a user outside the room", http.MethodPut, room + "/send/m.room.message/t1", `{"body":"hi"}`, bob, "ORG.MATRIX.MSC3848.NOT_JOINED"},
+			{"message from a user outside the room", http.MethodPut, room + "/send/m.room.message/t1", `{"msgtype":"m.text","body":"hi"}`, bob, "ORG.MATRIX.MSC3848.NOT_JOINED"},
 			{"state event below state_default", http.MethodPut, room + "/state/m.room.name/", `{"name":"x"}`, dave, "ORG.MATRIX.MSC3848.INSUFFICIENT_POWER"},
 			{"invite of a joined user", http.MethodPost, room + "/invite", `{"user_id":"` + dave.ID + `"}`, alice, "ORG.MATRIX.MSC3848.ALREADY_JOINED"},
 			{"invite of a joined user as a state event", http.MethodPut, room + "/state/m.room.member/" + dave.ID, `{"membership":"invite"}`, alice, "ORG.MATRIX.MSC3848.ALREADY_JOINED"},
