@@ -32,7 +32,7 @@ jobs:
           - sqlite
           - postgres
     env:
-      # Sytest commit on its develop branch.
+      # Sytest commit; Renovate keeps it on the tip of develop (renovate.json).
       SYTEST_REF: 2ba2e5f665eb0917e741125a5ef66b0fe928b4f8
     steps:
       - name: Install runner dependencies

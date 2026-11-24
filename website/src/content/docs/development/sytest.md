@@ -26,6 +26,7 @@ A test that fails and isn't in `sytest-blacklist` fails the run.
 The `Sytest` workflow (`.forgejo/workflows/sytest.yaml`) runs `build/scripts/sytest.sh` on SQLite and PostgreSQL for pull requests that touch Go code or the Sytest files, and for pushes to `main`.
 It runs only the test files listed in `SYTEST_FILES` in the script, whose tests all pass, and takes a few minutes.
 The job uploads `results.tap` and the homeserver logs as an artifact.
+Renovate moves `SYTEST_REF` to the tip of Sytest's `develop` branch in a pull request, so the workflow checks each Sytest change before Zendrite takes it.
 
 The whole suite isn't in CI.
 Some test files still have failing tests that `sytest-blacklist` doesn't list, so a full run would fail.
