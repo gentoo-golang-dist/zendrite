@@ -6,6 +6,8 @@
 package routing
 
 import (
+	"net/http"
+	"net/url"
 	"testing"
 
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -158,4 +160,41 @@ func TestForwardMessagesNeverBackfill(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, events)
 	assert.False(t, r.didBackfill)
+}
+
+func TestValidateMessagesQuery(t *testing.T) {
+	tests := []struct {
+		query    string
+		wantCode spec.MatrixErrorCode
+	}{
+		{query: "dir=b"},
+		{query: "dir=f&from=t1_2&to=t3_4&limit=5&filter={}"},
+		{query: "", wantCode: spec.ErrorMissingParam},
+		{query: "dir=x", wantCode: spec.ErrorInvalidParam},
+		{query: "dir=", wantCode: spec.ErrorInvalidParam},
+		{query: "dir=b&dir=f", wantCode: spec.ErrorInvalidParam},
+		{query: "dir=b&dir=b", wantCode: spec.ErrorInvalidParam},
+		{query: "dir=b&from=a&from=b", wantCode: spec.ErrorInvalidParam},
+		{query: "dir=b&to=a&to=b", wantCode: spec.ErrorInvalidParam},
+		{query: "dir=b&limit=1&limit=2", wantCode: spec.ErrorInvalidParam},
+		{query: "dir=b&filter={}&filter={}", wantCode: spec.ErrorInvalidParam},
+	}
+	for _, tc := range tests {
+		t.Run(tc.query, func(t *testing.T) {
+			query, err := url.ParseQuery(tc.query)
+			assert.NoError(t, err)
+			res := validateMessagesQuery(query)
+			if tc.wantCode == "" {
+				assert.Nil(t, res)
+				return
+			}
+			if assert.NotNil(t, res) {
+				assert.Equal(t, http.StatusBadRequest, res.Code)
+				matrixErr, ok := res.JSON.(spec.MatrixError)
+				if assert.True(t, ok, "JSON is %T", res.JSON) {
+					assert.Equal(t, tc.wantCode, matrixErr.ErrCode)
+				}
+			}
+		})
+	}
 }

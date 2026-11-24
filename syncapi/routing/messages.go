@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"time"
@@ -57,6 +58,35 @@ type messagesResp struct {
 	State       []synctypes.ClientEvent `json:"state,omitempty"`
 }
 
+// messagesSingleParams are the /messages query parameters that take one value.
+var messagesSingleParams = []string{"dir", "from", "to", "limit", "filter"}
+
+// validateMessagesQuery rejects a /messages query whose dir is missing or not
+// f or b, or that repeats a single-valued parameter, such as ?dir=b&dir=f.
+func validateMessagesQuery(query url.Values) *util.JSONResponse {
+	for _, name := range messagesSingleParams {
+		if len(query[name]) > 1 {
+			return &util.JSONResponse{
+				Code: http.StatusBadRequest,
+				JSON: spec.InvalidParam("expected one " + name + " query parameter"),
+			}
+		}
+	}
+	if !query.Has("dir") {
+		return &util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.MissingParam("missing dir query parameter (should be either 'b' or 'f')"),
+		}
+	}
+	if dir := query.Get("dir"); dir != "b" && dir != "f" {
+		return &util.JSONResponse{
+			Code: http.StatusBadRequest,
+			JSON: spec.InvalidParam("bad dir query parameter (should be either 'b' or 'f')"),
+		}
+	}
+	return nil
+}
+
 // OnIncomingMessagesRequest implements the /messages endpoint from the
 // client-server API.
 // See: https://matrix.org/docs/spec/client_server/latest.html#get-matrix-client-r0-rooms-roomid-messages
@@ -78,6 +108,10 @@ func OnIncomingMessagesRequest(
 			Code: http.StatusInternalServerError,
 			JSON: spec.InternalServerError{},
 		}
+	}
+
+	if errRes := validateMessagesQuery(req.URL.Query()); errRes != nil {
+		return *errRes
 	}
 
 	// check if the user has already forgotten about this room
@@ -136,14 +170,8 @@ func OnIncomingMessagesRequest(
 	fromQuery := req.URL.Query().Get("from")
 	toQuery := req.URL.Query().Get("to")
 
-	// Direction to return events from.
+	// Direction to return events from, already checked by validateMessagesQuery.
 	dir := req.URL.Query().Get("dir")
-	if dir != "b" && dir != "f" {
-		return util.JSONResponse{
-			Code: http.StatusBadRequest,
-			JSON: spec.MissingParam("Bad or missing dir query parameter (should be either 'b' or 'f')"),
-		}
-	}
 	// A boolean is easier to handle in this case, especially since dir is sure
 	// to have one of the two accepted values (so dir == "f" <=> !backwardOrdering).
 	backwardOrdering := (dir == "b")
