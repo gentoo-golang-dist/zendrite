@@ -360,7 +360,17 @@ func authorisedServer(ctx context.Context, querier *Queryer, roomID spec.RoomID,
 			return true, []string{}
 		}
 
-		if rule == spec.Restricted || rule == spec.KnockRestricted {
+		if rule == spec.KnockRestricted {
+			// Anyone may knock, so the room is accessible like a knock room,
+			// and the allow list tells the caller who may join without knocking.
+			allowed := []string{}
+			for _, allowedRoomID := range restrictedJoinRuleAllowedRooms(ctx, joinRuleEv) {
+				allowed = append(allowed, allowedRoomID.String())
+			}
+			return true, allowed
+		}
+
+		if rule == spec.Restricted {
 			allowJoinedToRoomIDs = append(allowJoinedToRoomIDs, restrictedJoinRuleAllowedRooms(ctx, joinRuleEv)...)
 		}
 	}
@@ -389,9 +399,9 @@ func authorisedServer(ctx context.Context, querier *Queryer, roomID spec.RoomID,
 	return false, resultAllowedRoomIDs[1:]
 }
 
-// authorisedUser returns true iff the user is invited/joined this room or the room is world_readable
-// or if the room has a public or knock join rule.
-// Failing that, if the room has a restricted join rule and belongs to the space parent listed, it will return true.
+// authorisedUser returns true iff the user is invited/joined this room or the room is world_readable.
+// Failing that, if the user is joined to the space parent listed, it returns true when the room has a public,
+// knock or knock_restricted join rule, or a restricted join rule that allows members of that parent.
 func authorisedUser(ctx context.Context, querier *Queryer, clientCaller *userapi.Device, roomID spec.RoomID, parentRoomID *spec.RoomID) (authed bool, isJoinedOrInvited bool, resultAllowedRoomIDs []string) {
 	hisVisTuple := gomatrixserverlib.StateKeyTuple{
 		EventType: spec.MRoomHistoryVisibility,
@@ -453,14 +463,15 @@ func authorisedUser(ctx context.Context, querier *Queryer, clientCaller *userapi
 			util.GetLogger(ctx).WithError(ruleErr).WithField("parent_room_id", parentRoomID).Warn("failed to get join rule")
 		case rule == spec.Public || rule == spec.Knock:
 			allowed = true
-		case rule == spec.Restricted:
-			allowedRoomIDs := restrictedJoinRuleAllowedRooms(ctx, joinRuleEv)
+		case rule == spec.Restricted || rule == spec.KnockRestricted:
+			// Anyone may knock on a knock_restricted room, so it is visible even
+			// when the parent is not in its allow list.
+			allowed = rule == spec.KnockRestricted
 			// check parent is in the allowed set
-			for _, a := range allowedRoomIDs {
+			for _, a := range restrictedJoinRuleAllowedRooms(ctx, joinRuleEv) {
 				resultAllowedRoomIDs = append(resultAllowedRoomIDs, a.String())
 				if *parentRoomID == a {
 					allowed = true
-					break
 				}
 			}
 		}
@@ -728,10 +739,10 @@ func stripped(ev gomatrixserverlib.PDU) *fclient.RoomHierarchyStrippedEvent {
 	}
 }
 
-// given join_rule event, return list of rooms where membership of that room allows joining.
+// given a restricted or knock_restricted join_rule event, return list of rooms where membership of that room allows joining.
 func restrictedJoinRuleAllowedRooms(ctx context.Context, joinRuleEv *types.HeaderedEvent) (allows []spec.RoomID) {
 	rule, _ := joinRuleEv.JoinRule()
-	if rule != spec.Restricted {
+	if rule != spec.Restricted && rule != spec.KnockRestricted {
 		return nil
 	}
 	var jrContent gomatrixserverlib.JoinRuleContent
