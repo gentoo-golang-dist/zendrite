@@ -8,6 +8,7 @@ package roomserver_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -292,11 +293,12 @@ func TestRepairMembershipsFromRemoteState(t *testing.T) {
 
 		// The memberships the repair leaves alone are logged with the event
 		// each server holds, its membership, and its sender when that is not
-		// the member.
+		// the member. The hook is global and the other database's subtest
+		// logs the same users in parallel, so match on this run's room too.
 		votes := func(msg, user string) logrus.Fields {
 			t.Helper()
 			for _, entry := range hook.AllEntries() {
-				if entry.Message == msg && entry.Data["user"] == user {
+				if entry.Message == msg && entry.Data["user"] == user && fmt.Sprint(entry.Data["room_id"]) == room.ID {
 					return entry.Data
 				}
 			}
