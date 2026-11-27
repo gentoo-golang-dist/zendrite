@@ -1290,3 +1290,97 @@ func (d *Database) DeleteRejectedEvent(ctx context.Context, eventID string) erro
 		return nil
 	})
 }
+
+// CompactStateDeltas removes, from the rows of the room up to maxID, each
+// added state event ID that an earlier row already added and no row has
+// removed since. It returns how many rows it rewrote and how many IDs it
+// removed, and stops before a batch once owns reports false.
+//
+// Incremental syncs combine the rows of their range as sets and filter the
+// resulting state events, so such an ID only made a sync send state the
+// client already had. Before the roomserver merged gap-filled state (#527),
+// every gap fill re-added the whole state of the room, tens of thousands of
+// IDs per row in large rooms, and a sync spanning one treated the user's own
+// re-added membership as a rejoin and sent the whole current state.
+//
+// Rooms with a pending partial-state join are skipped, because a rejected
+// event can still delete the row that first added an ID (MSC3902).
+func (d *Database) CompactStateDeltas(
+	ctx context.Context, roomID string, maxID types.StreamPosition, owns func() bool,
+) (rows, ids int, err error) {
+	partial, err := d.UnPartialStatedRooms.SelectPartialStateJoin(ctx, nil, roomID)
+	if err != nil || partial {
+		return 0, 0, err
+	}
+	present := map[string]struct{}{}
+	var after types.StreamPosition
+	for {
+		if ctx.Err() != nil || !owns() {
+			return rows, ids, ctx.Err()
+		}
+		changes, err := d.OutputEvents.SelectStateChanges(ctx, nil, roomID, after, maxID, stateDeltaCompactionBatch)
+		if err != nil {
+			return rows, ids, fmt.Errorf("d.OutputEvents.SelectStateChanges: %w", err)
+		}
+		var updates []tables.StateChange
+		for _, change := range changes {
+			kept, dropped := compactAddStateIDs(present, change)
+			if dropped > 0 {
+				updates = append(updates, tables.StateChange{ID: change.ID, AddIDs: kept})
+				ids += dropped
+			}
+		}
+		if len(updates) > 0 {
+			err = d.Writer.Do(d.DB, nil, func(txn *sql.Tx) error {
+				for _, update := range updates {
+					if err := d.OutputEvents.UpdateAddStateIDs(ctx, txn, update.ID, update.AddIDs); err != nil {
+						return fmt.Errorf("d.OutputEvents.UpdateAddStateIDs: %w", err)
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return rows, ids, err
+			}
+			rows += len(updates)
+		}
+		if len(changes) < stateDeltaCompactionBatch {
+			return rows, ids, nil
+		}
+		after = changes[len(changes)-1].ID
+	}
+}
+
+// stateDeltaCompactionBatch is how many rows CompactStateDeltas reads and
+// rewrites at a time.
+const stateDeltaCompactionBatch = 100
+
+// compactAddStateIDs returns the added IDs of change without those present
+// already holds, and how many it dropped, and applies change to present.
+func compactAddStateIDs(present map[string]struct{}, change tables.StateChange) (kept []string, dropped int) {
+	removed := make(map[string]struct{}, len(change.RemoveIDs))
+	for _, id := range change.RemoveIDs {
+		removed[id] = struct{}{}
+	}
+	kept = make([]string, 0, len(change.AddIDs))
+	for _, id := range change.AddIDs {
+		_, alsoRemoved := removed[id]
+		if _, ok := present[id]; ok && !alsoRemoved {
+			dropped++
+			continue
+		}
+		kept = append(kept, id)
+	}
+	for _, id := range change.RemoveIDs {
+		delete(present, id)
+	}
+	for _, id := range change.AddIDs {
+		if _, alsoRemoved := removed[id]; alsoRemoved {
+			// A row that removes and adds an ID leaves it to the order a
+			// reader applies them in, so the next add keeps it.
+			continue
+		}
+		present[id] = struct{}{}
+	}
+	return kept, dropped
+}

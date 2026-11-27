@@ -87,6 +87,13 @@ type Events interface {
 	// DeleteEventWithoutStateDelta removes an event unless its row records
 	// changes to the room's current state, and reports whether it did.
 	DeleteEventWithoutStateDelta(ctx context.Context, txn *sql.Tx, eventID string) (bool, error)
+	// SelectStateChanges returns up to limit rows of the room with a stream
+	// position in (afterID, maxID] that change its current state, in stream
+	// order.
+	SelectStateChanges(ctx context.Context, txn *sql.Tx, roomID string, afterID, maxID types.StreamPosition, limit int) ([]StateChange, error)
+	// UpdateAddStateIDs replaces the state event IDs the row at the stream
+	// position adds to the room's current state; no IDs store NULL.
+	UpdateAddStateIDs(ctx context.Context, txn *sql.Tx, id types.StreamPosition, addIDs []string) error
 	ReIndex(ctx context.Context, txn *sql.Tx, limit, offset int64, types []string) (map[int64]rstypes.HeaderedEvent, error)
 	// SelectMaxStreamPositionsForRooms returns the maximum stream position (latest event) for each room.
 	// This is used by sliding sync to sort rooms by activity (bump_stamp).
@@ -332,6 +339,9 @@ type UnPartialStatedRooms interface {
 	// pending, or whose un-partial-stated record for the user comes after to.
 	// An un-partial-stated record of the room after the join settles it.
 	SelectPartialStateRooms(ctx context.Context, txn *sql.Tx, userID string, to types.StreamPosition) ([]string, error)
+	// SelectPartialStateJoin reports whether the room has a partial-state
+	// join that is not settled yet, or whose record an older build left.
+	SelectPartialStateJoin(ctx context.Context, txn *sql.Tx, roomID string) (bool, error)
 }
 
 // ProfileUpdates is the stream of changes to local users' profiles, one row
@@ -382,4 +392,13 @@ type StickyEvents interface {
 	DeleteExpiredStickyEvents(ctx context.Context, txn *sql.Tx, now spec.Timestamp) error
 	// PurgeStickyEvents removes all sticky events of a room.
 	PurgeStickyEvents(ctx context.Context, txn *sql.Tx, roomID string) error
+}
+
+// StateChange is the state change a row of the output room events records:
+// the state event IDs it adds to and removes from the room's current state.
+type StateChange struct {
+	ID        types.StreamPosition
+	EventID   string
+	AddIDs    []string
+	RemoveIDs []string
 }

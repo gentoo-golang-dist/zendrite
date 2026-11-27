@@ -185,6 +185,9 @@ type Database interface {
 	// (MSC1763).
 	RetentionRoomIDs(ctx context.Context) ([]string, error)
 	PurgeExpiredEvents(ctx context.Context, roomID string, cursor shared.RetentionCursor, limit int) (purged []string, next shared.RetentionCursor, done bool, err error)
+	// CompactStateDeltas removes redundant re-added state event IDs from the
+	// room's rows up to maxID (see shared.Database.CompactStateDeltas).
+	CompactStateDeltas(ctx context.Context, roomID string, maxID types.StreamPosition, owns func() bool) (rows, ids int, err error)
 	NewDatabaseTransaction(ctx context.Context) (*shared.DatabaseTransaction, error)
 
 	// Events lookups a list of event by their event ID.

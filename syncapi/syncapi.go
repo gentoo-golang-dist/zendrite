@@ -109,6 +109,13 @@ func AddPublicRoutes(
 	purge := internal.RetentionPass(syncDB, index, func() bool { return jetstream.OwnsHomeserver(js) })
 	retention.RunPurgeJobs(processContext.Context(), &zendriteCfg.Global.Retention, func(f func()) { processContext.Go(f) }, purge.Run)
 
+	// Remove the state event IDs that rows re-added before the roomserver
+	// merged gap-filled state, gigabytes in large rooms.
+	processContext.Go(func() {
+		internal.RunStateDeltaCompaction(processContext.Context(), syncDB, func() bool { return jetstream.OwnsHomeserver(js) },
+			retention.FirstPurgeDelay, internal.StateDeltaCompactionInterval)
+	})
+
 	federationPresenceProducer := &producers.FederationAPIPresenceProducer{
 		Topic:     zendriteCfg.Global.JetStream.Prefixed(jetstream.OutputPresenceEvent),
 		JetStream: js,

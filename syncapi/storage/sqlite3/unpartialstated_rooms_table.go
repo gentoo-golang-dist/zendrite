@@ -9,6 +9,7 @@ package sqlite3
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"codefloe.com/pat-s/zendrite/internal"
@@ -82,6 +83,12 @@ const selectPartialStateRoomsSQL = "" +
 	" WHERE u.room_id = j.room_id AND u.id > j.pos)" +
 	" UNION SELECT room_id FROM syncapi_unpartialstated_rooms WHERE user_id = $1 AND id > $2"
 
+// A join counts as pending here as it does for selectPartialStateRoomsSQL.
+const selectPartialStateJoinSQL = "" +
+	"SELECT 1 FROM syncapi_partial_state_joins j WHERE j.room_id = $1" +
+	" AND NOT EXISTS (SELECT 1 FROM syncapi_unpartialstated_rooms u" +
+	" WHERE u.room_id = j.room_id AND u.id > j.pos)"
+
 type unPartialStatedRoomsStatements struct {
 	db                                 *sql.DB
 	streamIDStatements                 *StreamIDStatements
@@ -91,6 +98,7 @@ type unPartialStatedRoomsStatements struct {
 	purgeUnPartialStatedRoomsStmt      *sql.Stmt
 	insertPartialStateJoinStmt         *sql.Stmt
 	deletePartialStateJoinStmt         *sql.Stmt
+	selectPartialStateJoinStmt         *sql.Stmt
 	selectPartialStateRoomsStmt        *sql.Stmt
 }
 
@@ -110,6 +118,7 @@ func NewSqliteUnPartialStatedRoomsTable(db *sql.DB, streamID *StreamIDStatements
 		{&s.purgeUnPartialStatedRoomsStmt, purgeUnPartialStatedRoomsSQL},
 		{&s.insertPartialStateJoinStmt, insertPartialStateJoinSQL},
 		{&s.deletePartialStateJoinStmt, deletePartialStateJoinSQL},
+		{&s.selectPartialStateJoinStmt, selectPartialStateJoinSQL},
 		{&s.selectPartialStateRoomsStmt, selectPartialStateRoomsSQL},
 	}.Prepare(db)
 }
@@ -185,6 +194,17 @@ func (s *unPartialStatedRoomsStatements) InsertPartialStateJoin(
 	}
 	_, err = sqlutil.TxStmt(txn, s.insertPartialStateJoinStmt).ExecContext(ctx, roomID, pos)
 	return err
+}
+
+func (s *unPartialStatedRoomsStatements) SelectPartialStateJoin(
+	ctx context.Context, txn *sql.Tx, roomID string,
+) (bool, error) {
+	var one int
+	err := sqlutil.TxStmt(txn, s.selectPartialStateJoinStmt).QueryRowContext(ctx, roomID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *unPartialStatedRoomsStatements) DeletePartialStateJoin(

@@ -123,6 +123,15 @@ const deleteEventWithoutStateDeltaSQL = "" +
 const deleteEventSQL = "" +
 	"DELETE FROM syncapi_output_room_events WHERE event_id = $1"
 
+const selectStateChangesSQL = "" +
+	"SELECT id, event_id, add_state_ids, remove_state_ids FROM syncapi_output_room_events" +
+	" WHERE room_id = $1 AND id > $2 AND id <= $3" +
+	" AND ((add_state_ids IS NOT NULL AND add_state_ids != '') OR (remove_state_ids IS NOT NULL AND remove_state_ids != ''))" +
+	" ORDER BY id ASC LIMIT $4"
+
+const updateAddStateIDsSQL = "" +
+	"UPDATE syncapi_output_room_events SET add_state_ids = $1 WHERE id = $2"
+
 const purgeEventsSQL = "" +
 	"DELETE FROM syncapi_output_room_events WHERE room_id = $1"
 
@@ -154,6 +163,8 @@ type outputRoomEventsStatements struct {
 	purgeEventsStmt                  *sql.Stmt
 	deleteEventStmt                  *sql.Stmt
 	deleteEventWithoutStateDeltaStmt *sql.Stmt
+	selectStateChangesStmt           *sql.Stmt
+	updateAddStateIDsStmt            *sql.Stmt
 	// selectSearchStmt             *sql.Stmt - prepared at runtime
 }
 
@@ -197,6 +208,8 @@ func NewSqliteEventsTable(db *sql.DB, streamID *StreamIDStatements) (tables.Even
 		{&s.purgeEventsStmt, purgeEventsSQL},
 		{&s.deleteEventStmt, deleteEventSQL},
 		{&s.deleteEventWithoutStateDeltaStmt, deleteEventWithoutStateDeltaSQL},
+		{&s.selectStateChangesStmt, selectStateChangesSQL},
+		{&s.updateAddStateIDsStmt, updateAddStateIDsSQL},
 		// {&s.selectSearchStmt, selectSearchSQL}, - prepared at runtime
 	}.Prepare(db)
 }
@@ -779,6 +792,44 @@ func (s *outputRoomEventsStatements) DeleteEventWithoutStateDelta(ctx context.Co
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+func (s *outputRoomEventsStatements) SelectStateChanges(
+	ctx context.Context, txn *sql.Tx, roomID string, afterID, maxID types.StreamPosition, limit int,
+) ([]tables.StateChange, error) {
+	rows, err := sqlutil.TxStmt(txn, s.selectStateChangesStmt).QueryContext(ctx, roomID, afterID, maxID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer internal.CloseAndLogIfError(ctx, rows, "SelectStateChanges: rows.close() failed")
+	var changes []tables.StateChange
+	for rows.Next() {
+		var change tables.StateChange
+		var addIDsJSON, removeIDsJSON sql.NullString
+		if err = rows.Scan(&change.ID, &change.EventID, &addIDsJSON, &removeIDsJSON); err != nil {
+			return nil, err
+		}
+		if change.AddIDs, change.RemoveIDs, err = unmarshalStateIDs(addIDsJSON.String, removeIDsJSON.String); err != nil {
+			return nil, err
+		}
+		changes = append(changes, change)
+	}
+	return changes, rows.Err()
+}
+
+func (s *outputRoomEventsStatements) UpdateAddStateIDs(
+	ctx context.Context, txn *sql.Tx, id types.StreamPosition, addIDs []string,
+) error {
+	var ids any
+	if len(addIDs) > 0 {
+		encoded, err := json.Marshal(addIDs)
+		if err != nil {
+			return fmt.Errorf("json.Marshal: %w", err)
+		}
+		ids = string(encoded)
+	}
+	_, err := sqlutil.TxStmt(txn, s.updateAddStateIDsStmt).ExecContext(ctx, ids, id)
+	return err
 }
 
 // DeleteEvent removes an event, such as one rejected after it was served.

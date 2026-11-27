@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"strings"
 
 	"codefloe.com/pat-s/gomatrixserverlib"
 	"codefloe.com/pat-s/gomatrixserverlib/spec"
@@ -427,27 +429,7 @@ func (d *DatabaseTransaction) GetStateDeltas(
 		return nil, nil, err
 	}
 
-	// get all the state events ever (i.e. for all available rooms) between these two positions
-	stateFiltered := state
-	// avoid hitting the database if the result would be the same as above
-	if !isStatefilterEmpty(stateFilter) {
-		var stateNeededFiltered map[string]map[string]bool
-		var eventMapFiltered map[string]types.StreamEvent
-		stateNeededFiltered, eventMapFiltered, err = d.OutputEvents.SelectStateInRange(ctx, d.txn, r, stateFilter, allRoomIDs)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, nil, nil
-			}
-			return nil, nil, err
-		}
-		stateFiltered, err = d.fetchStateEvents(ctx, d.txn, stateNeededFiltered, eventMapFiltered, rsAPI)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, nil, nil
-			}
-			return nil, nil, err
-		}
-	}
+	stateFiltered := filterStateEvents(state, stateFilter)
 
 	// find out which rooms this user is peeking, if any.
 	// We do this before joins so any peeks get overwritten
@@ -546,10 +528,7 @@ func (d *DatabaseTransaction) RoomStateDelta(
 	ctx context.Context, device *userapi.Device, roomID string,
 	r types.Range, stateFilter *synctypes.StateFilter, rsAPI api.SyncRoomserverAPI,
 ) ([]*rstypes.HeaderedEvent, error) {
-	if isStatefilterEmpty(stateFilter) {
-		stateFilter = nil
-	}
-	stateNeeded, eventMap, err := d.OutputEvents.SelectStateInRange(ctx, d.txn, r, stateFilter, []string{roomID})
+	stateNeeded, eventMap, err := d.OutputEvents.SelectStateInRange(ctx, d.txn, r, nil, []string{roomID})
 	if err != nil {
 		return nil, err
 	}
@@ -557,6 +536,7 @@ func (d *DatabaseTransaction) RoomStateDelta(
 	if err != nil {
 		return nil, err
 	}
+	state = filterStateEvents(state, stateFilter)
 	return d.StreamEventsToEvents(ctx, device, state[roomID], rsAPI), nil
 }
 
@@ -615,7 +595,7 @@ func (d *DatabaseTransaction) GetStateDeltasForFullStateSync(
 	}
 
 	// Get all the state events ever between these two positions
-	stateNeeded, eventMap, err := d.OutputEvents.SelectStateInRange(ctx, d.txn, r, stateFilter, allRoomIDs)
+	stateNeeded, eventMap, err := d.OutputEvents.SelectStateInRange(ctx, d.txn, r, nil, allRoomIDs)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, nil
@@ -629,6 +609,7 @@ func (d *DatabaseTransaction) GetStateDeltasForFullStateSync(
 		}
 		return nil, nil, err
 	}
+	state = filterStateEvents(state, stateFilter)
 
 	for roomID, stateStreamEvents := range state {
 		for _, ev := range stateStreamEvents {
@@ -839,6 +820,73 @@ func (d *DatabaseTransaction) StickyEventsByID(
 	ctx context.Context, eventIDs []string, now spec.Timestamp,
 ) ([]types.StickyEvent, error) {
 	return d.StickyEvents.SelectStickyEventsByID(ctx, d.txn, eventIDs, now)
+}
+
+// filterStateEvents returns the state events that match the filter's senders,
+// types and contains_url, matching types with * as a wildcard as the event
+// queries do. It filters the state events themselves rather than the rows that
+// record their addition: a row can add state of other types and senders than
+// its own event, as a gap fill re-adding the whole room state did, and
+// filtering by rows made a filtered sync differ from the unfiltered one in
+// more than the filter.
+func filterStateEvents(state map[string][]types.StreamEvent, filter *synctypes.StateFilter) map[string][]types.StreamEvent {
+	if isStatefilterEmpty(filter) {
+		return state
+	}
+	filtered := make(map[string][]types.StreamEvent, len(state))
+	for roomID, events := range state {
+		var kept []types.StreamEvent
+		for _, ev := range events {
+			if stateFilterMatches(filter, ev) {
+				kept = append(kept, ev)
+			}
+		}
+		if kept != nil {
+			filtered[roomID] = kept
+		}
+	}
+	return filtered
+}
+
+func stateFilterMatches(filter *synctypes.StateFilter, ev types.StreamEvent) bool {
+	sender := string(ev.SenderID())
+	if filter.Senders != nil && !slices.Contains(*filter.Senders, sender) {
+		return false
+	}
+	if filter.NotSenders != nil && slices.Contains(*filter.NotSenders, sender) {
+		return false
+	}
+	if filter.Types != nil && !slices.ContainsFunc(*filter.Types, func(pattern string) bool { return eventTypeMatches(pattern, ev.Type()) }) {
+		return false
+	}
+	if filter.NotTypes != nil && slices.ContainsFunc(*filter.NotTypes, func(pattern string) bool { return eventTypeMatches(pattern, ev.Type()) }) {
+		return false
+	}
+	if filter.ContainsURL != nil && gjson.GetBytes(ev.Content(), "url").Exists() != *filter.ContainsURL {
+		return false
+	}
+	return true
+}
+
+// eventTypeMatches reports whether eventType matches pattern, in which each *
+// stands for any run of characters.
+func eventTypeMatches(pattern, eventType string) bool {
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == eventType
+	}
+	if !strings.HasPrefix(eventType, parts[0]) {
+		return false
+	}
+	rest := eventType[len(parts[0]):]
+	for _, part := range parts[1 : len(parts)-1] {
+		i := strings.Index(rest, part)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(part):]
+	}
+	return strings.HasSuffix(rest, parts[len(parts)-1])
 }
 
 func isStatefilterEmpty(filter *synctypes.StateFilter) bool {

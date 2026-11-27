@@ -32,6 +32,32 @@ PostgreSQL uses few system resources by default and performs better when it may 
 The [PGTune](https://pgtune.leopard.in.ua/) tool generates example configurations.
 Before you change settings, consider your setup, such as other software on the same machine or PostgreSQL server.
 
+## Reclaim disk space
+
+Zendrite removes data it no longer needs in the background, and the database then reuses that space for new data.
+PostgreSQL keeps the files of a table at their size until the table is rewritten, so the database does not shrink on disk by itself.
+
+The state delta compaction is one such cleanup.
+Servers in large rooms that ran a version before 3.6.0 stored the whole room state again with every gap fill, which can take several gigabytes in the `syncapi_output_room_events` table.
+When the compaction has removed this data, Zendrite logs `State delta compaction: removed redundant state event IDs` with the number of rows and state event IDs.
+
+To return the space to the filesystem after that message, rewrite the table:
+
+```sql
+-- PostgreSQL
+VACUUM FULL syncapi_output_room_events;
+```
+
+```sql
+-- SQLite, which rewrites the whole database file
+VACUUM;
+```
+
+`VACUUM FULL` locks the table for reads and writes while it runs, so syncs wait until it completes.
+It needs free disk space for the new copy of the table, which is about the size the table has after the compaction.
+Run it at a quiet time.
+You don't need to run it at all: without it, the database fills the freed space before it grows again.
+
 ## File descriptor limit
 
 Most platforms limit how many file descriptors one process can open.
