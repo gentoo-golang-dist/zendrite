@@ -46,7 +46,7 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 	// A root that the client's vias provided was checked on the first page.
 	var remoteRoot *fclient.RoomHierarchyResponse
 	if !walker.RootRemote {
-		if authorised, _, _ := authorised(ctx, querier, walker.Caller, walker.RootRoomID, nil); !authorised { //nolint:misspell
+		if authorised, _ := authorised(ctx, querier, walker.Caller, walker.RootRoomID); !authorised { //nolint:misspell
 			remoteRoot = remoteRootAccessible(ctx, querier, walker)
 			if remoteRoot == nil {
 				return nil, []string{walker.RootRoomID.String()}, nil, roomserver.ErrRoomUnknownOrNotAllowed{Err: fmt.Errorf("room is unknown/forbidden")}
@@ -104,7 +104,7 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 		// Collect rooms/events to send back (either locally or fetched via federation)
 		var discoveredChildEvents []fclient.RoomHierarchyStrippedEvent
 
-		// If we know about this room and the caller is authorized (joined/world_readable) then pull
+		// If we know about this room and the caller may see it (see userMaySeeRoom) then pull
 		// events locally
 		roomExists := roomExists(ctx, querier, queuedRoom.RoomID)
 		if !roomExists {
@@ -125,7 +125,7 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 				spaceType := spec.MSpace
 				roomType = &spaceType
 			}
-		} else if authorised, isJoinedOrInvited, allowedRoomIDs := authorised(ctx, querier, walker.Caller, queuedRoom.RoomID, queuedRoom.ParentRoomID); authorised { //nolint:misspell
+		} else if authorised, allowedRoomIDs := authorised(ctx, querier, walker.Caller, queuedRoom.RoomID); authorised { //nolint:misspell
 			// Get all `m.space.child` state events for this room
 			events, err := childReferences(ctx, querier, walker.SuggestedOnly, queuedRoom.RoomID)
 			if err != nil {
@@ -155,15 +155,8 @@ func (querier *Queryer) QueryNextRoomHierarchyPage(ctx context.Context, walker r
 				hierarchyRoom.Encryption = gjson.GetBytes(encryption.Content(), "algorithm").Str
 			}
 			discoveredRooms = append(discoveredRooms, hierarchyRoom)
-			// don't walk children if the user is not joined/invited to the space
-			if !isJoinedOrInvited {
-				continue
-			}
-		} else if !authorised { //nolint:misspell
-			inaccessible = append(inaccessible, queuedRoom.RoomID.String())
-			continue
 		} else {
-			// room exists but user is not authorized
+			inaccessible = append(inaccessible, queuedRoom.RoomID.String())
 			continue
 		}
 
@@ -260,27 +253,18 @@ func remoteRootAccessible(ctx context.Context, querier *Queryer, walker roomserv
 	if res == nil {
 		return nil
 	}
-	accessible := remoteRoomAccessible(res.Room, func(roomID string) string {
-		var membership roomserver.QueryMembershipForUserResponse
-		if err := querier.QueryMembershipForUser(ctx, &roomserver.QueryMembershipForUserRequest{
-			RoomID: roomID, UserID: *userID,
-		}, &membership); err != nil || !membership.HasBeenInRoom {
-			return ""
-		}
-		return membership.Membership
-	})
-	if !accessible {
+	if !userMaySeeRoom(res.Room, userMembership(ctx, querier, *userID)) {
 		return nil
 	}
 	return res
 }
 
-// remoteRoomAccessible reports whether a user may see the summary of a room
-// that a remote server returned: the room is world readable, anyone may join
-// or knock, the user is invited, or the user is joined to one of the rooms
-// that allow joining. The membership function returns the user's membership
-// in a room, or "" if there is none.
-func remoteRoomAccessible(room fclient.RoomHierarchyRoom, membership func(roomID string) string) bool {
+// userMaySeeRoom reports whether a user may see the summary of a room, here
+// or on a remote server: the room is world readable, anyone may join or
+// knock, the user is joined or invited, or the user is joined to one of the
+// rooms that allow joining. The membership function returns the user's
+// membership in a room, or "" if there is none.
+func userMaySeeRoom(room fclient.RoomHierarchyRoom, membership func(roomID string) string) bool {
 	if room.WorldReadable {
 		return true
 	}
@@ -302,16 +286,16 @@ func remoteRoomAccessible(room fclient.RoomHierarchyRoom, membership func(roomID
 	return false
 }
 
-// authorized returns true iff the user is joined this room or the room is world_readable. //nolint:misspell,godot.
-func authorised(ctx context.Context, querier *Queryer, caller types.DeviceOrServerName, roomID spec.RoomID, parentRoomID *spec.RoomID) (authed, isJoinedOrInvited bool, resultAllowedRoomIDs []string) { //nolint:misspell
+// authorized reports whether the caller may see the room, and returns the
+// rooms whose members may join it without knocking.
+func authorised(ctx context.Context, querier *Queryer, caller types.DeviceOrServerName, roomID spec.RoomID) (authed bool, resultAllowedRoomIDs []string) { //nolint:misspell
 	if clientCaller := caller.Device(); clientCaller != nil {
-		return authorisedUser(ctx, querier, clientCaller, roomID, parentRoomID)
+		return authorisedUser(ctx, querier, clientCaller, roomID)
 	}
 	if serverCaller := caller.ServerName(); serverCaller != nil {
-		authed, resultAllowedRoomIDs = authorisedServer(ctx, querier, roomID, *serverCaller)
-		return authed, false, resultAllowedRoomIDs
+		return authorisedServer(ctx, querier, roomID, *serverCaller)
 	}
-	return false, false, resultAllowedRoomIDs
+	return false, nil
 }
 
 // authorisedServer returns true iff the server is joined this room or the room is world_readable, public, or knockable.
@@ -399,10 +383,14 @@ func authorisedServer(ctx context.Context, querier *Queryer, roomID spec.RoomID,
 	return false, resultAllowedRoomIDs[1:]
 }
 
-// authorisedUser returns true iff the user is invited/joined this room or the room is world_readable.
-// Failing that, if the user is joined to the space parent listed, it returns true when the room has a public,
-// knock or knock_restricted join rule, or a restricted join rule that allows members of that parent.
-func authorisedUser(ctx context.Context, querier *Queryer, clientCaller *userapi.Device, roomID spec.RoomID, parentRoomID *spec.RoomID) (authed bool, isJoinedOrInvited bool, resultAllowedRoomIDs []string) {
+// authorisedUser reports whether the user may see the room, by the rules of
+// userMaySeeRoom, and returns the rooms whose members may join it without
+// knocking.
+func authorisedUser(ctx context.Context, querier *Queryer, clientCaller *userapi.Device, roomID spec.RoomID) (authed bool, resultAllowedRoomIDs []string) {
+	userID, err := spec.NewUserID(clientCaller.UserID, true)
+	if err != nil {
+		return false, nil
+	}
 	hisVisTuple := gomatrixserverlib.StateKeyTuple{
 		EventType: spec.MRoomHistoryVisibility,
 		StateKey:  "",
@@ -411,93 +399,46 @@ func authorisedUser(ctx context.Context, querier *Queryer, clientCaller *userapi
 		EventType: spec.MRoomJoinRules,
 		StateKey:  "",
 	}
-	roomMemberTuple := gomatrixserverlib.StateKeyTuple{
-		EventType: spec.MRoomMember,
-		StateKey:  clientCaller.UserID,
-	}
 	var queryRes roomserver.QueryCurrentStateResponse
-	err := querier.QueryCurrentState(ctx, &roomserver.QueryCurrentStateRequest{
-		RoomID: roomID.String(),
-		StateTuples: []gomatrixserverlib.StateKeyTuple{
-			hisVisTuple, joinRuleTuple, roomMemberTuple,
-		},
+	err = querier.QueryCurrentState(ctx, &roomserver.QueryCurrentStateRequest{
+		RoomID:      roomID.String(),
+		StateTuples: []gomatrixserverlib.StateKeyTuple{hisVisTuple, joinRuleTuple},
 	}, &queryRes)
 	if err != nil {
 		util.GetLogger(ctx).WithError(err).Error("failed to QueryCurrentState")
-		return false, false, resultAllowedRoomIDs
+		return false, nil
 	}
-	memberEv := queryRes.StateEvents[roomMemberTuple]
-	if memberEv != nil {
-		membership, _ := memberEv.Membership()
-		if membership == spec.Join || membership == spec.Invite {
-			return true, true, resultAllowedRoomIDs
-		}
-	} else {
-		// No member event in current state - this can happen during partial state (MSC3706 faster joins)
-		// Fall back to checking the membership table directly which is updated before state is complete
-		userID, parseErr := spec.NewUserID(clientCaller.UserID, true)
-		if parseErr == nil {
-			var membershipRes roomserver.QueryMembershipForUserResponse
-			membershipErr := querier.QueryMembershipForUser(ctx, &roomserver.QueryMembershipForUserRequest{
-				RoomID: roomID.String(),
-				UserID: *userID,
-			}, &membershipRes)
-			if membershipErr == nil && membershipRes.IsInRoom {
-				return true, true, resultAllowedRoomIDs
-			}
-		}
-	}
-	hisVisEv := queryRes.StateEvents[hisVisTuple]
-	if hisVisEv != nil {
+	room := fclient.RoomHierarchyRoom{PublicRoom: fclient.PublicRoom{RoomID: roomID.String()}}
+	if hisVisEv := queryRes.StateEvents[hisVisTuple]; hisVisEv != nil {
 		hisVis, _ := hisVisEv.HistoryVisibility()
-		if hisVis == "world_readable" {
-			return true, false, resultAllowedRoomIDs
-		}
+		room.WorldReadable = hisVis == gomatrixserverlib.HistoryVisibilityWorldReadable
 	}
-	joinRuleEv := queryRes.StateEvents[joinRuleTuple]
-	if parentRoomID != nil && joinRuleEv != nil {
-		var allowed bool
+	if joinRuleEv := queryRes.StateEvents[joinRuleTuple]; joinRuleEv != nil {
 		rule, ruleErr := joinRuleEv.JoinRule()
-		switch {
-		case ruleErr != nil:
-			util.GetLogger(ctx).WithError(ruleErr).WithField("parent_room_id", parentRoomID).Warn("failed to get join rule")
-		case rule == spec.Public || rule == spec.Knock:
-			allowed = true
-		case rule == spec.Restricted || rule == spec.KnockRestricted:
-			// Anyone may knock on a knock_restricted room, so it is visible even
-			// when the parent is not in its allow list.
-			allowed = rule == spec.KnockRestricted
-			// check parent is in the allowed set
-			for _, a := range restrictedJoinRuleAllowedRooms(ctx, joinRuleEv) {
-				resultAllowedRoomIDs = append(resultAllowedRoomIDs, a.String())
-				if *parentRoomID == a {
-					allowed = true
-				}
-			}
+		if ruleErr != nil {
+			util.GetLogger(ctx).WithError(ruleErr).WithField("room_id", roomID.String()).Warn("failed to get join rule")
 		}
-		if allowed {
-			// ensure caller is joined to the parent room
-			var queryRes2 roomserver.QueryCurrentStateResponse
-			err = querier.QueryCurrentState(ctx, &roomserver.QueryCurrentStateRequest{
-				RoomID: parentRoomID.String(),
-				StateTuples: []gomatrixserverlib.StateKeyTuple{
-					roomMemberTuple,
-				},
-			}, &queryRes2)
-			if err != nil {
-				util.GetLogger(ctx).WithError(err).WithField("parent_room_id", parentRoomID).Warn("failed to check user is joined to parent room")
-			} else {
-				memberEv = queryRes2.StateEvents[roomMemberTuple]
-				if memberEv != nil {
-					membership, _ := memberEv.Membership()
-					if membership == spec.Join {
-						return true, false, resultAllowedRoomIDs
-					}
-				}
-			}
+		room.JoinRule = rule
+		for _, allowed := range restrictedJoinRuleAllowedRooms(ctx, joinRuleEv) {
+			room.AllowedRoomIDs = append(room.AllowedRoomIDs, allowed.String())
 		}
 	}
-	return false, false, resultAllowedRoomIDs
+	return userMaySeeRoom(room, userMembership(ctx, querier, *userID)), room.AllowedRoomIDs
+}
+
+// userMembership returns a function that looks up the user's membership in a
+// room, or "" if the user has never been in it. It reads the membership table,
+// which a join updates before the room's state is complete (MSC3706).
+func userMembership(ctx context.Context, querier *Queryer, userID spec.UserID) func(roomID string) string {
+	return func(roomID string) string {
+		var membership roomserver.QueryMembershipForUserResponse
+		if err := querier.QueryMembershipForUser(ctx, &roomserver.QueryMembershipForUserRequest{
+			RoomID: roomID, UserID: userID,
+		}, &membership); err != nil || !membership.HasBeenInRoom {
+			return ""
+		}
+		return membership.Membership
+	}
 }
 
 // helper function to fetch a state event.

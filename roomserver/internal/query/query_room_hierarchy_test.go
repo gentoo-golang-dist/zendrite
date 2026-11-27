@@ -137,7 +137,7 @@ func TestRemoteRoomAccessible(t *testing.T) {
 		{"invite only lists allowed rooms", room(spec.Invite, false, "!a:local"), memberships(map[string]string{"!a:local": spec.Join}), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, remoteRoomAccessible(tc.room, tc.membership))
+			require.Equal(t, tc.want, userMaySeeRoom(tc.room, tc.membership))
 		})
 	}
 }
