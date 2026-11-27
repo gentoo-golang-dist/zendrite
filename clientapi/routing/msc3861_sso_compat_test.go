@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -426,7 +427,8 @@ func TestMSC3861SSOCompat_RedirectUsesConfiguredEndpoints(t *testing.T) {
 	}
 	// A device ID must be allocated and requested via the stable device scope,
 	// alongside offline_access so the provider issues a refresh token, and
-	// email/profile so the homeserver can derive a friendly localpart.
+	// email/profile so the homeserver can derive a friendly localpart. This
+	// provider advertises no scopes_supported, so profile is still requested.
 	scope := q.Get("scope")
 	if !strings.HasPrefix(scope, "openid offline_access email profile urn:matrix:client:api:* urn:matrix:client:device:") {
 		t.Errorf("expected scope to request offline_access, email, profile and a device ID, got %q", scope)
@@ -530,6 +532,89 @@ func TestMSC3861SSOCompat_RedirectDiscoversEndpoints(t *testing.T) {
 	}
 	if atomic.LoadInt32(&discoveryHits) != 1 {
 		t.Fatalf("expected OIDC discovery to be hit once, got %d", discoveryHits)
+	}
+}
+
+// MAS rejects the whole authorization grant over a scope its policy does not
+// know, and it does not know "profile", so the redirect must only request it
+// from providers that advertise it or advertise no scopes at all.
+func TestMSC3861SSOCompat_RedirectProfileScopeFollowsDiscovery(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		scopesSupported []string
+		wantProfile     bool
+	}{
+		{
+			name:            "MAS does not advertise profile",
+			scopesSupported: []string{"openid", "offline_access", "urn:matrix:client:api:*"},
+			wantProfile:     false,
+		},
+		{
+			name:            "provider advertises profile",
+			scopesSupported: []string{"openid", "email", "profile", "offline_access"},
+			wantProfile:     true,
+		},
+		{
+			name:        "provider advertises no scopes",
+			wantProfile: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/.well-known/openid-configuration" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				doc := map[string]any{
+					"authorization_endpoint": "https://auth.example.com/discovery/auth",
+					"token_endpoint":         "https://auth.example.com/discovery/token",
+				}
+				if tt.scopesSupported != nil {
+					doc["scopes_supported"] = tt.scopesSupported
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(doc)
+			}))
+			defer mockProvider.Close()
+
+			routers, _, closeDB := setupMSC3861SSORouters(t, config.MSC3861Config{
+				Issuer:               mockProvider.URL,
+				ClientID:             "test-client-id",
+				ClientSecret:         "test-client-secret",
+				SSOCallbackURL:       "https://matrix.example.com/_matrix/client/v3/login/sso/callback",
+				SSORedirectAllowlist: []string{"element://"},
+			})
+			defer closeDB()
+
+			req := test.NewRequest(t, http.MethodGet, "/_matrix/client/v3/login/sso/redirect", test.WithQueryParams(map[string]string{
+				"redirectUrl": "element://connect",
+			}))
+			rec := httptest.NewRecorder()
+			routers.Client.ServeHTTP(rec, req)
+			if rec.Code != http.StatusFound {
+				t.Fatalf("expected 302, got %d: %s", rec.Code, rec.Body.String())
+			}
+			u, err := url.Parse(rec.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("failed to parse Location: %v", err)
+			}
+
+			scopes := strings.Fields(u.Query().Get("scope"))
+			if got := slices.Contains(scopes, "profile"); got != tt.wantProfile {
+				t.Errorf("expected profile requested = %v, got scope %q", tt.wantProfile, u.Query().Get("scope"))
+			}
+			for _, want := range []string{"openid", "offline_access", "email", "urn:matrix:client:api:*"} {
+				if !slices.Contains(scopes, want) {
+					t.Errorf("expected scope %q in %q", want, u.Query().Get("scope"))
+				}
+			}
+		})
 	}
 }
 

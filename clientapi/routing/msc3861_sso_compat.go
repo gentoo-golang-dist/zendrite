@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -477,7 +478,7 @@ func (h *ssoCompatHandler) serveRedirect(req *http.Request) util.JSONResponse {
 		"client_id":             {h.cfg.ClientID},
 		"redirect_uri":          {h.callbackURL(req)},
 		"state":                 {state},
-		"scope":                 {"openid offline_access email profile urn:matrix:client:api:* urn:matrix:client:device:" + session.deviceID},
+		"scope":                 {endpoints.scope(session.deviceID)},
 		"code_challenge":        {pkceChallenge(session.codeVerifier)},
 		"code_challenge_method": {"S256"},
 	}
@@ -590,6 +591,23 @@ func (h *ssoCompatHandler) serveCallback(req *http.Request) util.JSONResponse {
 type oidcProviderEndpoints struct {
 	authorizationEndpoint string
 	tokenEndpoint         string
+	// omitProfileScope is set when the provider's discovery document lists
+	// scopes_supported without "profile". MAS is one such provider, and its
+	// default policy rejects the whole grant over a scope it does not know,
+	// so requesting "profile" there leaves the user on a consent error page.
+	omitProfileScope bool
+}
+
+// scope returns the scope the SSO compat authorization request asks for.
+// "profile" is kept for providers that support it or do not say, because
+// their userinfo endpoint only returns preferred_username under it.
+func (e *oidcProviderEndpoints) scope(deviceID string) string {
+	scopes := []string{"openid", "offline_access", "email"}
+	if !e.omitProfileScope {
+		scopes = append(scopes, "profile")
+	}
+	scopes = append(scopes, "urn:matrix:client:api:*", "urn:matrix:client:device:"+deviceID)
+	return strings.Join(scopes, " ")
 }
 
 // ssoDiscoveryCacheEntry holds the outcome of a discovery attempt for one
@@ -676,8 +694,9 @@ func (h *ssoCompatHandler) fetchOIDCEndpoints(ctx context.Context) (*oidcProvide
 	}
 
 	var doc struct {
-		AuthorizationEndpoint string `json:"authorization_endpoint"`
-		TokenEndpoint         string `json:"token_endpoint"`
+		AuthorizationEndpoint string   `json:"authorization_endpoint"`
+		TokenEndpoint         string   `json:"token_endpoint"`
+		ScopesSupported       []string `json:"scopes_supported"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return nil, err
@@ -694,6 +713,7 @@ func (h *ssoCompatHandler) fetchOIDCEndpoints(ctx context.Context) (*oidcProvide
 	return &oidcProviderEndpoints{
 		authorizationEndpoint: authz,
 		tokenEndpoint:         token,
+		omitProfileScope:      len(doc.ScopesSupported) > 0 && !slices.Contains(doc.ScopesSupported, "profile"),
 	}, nil
 }
 
