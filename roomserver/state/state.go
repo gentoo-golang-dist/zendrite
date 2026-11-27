@@ -1332,9 +1332,12 @@ func (v *StateResolution) resolveConflictsV2(
 		notConflicted = append(notConflicted, entry)
 	}
 
-	// Sort the result so it can be searched.
-	sort.Sort(stateEntrySorter(notConflicted))
-	return notConflicted, nil
+	// The resolver returns the whole resolved state, so every unconflicted
+	// entry is now listed twice. Sort the result so it can be searched and
+	// keep one of each: a delta cannot be built from a state that has two
+	// entries for one key, so the duplicates made every resolved merge a full
+	// copy of the room state.
+	return notConflicted[:util.SortAndUnique(stateEntrySorter(notConflicted))], nil
 }
 
 // stateKeyTuplesNeeded works out which numeric state key tuples we need to authenticate some events.

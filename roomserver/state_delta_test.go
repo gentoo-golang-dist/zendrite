@@ -111,3 +111,58 @@ func eventAt(
 	t.Fatalf("snapshot %d has no entry for %v", nid, key)
 	return 0
 }
+
+// A merge that resolves a conflict must be stored as a delta. The v2 resolver
+// returns the whole resolved state, unconflicted entries included, and adding
+// it to the unconflicted entries listed every one of them twice; the delta
+// refused a state with two entries for one key, so every resolved merge in a
+// room with forward extremities stored the whole room state again.
+func TestResolvedConflictIsStoredAsDelta(t *testing.T) {
+	alice := test.NewUser(t)
+	ctx := context.Background()
+
+	test.WithAllDatabases(t, func(t *testing.T, dbType test.DBType) {
+		cfg, processCtx, closeRig := testrig.CreateConfig(t, dbType)
+		defer closeRig()
+		cm := sqlutil.NewConnectionManager(processCtx, cfg.Global.DatabaseOptions)
+		caches := caching.NewRistrettoCache(8*1024*1024, time.Hour, caching.DisableMetrics)
+		db, err := storage.Open(processCtx.Context(), cm, &cfg.RoomServer.Database, caches) //nolint:contextcheck
+		require.NoError(t, err)
+
+		natsInstance := jetstream.NATSInstance{}
+		jsCtx, _ := natsInstance.Prepare(processCtx, &cfg.Global.JetStream)
+		defer jetstream.DeleteAllStreams(jsCtx, &cfg.Global.JetStream)
+		rsAPI := roomserver.NewInternalAPI(processCtx, cfg, cm, &natsInstance, caches, caching.DisableMetrics)
+		rsAPI.SetFederationAPI(nil, nil)
+
+		room := test.NewRoom(t, alice, test.RoomPreset(test.PresetPublicChat))
+		const members = 20
+		for range members {
+			member := test.NewUser(t)
+			room.CreateAndInsert(t, member, spec.MRoomMember, map[string]any{"membership": "join"}, test.WithStateKey(member.ID))
+		}
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, room.Events(), "test", "test", "test", nil, false))
+
+		// Two concurrent topics leave two forward extremities whose states
+		// conflict on the topic.
+		fork := test.WithPrevEvents(room.Events()[len(room.Events())-1].EventID())
+		first := room.CreateEvent(t, alice, "m.room.topic", map[string]any{"topic": "first"}, test.WithStateKey(""), fork)
+		second := room.CreateEvent(t, alice, "m.room.topic", map[string]any{"topic": "second"}, test.WithStateKey(""), fork)
+		require.NoError(t, api.SendEvents(ctx, rsAPI, api.KindNew, []*types.HeaderedEvent{first, second}, "test", "test", "test", nil, false))
+
+		roomInfo, err := db.RoomInfo(ctx, room.ID)
+		require.NoError(t, err)
+		current := roomInfo.StateSnapshotNID()
+		resolver := state.NewStateResolution(db, roomInfo, nil)
+		resolved, err := resolver.LoadStateAtSnapshot(ctx, current)
+		require.NoError(t, err)
+		require.Greater(t, len(resolved), members, "the resolved state keeps every member")
+
+		blocks := blocksOf(ctx, t, db, current)
+		require.Greater(t, len(blocks), 1, "the resolved state is a single full block")
+		lists, err := db.StateEntries(ctx, blocks[len(blocks)-1:])
+		require.NoError(t, err)
+		require.Len(t, lists, 1)
+		require.LessOrEqual(t, len(lists[0].StateEntries), 2, "the delta holds only the resolved topic")
+	})
+}

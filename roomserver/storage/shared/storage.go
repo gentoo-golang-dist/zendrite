@@ -928,6 +928,8 @@ func (d *Database) GetOrCreateRoomInfo(ctx context.Context, event gomatrixserver
 	}
 	if roomVersion != "" {
 		d.Cache.StoreRoomVersion(event.RoomID().String(), roomVersion)
+	} else if versionOK {
+		roomVersion = cachedRoomVersion
 	}
 	return &types.RoomInfo{
 		RoomVersion: roomVersion,
@@ -1127,7 +1129,12 @@ func (d *Database) assignRoomNID(
 	}
 	if !inserted {
 		d.Cache.StoreRoomServerRoomID(roomNID, roomID)
-		d.Cache.StoreRoomVersion(roomID, roomVersion)
+		// Only a create event carries the room version. Storing the empty
+		// version of any other event over the cached one panics, as the
+		// cache is immutable, whenever the room NID was not cached.
+		if roomVersion != "" {
+			d.Cache.StoreRoomVersion(roomID, roomVersion)
+		}
 	}
 	return roomNID, nil
 }

@@ -77,6 +77,14 @@ func (f *noFederation) GetEventAuth(
 	return fclient.RespEventAuth{}, errors.New("no federation in this test")
 }
 
+// LookupStateIDs is called by the membership repair that runs in the
+// background after startup; without it the embedded nil API panics.
+func (f *noFederation) LookupStateIDs(
+	context.Context, spec.ServerName, spec.ServerName, string, string,
+) (gomatrixserverlib.StateIDResponse, error) {
+	return nil, errors.New("no federation in this test")
+}
+
 // beginPartialJoin joins alice to room, which already holds every event
 // before the join, with partial state. StateBeforePrev is the full state
 // before the last event of the room, the join's prev event.
