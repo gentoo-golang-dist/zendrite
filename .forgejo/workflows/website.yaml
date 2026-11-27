@@ -26,7 +26,7 @@ jobs:
     # Spelling, grammar, and style checks for the docs; rules live in .vale.ini
     # and .vale/zendrite/, accepted words in .vale/config/vocabularies/zendrite/.
     # renovate: datasource=docker depName=jdkato/vale
-    container: cr.codefloe.com/docker.io/jdkato/vale:v3.28.1
+    container: cr.codefloe.com/docker.io/jdkato/vale:v3.29.0
     timeout-minutes: 5
     steps:
       # actions/checkout needs node, which the Alpine-based image lacks.
