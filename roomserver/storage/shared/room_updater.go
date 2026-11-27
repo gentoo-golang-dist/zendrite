@@ -146,6 +146,17 @@ func (u *RoomUpdater) AddState(
 	return u.d.addState(ctx, u.txn, roomNID, stateBlockNIDs, state)
 }
 
+// AddStateDelta stores a snapshot made of stateBlockNIDs followed by one new
+// block holding delta, keeping every delta entry (see Database.AddStateDelta).
+func (u *RoomUpdater) AddStateDelta(
+	ctx context.Context,
+	roomNID types.RoomNID,
+	stateBlockNIDs []types.StateBlockNID,
+	delta []types.StateEntry,
+) (types.StateSnapshotNID, error) {
+	return u.d.addStateBlocks(ctx, u.txn, roomNID, stateBlockNIDs, delta)
+}
+
 func (u *RoomUpdater) SetState(
 	ctx context.Context, eventNID types.EventNID, stateNID types.StateSnapshotNID,
 ) error {

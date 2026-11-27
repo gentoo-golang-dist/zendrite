@@ -298,6 +298,20 @@ func (d *Database) AddState(
 	return d.addState(ctx, nil, roomNID, stateBlockNIDs, state)
 }
 
+// AddStateDelta stores a snapshot made of stateBlockNIDs followed by one new
+// block holding delta. Unlike AddState it keeps every delta entry, including
+// one whose event already appears in an earlier block: a delta may restore an
+// entry that a later block of stateBlockNIDs overrides, and dropping it would
+// let the overriding entry win.
+func (d *Database) AddStateDelta(
+	ctx context.Context,
+	roomNID types.RoomNID,
+	stateBlockNIDs []types.StateBlockNID,
+	delta []types.StateEntry,
+) (types.StateSnapshotNID, error) {
+	return d.addStateBlocks(ctx, nil, roomNID, stateBlockNIDs, delta)
+}
+
 func (d *Database) addState(
 	ctx context.Context, txn *sql.Tx,
 	roomNID types.RoomNID,
@@ -330,6 +344,17 @@ func (d *Database) addState(
 			}
 		}
 	}
+	return d.addStateBlocks(ctx, txn, roomNID, stateBlockNIDs, state)
+}
+
+// addStateBlocks stores a snapshot made of stateBlockNIDs followed, when state
+// is not empty, by one block holding state.
+func (d *Database) addStateBlocks(
+	ctx context.Context, txn *sql.Tx,
+	roomNID types.RoomNID,
+	stateBlockNIDs []types.StateBlockNID,
+	state []types.StateEntry,
+) (stateNID types.StateSnapshotNID, err error) {
 	err = d.Writer.Do(d.DB, txn, func(txn *sql.Tx) error {
 		if len(state) > 0 {
 			// If there's any state left to add then let's add new blocks.

@@ -36,6 +36,7 @@ type StateResolutionStorage interface {
 	StateEntriesForTuples(ctx context.Context, stateBlockNIDs []types.StateBlockNID, stateKeyTuples []types.StateKeyTuple) ([]types.StateEntryList, error)
 	StateAtEventIDs(ctx context.Context, eventIDs []string) ([]types.StateAtEvent, error)
 	AddState(ctx context.Context, roomNID types.RoomNID, stateBlockNIDs []types.StateBlockNID, state []types.StateEntry) (types.StateSnapshotNID, error)
+	AddStateDelta(ctx context.Context, roomNID types.RoomNID, stateBlockNIDs []types.StateBlockNID, delta []types.StateEntry) (types.StateSnapshotNID, error)
 	Events(ctx context.Context, roomVersion gomatrixserverlib.RoomVersion, eventNIDs []types.EventNID) ([]types.Event, error)
 	EventsFromIDs(ctx context.Context, roomInfo *types.RoomInfo, eventIDs []string) ([]types.Event, error)
 	IsEventRejected(ctx context.Context, roomNID types.RoomNID, eventID string) (bool, error)
@@ -887,11 +888,150 @@ func (v *StateResolution) calculateAndStoreStateAfterManyEvents(
 		return metrics.stop(0, fmt.Errorf("v.calculateStateAfterManyEvents: %w", err))
 	}
 
-	// TODO: Check if we can encode the new state as a delta against the
-	// previous state.
 	metrics.conflictLength = conflictLength
 	metrics.fullStateLength = len(state)
-	return metrics.stop(v.db.AddState(ctx, roomNID, nil, state))
+	stateNID, asDelta, err := v.storeResolvedState(ctx, roomNID, prevStates, state)
+	if asDelta {
+		metrics.algorithm += "_as_delta"
+	}
+	return metrics.stop(stateNID, err)
+}
+
+// maxStateDeltaDivisor bounds the size of a delta: a state that differs from
+// every candidate base in more than 1/maxStateDeltaDivisor of its entries is
+// stored as one full block, which then becomes the base for later deltas.
+const maxStateDeltaDivisor = 4
+
+// stateDeltaBase is a list of existing state blocks that a new snapshot can
+// extend with one delta block.
+type stateDeltaBase struct {
+	blocks []types.StateBlockNID
+	state  map[types.StateKeyTuple]types.EventNID
+}
+
+// storeResolvedState stores state, the resolved state after prevStates, as a
+// delta against the state before one of prevStates where it can, and reports
+// whether it did. Storing a merge of two branches as one full block made a
+// copy of the whole room state for every merge, megabytes for each join to a
+// room with tens of thousands of members.
+func (v *StateResolution) storeResolvedState(
+	ctx context.Context, roomNID types.RoomNID, prevStates []types.StateAtEvent, state []types.StateEntry,
+) (types.StateSnapshotNID, bool, error) {
+	bases, err := v.stateDeltaBases(ctx, prevStates)
+	if err != nil {
+		return 0, false, err
+	}
+	var best *stateDeltaBase
+	var bestDelta []types.StateEntry
+	for i := range bases {
+		delta, ok := stateDelta(bases[i].state, state)
+		if !ok {
+			continue
+		}
+		if best == nil || len(delta) < len(bestDelta) {
+			best, bestDelta = &bases[i], delta
+		}
+	}
+	if best == nil || len(bestDelta)*maxStateDeltaDivisor > len(state) {
+		stateNID, err := v.db.AddState(ctx, roomNID, nil, state)
+		return stateNID, false, err
+	}
+	stateNID, err := v.db.AddStateDelta(ctx, roomNID, best.blocks, bestDelta)
+	return stateNID, true, err
+}
+
+// stateDeltaBases returns the bases a delta for the state after prevStates
+// can extend: for each distinct snapshot before them, all of its blocks while
+// there is room for one more, and its first block, which is the full state a
+// chain of deltas started from, so that a long chain is folded into one delta
+// instead of rewriting the whole state.
+func (v *StateResolution) stateDeltaBases(
+	ctx context.Context, prevStates []types.StateAtEvent,
+) ([]stateDeltaBase, error) {
+	snapshotNIDs := make([]types.StateSnapshotNID, 0, len(prevStates))
+	for _, prevState := range prevStates {
+		if prevState.BeforeStateSnapshotNID != 0 {
+			snapshotNIDs = append(snapshotNIDs, prevState.BeforeStateSnapshotNID)
+		}
+	}
+	snapshotNIDs = UniqueStateSnapshotNIDs(snapshotNIDs)
+	if len(snapshotNIDs) == 0 {
+		return nil, nil
+	}
+	blockLists, err := v.db.StateBlockNIDs(ctx, snapshotNIDs)
+	if err != nil {
+		return nil, fmt.Errorf("v.db.StateBlockNIDs: %w", err)
+	}
+	var blockNIDs []types.StateBlockNID
+	for _, list := range blockLists {
+		blockNIDs = append(blockNIDs, list.StateBlockNIDs...)
+	}
+	blockNIDs = uniqueStateBlockNIDs(blockNIDs)
+	entryLists, err := v.db.StateEntries(ctx, blockNIDs)
+	if err != nil {
+		return nil, fmt.Errorf("v.db.StateEntries: %w", err)
+	}
+	entries := stateEntryListMap(entryLists)
+
+	combine := func(blocks []types.StateBlockNID) (map[types.StateKeyTuple]types.EventNID, bool) {
+		combined := map[types.StateKeyTuple]types.EventNID{}
+		for _, blockNID := range blocks {
+			list, ok := entries.lookup(blockNID)
+			if !ok {
+				return nil, false
+			}
+			for _, entry := range list {
+				combined[entry.StateKeyTuple] = entry.EventNID
+			}
+		}
+		return combined, true
+	}
+
+	var bases []stateDeltaBase
+	for _, list := range blockLists {
+		blocks := list.StateBlockNIDs
+		if len(blocks) == 0 {
+			continue
+		}
+		if len(blocks) < maxStateBlockNIDs {
+			if combined, ok := combine(blocks); ok {
+				bases = append(bases, stateDeltaBase{blocks: blocks, state: combined})
+			}
+		}
+		if len(blocks) > 1 {
+			if combined, ok := combine(blocks[:1]); ok {
+				bases = append(bases, stateDeltaBase{blocks: blocks[:1], state: combined})
+			}
+		}
+	}
+	return bases, nil
+}
+
+// stateDelta returns the entries of state that a snapshot made of base and one
+// more block needs in that block. It reports false when state lacks a key that
+// base has, because a later block can replace an entry but not remove one.
+func stateDelta(
+	base map[types.StateKeyTuple]types.EventNID, state []types.StateEntry,
+) ([]types.StateEntry, bool) {
+	var delta []types.StateEntry
+	seen := make(map[types.StateKeyTuple]struct{}, len(state))
+	covered := 0
+	for _, entry := range state {
+		if _, dup := seen[entry.StateKeyTuple]; dup {
+			// Two entries for one key cannot be told apart by block order.
+			return nil, false
+		}
+		seen[entry.StateKeyTuple] = struct{}{}
+		eventNID, ok := base[entry.StateKeyTuple]
+		if ok {
+			covered++
+			if eventNID == entry.EventNID {
+				continue
+			}
+		}
+		delta = append(delta, entry)
+	}
+	return delta, covered == len(base)
 }
 
 func (v *StateResolution) calculateStateAfterManyEvents(

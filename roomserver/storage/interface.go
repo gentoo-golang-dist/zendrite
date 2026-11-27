@@ -70,6 +70,15 @@ type Database interface {
 		stateBlockNIDs []types.StateBlockNID,
 		state []types.StateEntry,
 	) (types.StateSnapshotNID, error)
+	// AddStateDelta stores a snapshot made of stateBlockNIDs followed by one
+	// new block holding delta, keeping every delta entry even when its event
+	// already appears in an earlier block.
+	AddStateDelta(
+		ctx context.Context,
+		roomNID types.RoomNID,
+		stateBlockNIDs []types.StateBlockNID,
+		delta []types.StateEntry,
+	) (types.StateSnapshotNID, error)
 
 	MissingAuthPrevEvents(
 		ctx context.Context, e gomatrixserverlib.PDU,
@@ -372,6 +381,7 @@ type RoomDatabase interface {
 	BulkSelectSnapshotsFromEventIDs(ctx context.Context, eventIDs []string) (map[types.StateSnapshotNID][]string, error)
 	StateEntriesForTuples(ctx context.Context, stateBlockNIDs []types.StateBlockNID, stateKeyTuples []types.StateKeyTuple) ([]types.StateEntryList, error)
 	AddState(ctx context.Context, roomNID types.RoomNID, stateBlockNIDs []types.StateBlockNID, state []types.StateEntry) (types.StateSnapshotNID, error)
+	AddStateDelta(ctx context.Context, roomNID types.RoomNID, stateBlockNIDs []types.StateBlockNID, delta []types.StateEntry) (types.StateSnapshotNID, error)
 	LatestEventIDs(ctx context.Context, roomNID types.RoomNID) ([]string, types.StateSnapshotNID, int64, error)
 	GetOrCreateRoomInfo(ctx context.Context, event gomatrixserverlib.PDU) (*types.RoomInfo, error)
 	GetOrCreateEventTypeNID(ctx context.Context, eventType string) (eventTypeNID types.EventTypeNID, err error)
