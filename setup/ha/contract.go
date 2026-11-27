@@ -85,8 +85,10 @@ var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, Rollbac
 // (MSC4194), level 35 records the sliding sync position whose response
 // delivered each receipt (MSC4551), and level 36 records the sync API's
 // pending partial-state joins, so that eager syncs do not receive the room
-// twice (MSC3902).
-const releaseLevel = 36
+// twice (MSC3902), and level 37 records the plans of the state block
+// compaction, which an older build ignores: it reads and copies block lists
+// as before, and every snapshot holding a compacted block holds its base.
+const releaseLevel = 37
 
 // contractOverride replaces the release contract in qualification builds,
 // which need a second build at another level to exercise rolling upgrades

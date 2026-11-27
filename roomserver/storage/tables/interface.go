@@ -505,3 +505,65 @@ func ExtractContentValue(ev *types.HeaderedEvent) string {
 	// this returns the empty string if this is not a string type
 	return result.Str
 }
+
+// The states of a state block compaction plan.
+const (
+	// StateCompactionPrepared: every snapshot that starts with the block also
+	// holds the base block just before it, and the block still holds its full
+	// state.
+	StateCompactionPrepared = "prepared"
+	// StateCompactionRewritten: the block holds only its differences from
+	// the base block.
+	StateCompactionRewritten = "rewritten"
+	// StateCompactionAbandoned: the block keeps its full state for good.
+	StateCompactionAbandoned = "abandoned"
+)
+
+// StateCompactionPlan records that a state block holding a full room state is
+// re-encoded as its differences from an earlier base block of the same room.
+type StateCompactionPlan struct {
+	BlockNID types.StateBlockNID
+	RoomNID  types.RoomNID
+	BaseNID  types.StateBlockNID
+	// PreparedAt is when, in Unix milliseconds, the base block was last added
+	// to snapshots that start with the block.
+	PreparedAt int64
+	State      string
+}
+
+// StateCompaction stores the plans of the state block compaction and gives it
+// guarded access to the snapshots and blocks it rewrites.
+type StateCompaction interface {
+	// InsertPlan stores a plan and reports false if the block has one.
+	InsertPlan(ctx context.Context, txn *sql.Tx, plan StateCompactionPlan) (bool, error)
+	SelectPlans(ctx context.Context, txn *sql.Tx, state string) ([]StateCompactionPlan, error)
+	SelectRoomPlans(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) ([]StateCompactionPlan, error)
+	// LockPlan returns the block's plan, locking it until txn ends where the
+	// database supports row locks, or nil if there is none.
+	LockPlan(ctx context.Context, txn *sql.Tx, blockNID types.StateBlockNID) (*StateCompactionPlan, error)
+	UpdatePlan(ctx context.Context, txn *sql.Tx, blockNID types.StateBlockNID, state string, preparedAt int64) error
+	// SelectBases returns the base of each given block whose plan is
+	// prepared or rewritten: a snapshot holding such a block needs its base
+	// just before it.
+	SelectBases(ctx context.Context, txn *sql.Tx, blockNIDs []types.StateBlockNID) (map[types.StateBlockNID]types.StateBlockNID, error)
+	// SelectDone reports whether the compaction has finished for good.
+	SelectDone(ctx context.Context, txn *sql.Tx) (bool, error)
+	InsertDone(ctx context.Context, txn *sql.Tx) error
+
+	SelectRoomNIDs(ctx context.Context, txn *sql.Tx) ([]types.RoomNID, error)
+	SelectRoomSnapshots(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID) ([]types.StateBlockNIDList, error)
+	SelectSnapshotsWithBlock(ctx context.Context, txn *sql.Tx, roomNID types.RoomNID, blockNID types.StateBlockNID) ([]types.StateBlockNIDList, error)
+	// UpdateSnapshotBlocks replaces the blocks of a snapshot that still has
+	// oldBlocks, and its hash, and reports whether it did.
+	UpdateSnapshotBlocks(ctx context.Context, txn *sql.Tx, snapshotNID types.StateSnapshotNID, oldBlocks, newBlocks types.StateBlockNIDs) (bool, error)
+	SnapshotExists(ctx context.Context, txn *sql.Tx, blocks types.StateBlockNIDs) (bool, error)
+	// UpdateBlockEvents replaces the events of a block that still holds
+	// oldEvents, and its hash, and reports whether it did. Both lists are in
+	// the order blocks store them.
+	UpdateBlockEvents(ctx context.Context, txn *sql.Tx, blockNID types.StateBlockNID, oldEvents, newEvents types.EventNIDs) (bool, error)
+	BlockExists(ctx context.Context, txn *sql.Tx, events types.EventNIDs) (bool, error)
+	// SelectOldestTransactionStart returns when, in Unix milliseconds, the
+	// oldest open transaction of another client of the database started,
+	// and false if there is none or the database cannot tell.
+	SelectOldestTransactionStart(ctx context.Context, txn *sql.Tx) (int64, bool, error)
+}

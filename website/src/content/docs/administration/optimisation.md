@@ -58,6 +58,20 @@ It needs free disk space for the new copy of the table, which is about the size 
 Run it at a quiet time.
 You don't need to run it at all: without it, the database fills the freed space before it grows again.
 
+## State block compaction
+
+Servers in large rooms that ran a version before 3.11 stored the whole state of such a room again whenever it merged two branches of the room's history.
+Zendrite re-encodes these old copies in the background as their differences from an earlier copy, which can take the `roomserver_state_block` table from gigabytes to a fraction of that.
+
+It runs a few minutes after start and then every hour, on the active instance only, until it has gone through every room once.
+Each block takes two steps at least ten minutes apart, so that no request still uses the old list of blocks.
+Each step is one transaction that leaves every room's state unchanged.
+A restart, a lost connection or a handover between the steps only delays it.
+Zendrite logs `State compaction: pass finished` after each pass and `State compaction: finished` when it is done, and doesn't run it again after that.
+
+Like the state delta compaction, it frees space that the database reuses but doesn't return to the filesystem.
+To return it, rewrite the table at a quiet time with `VACUUM FULL roomserver_state_block;` as described in [Reclaim disk space](#reclaim-disk-space).
+
 ## File descriptor limit
 
 Most platforms limit how many file descriptors one process can open.

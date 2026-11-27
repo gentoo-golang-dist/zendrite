@@ -25,9 +25,9 @@ import (
 	"codefloe.com/pat-s/zendrite/test/testrig"
 )
 
-// A delta that restores an entry an intermediate block overrode must keep it:
-// AddState drops an entry whose event already appears in an earlier block, so
-// the overriding entry would win.
+// An entry that restores an event an intermediate block overrode must be kept
+// by AddState and AddStateDelta alike: dropping it because its event already
+// appears in an earlier block would let the overriding entry win.
 func TestAddStateDeltaKeepsOverriddenEntry(t *testing.T) {
 	alice := test.NewUser(t)
 	ctx := context.Background()
@@ -78,8 +78,8 @@ func TestAddStateDeltaKeepsOverriddenEntry(t *testing.T) {
 
 		viaAddState, err := db.AddState(ctx, roomInfo.RoomNID, overriddenBlocks, []types.StateEntry{joinEntry})
 		require.NoError(t, err)
-		require.Equal(t, renameEntry.EventNID, eventAt(ctx, t, db, roomInfo, viaAddState, joinEntry.StateKeyTuple),
-			"AddState is expected to drop the restoring entry")
+		require.Equal(t, joinEntry.EventNID, eventAt(ctx, t, db, roomInfo, viaAddState, joinEntry.StateKeyTuple),
+			"AddState keeps the restoring entry")
 
 		viaDelta, err := db.AddStateDelta(ctx, roomInfo.RoomNID, overriddenBlocks, []types.StateEntry{joinEntry})
 		require.NoError(t, err)

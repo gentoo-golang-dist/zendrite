@@ -105,6 +105,9 @@ func (d *Database) create(db *sql.DB) error {
 	if err := CreateStateSnapshotTable(db); err != nil {
 		return err
 	}
+	if err := CreateStateCompactionTable(db); err != nil {
+		return err
+	}
 	if err := CreatePrevEventsTable(db); err != nil {
 		return err
 	}
@@ -190,6 +193,10 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 		return err
 	}
 	stateSnapshot, err := PrepareStateSnapshotTable(db)
+	if err != nil {
+		return err
+	}
+	stateCompaction, err := PrepareStateCompactionTable(db)
 	if err != nil {
 		return err
 	}
@@ -299,6 +306,7 @@ func (d *Database) prepare(db *sql.DB, writer sqlutil.Writer, cache caching.Room
 		RoomsTable:              rooms,
 		StateBlockTable:         stateBlock,
 		StateSnapshotTable:      stateSnapshot,
+		StateCompactionTable:    stateCompaction,
 		RoomAliasesTable:        roomAliases,
 		InvitesTable:            invites,
 		MembershipTable:         membership,

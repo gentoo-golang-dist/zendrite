@@ -432,6 +432,7 @@ func (r *Inputer) Start() error {
 
 	r.ProcessContext.Go(r.expireClientTransactions)
 	r.ProcessContext.Go(r.expireRedactedContent)
+	r.ProcessContext.Go(r.compactStateBlocks)
 	retention.RunPurgeJobs(r.ProcessContext.Context(), &r.Cfg.Matrix.Retention, func(f func()) { r.ProcessContext.Go(f) }, r.retentionPass().Run)
 
 	// Make sure that the room consumers have the right config.

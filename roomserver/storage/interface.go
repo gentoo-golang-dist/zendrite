@@ -237,6 +237,13 @@ type Database interface {
 	// the NID to continue after, and whether the room has no more
 	// candidates. Rooms with partial state are left alone.
 	PurgeExpiredEvents(ctx context.Context, roomID string, beforeTS int64, afterNID types.EventNID, limit int) (purged []string, next types.EventNID, done bool, err error)
+	// The state block compaction re-encodes old full state blocks as deltas;
+	// see shared.Database.PrepareStateCompaction.
+	StateCompactionDone(ctx context.Context) (bool, error)
+	FinishStateCompaction(ctx context.Context) error
+	StateCompactionRoomNIDs(ctx context.Context) ([]types.RoomNID, error)
+	PrepareStateCompaction(ctx context.Context, roomNID types.RoomNID, opts shared.StateCompactionOptions, owns func() bool) (shared.StateCompactionResult, error)
+	RewriteStateCompactions(ctx context.Context, opts shared.StateCompactionOptions, owns func() bool) (shared.StateCompactionResult, error)
 	UpgradeRoom(ctx context.Context, oldRoomID, newRoomID, eventSender string) error
 
 	// GetMembershipForHistoryVisibility queries the membership events for the given eventIDs.
@@ -448,6 +455,13 @@ type RoomDatabase interface {
 	// (MSC1763); see Database.
 	RetentionRoomIDs(ctx context.Context) ([]string, error)
 	PurgeExpiredEvents(ctx context.Context, roomID string, beforeTS int64, afterNID types.EventNID, limit int) (purged []string, next types.EventNID, done bool, err error)
+	// The state block compaction re-encodes old full state blocks as deltas;
+	// see shared.Database.PrepareStateCompaction.
+	StateCompactionDone(ctx context.Context) (bool, error)
+	FinishStateCompaction(ctx context.Context) error
+	StateCompactionRoomNIDs(ctx context.Context) ([]types.RoomNID, error)
+	PrepareStateCompaction(ctx context.Context, roomNID types.RoomNID, opts shared.StateCompactionOptions, owns func() bool) (shared.StateCompactionResult, error)
+	RewriteStateCompactions(ctx context.Context, opts shared.StateCompactionOptions, owns func() bool) (shared.StateCompactionResult, error)
 	// StoreAnnotation records the event if it is an annotation (MSC2677) that
 	// has not been redacted.
 	StoreAnnotation(ctx context.Context, roomInfo *types.RoomInfo, event gomatrixserverlib.PDU) error

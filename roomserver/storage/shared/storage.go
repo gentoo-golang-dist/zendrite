@@ -46,12 +46,14 @@ type Database struct {
 	RoomsTable         tables.Rooms
 	StateSnapshotTable tables.StateSnapshot
 	StateBlockTable    tables.StateBlock
-	RoomAliasesTable   tables.RoomAliases
-	InvitesTable       tables.Invites
-	MembershipTable    tables.Membership
-	PublishedTable     tables.Published
-	Purge              tables.Purge
-	RetentionPurge     tables.RetentionPurge
+	// StateCompactionTable stores the plans of the state block compaction.
+	StateCompactionTable tables.StateCompaction
+	RoomAliasesTable     tables.RoomAliases
+	InvitesTable         tables.Invites
+	MembershipTable      tables.Membership
+	PublishedTable       tables.Published
+	Purge                tables.Purge
+	RetentionPurge       tables.RetentionPurge
 	// SenderEvents searches for a sender's events (MSC4194).
 	SenderEvents      tables.SenderEvents
 	UserRoomKeyTable  tables.UserRoomKeys
@@ -319,32 +321,67 @@ func (d *Database) addState(
 	state []types.StateEntry,
 ) (stateNID types.StateSnapshotNID, err error) {
 	if len(stateBlockNIDs) > 0 && len(state) > 0 {
-		// Check to see if the event already appears in any of the existing state
-		// blocks. If it does then we should not add it again, as this will just
-		// result in excess state blocks and snapshots.
-		// TODO: Investigate why this is happening - probably input_events.go!
-		blocks, berr := d.StateBlockTable.BulkSelectStateBlockEntries(ctx, txn, stateBlockNIDs)
-		if berr != nil {
-			return 0, fmt.Errorf("d.StateBlockTable.BulkSelectStateBlockEntries: %w", berr)
-		}
-		var found bool
-		for i := len(state) - 1; i >= 0; i-- {
-			found = false
-		blocksLoop:
-			for _, events := range blocks {
-				for _, event := range events {
-					if state[i].EventNID == event {
-						found = true
-						break blocksLoop
-					}
-				}
-			}
-			if found {
-				state = append(state[:i], state[i+1:]...)
-			}
+		var err error
+		if state, err = d.dropCurrentEntries(ctx, txn, stateBlockNIDs, state); err != nil {
+			return 0, err
 		}
 	}
 	return d.addStateBlocks(ctx, txn, roomNID, stateBlockNIDs, state)
+}
+
+// dropCurrentEntries returns state without the entries that the blocks
+// already resolve to, which would only add excess blocks and snapshots. An
+// entry whose event only appears in a block that a later one overrides for
+// its key is kept: it changes the state back, as a resync or a compacted
+// block's base can make it do.
+func (d *Database) dropCurrentEntries(
+	ctx context.Context, txn *sql.Tx, stateBlockNIDs []types.StateBlockNID, state []types.StateEntry,
+) ([]types.StateEntry, error) {
+	blocks, err := d.StateBlockTable.BulkSelectStateBlockEntries(ctx, txn, stateBlockNIDs)
+	if err != nil {
+		return nil, fmt.Errorf("d.StateBlockTable.BulkSelectStateBlockEntries: %w", err)
+	}
+	stored := map[types.EventNID]struct{}{}
+	for _, events := range blocks {
+		for _, event := range events {
+			stored[event] = struct{}{}
+		}
+	}
+	// Most entries are new events; only look up the keys of the others.
+	var tuples []types.StateKeyTuple
+	for _, entry := range state {
+		if _, ok := stored[entry.EventNID]; ok {
+			tuples = append(tuples, entry.StateKeyTuple)
+		}
+	}
+	if len(tuples) == 0 {
+		return state, nil
+	}
+	sorted := slices.Clone(stateBlockNIDs)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	lists, err := d.stateEntriesForTuples(ctx, txn, sorted, tuples)
+	if err != nil {
+		return nil, err
+	}
+	byBlock := make(map[types.StateBlockNID][]types.StateEntry, len(lists))
+	for _, list := range lists {
+		byBlock[list.StateBlockNID] = list.StateEntries
+	}
+	current := map[types.StateKeyTuple]types.EventNID{}
+	for _, block := range stateBlockNIDs {
+		for _, entry := range byBlock[block] {
+			current[entry.StateKeyTuple] = entry.EventNID
+		}
+	}
+	kept := make([]types.StateEntry, 0, len(state))
+	for _, entry := range state {
+		if event, ok := current[entry.StateKeyTuple]; ok && event == entry.EventNID {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept, nil
 }
 
 // addStateBlocks stores a snapshot made of stateBlockNIDs followed, when state
@@ -356,6 +393,18 @@ func (d *Database) addStateBlocks(
 	state []types.StateEntry,
 ) (stateNID types.StateSnapshotNID, err error) {
 	err = d.Writer.Do(d.DB, txn, func(txn *sql.Tx) error {
+		// The blocks may have been read before the state compaction
+		// re-encoded one of them against a base.
+		var ok bool
+		if stateBlockNIDs, ok, err = d.addCompactionBases(ctx, txn, stateBlockNIDs); err != nil {
+			return err
+		}
+		if !ok {
+			if state, err = d.combineWithCompactionBases(ctx, txn, stateBlockNIDs, state); err != nil {
+				return err
+			}
+			stateBlockNIDs = nil
+		}
 		if len(state) > 0 {
 			// If there's any state left to add then let's add new blocks.
 			var stateBlockNID types.StateBlockNID
@@ -382,6 +431,23 @@ func (d *Database) addStateBlocks(
 				stateBlockNIDs = nil
 			}
 			stateBlockNIDs = append(stateBlockNIDs[:len(stateBlockNIDs):len(stateBlockNIDs)], stateBlockNID)
+			// The new entries may match a compacted block, which then needs
+			// its base too.
+			var withBases []types.StateBlockNID
+			if withBases, ok, err = d.addCompactionBases(ctx, txn, stateBlockNIDs); err != nil {
+				return err
+			}
+			if !ok {
+				var full []types.StateEntry
+				if full, err = d.combineWithCompactionBases(ctx, txn, stateBlockNIDs, nil); err != nil {
+					return err
+				}
+				if stateBlockNID, err = d.StateBlockTable.BulkInsertStateData(ctx, txn, full); err != nil {
+					return fmt.Errorf("d.StateBlockTable.BulkInsertStateData: %w", err)
+				}
+				withBases = []types.StateBlockNID{stateBlockNID}
+			}
+			stateBlockNIDs = withBases
 		}
 		stateNID, err = d.StateSnapshotTable.InsertState(ctx, txn, roomNID, stateBlockNIDs)
 		if err != nil {
