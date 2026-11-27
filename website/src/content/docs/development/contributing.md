@@ -125,12 +125,22 @@ During a [rolling upgrade](/administration/high-availability/#rolling-upgrades),
 A change to that shared state needs a new HA upgrade level.
 `TestContractSurface` in `setup/ha` creates every table in a fresh PostgreSQL database.
 It then compares the schema, the recorded migrations, and the JetStream stream definitions with `setup/ha/testdata/surface.txt`.
-When it fails, raise `Level` in `setup/ha/contract.go` and set the other two fields:
+When it fails, raise `Level` in `setup/ha/contract.go` and keep `UpgradeFrom` and `RollbackTo` unchanged.
 
-- Keep `UpgradeFrom` and `RollbackTo` at the previous level when the change is backward compatible, such as a new table, a nullable column, or a new optional message field.
-- Raise `RollbackTo` when an older build can't work with what this one writes, such as a dropped column it reads or a message it can't decode.
-- Raise `UpgradeFrom` when this build can't take over from an older one, such as a changed stream or a migration that needs the old build stopped first.
-  This makes the upgrade offline.
+Every release must stay a rolling upgrade from, and a rolling rollback to, every earlier release of the same protocol.
+Deployments update unattended and may skip releases, so a level that raises `UpgradeFrom` or `RollbackTo` would turn some of those updates into an offline upgrade.
+`TestLevelsKeepRollingUpgrades` refuses such a level.
+
+Make the change backward compatible instead, such as a new table, a nullable column, or a new optional message field.
+Split a change that older builds can't work with over several releases:
+
+1. Add the new structure, and read and write both.
+2. Stop using the old structure.
+3. Keep the old structure, or leave it unused, rather than dropping it.
+
+A change that older builds can never work with, such as a changed stream, starts a new protocol.
+Raise `Protocol` and set `UpgradeFrom` and `RollbackTo` to the new level.
+Mark the commit as a breaking change, so the release is a new major version and deployments that only automate minor and patch updates wait for an operator.
 
 Then record the level with `go test ./setup/ha -run TestContractSurface -update`.
 This adds the level to `setup/ha/testdata/levels.json`, the published upgrade matrix.

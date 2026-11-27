@@ -201,14 +201,14 @@ The old and new builds therefore never write the schema at the same time, and a 
 A migration delays the successor's readiness, and a planned handover holds requests for that long.
 Keep migrations that run during a rolling upgrade short, and move long data backfills to background work that tolerates restarts.
 
-- A migration that an older level can't run against, such as dropping or renaming a column it reads, must raise `rollback_to`.
-- A migration that the new level needs before it can read older data must raise `upgrade_from`, which makes the upgrade offline.
+Within a protocol, a level never raises `upgrade_from` or `rollback_to`, so every migration must leave the schema usable by every earlier level of that protocol.
+Split a change that older levels can't work with over several levels:
 
-Where possible, split such changes over several levels:
-
-1. Add the new structure and write both.
+1. Add the new structure, and read and write both.
 2. Stop using the old structure.
-3. Drop it only in a later level whose `rollback_to` excludes builds that still read it.
+3. Keep the old structure rather than dropping or renaming it.
+
+A change that older levels can never work with starts a new protocol in a major release, which needs the offline upgrade below.
 
 `setup/ha/testdata/surface.txt` records every level's schema, migrations, and streams.
 CI refuses a change to them that doesn't declare a new level.

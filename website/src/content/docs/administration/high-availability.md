@@ -360,15 +360,15 @@ CI refuses a change to the shared-state surface that doesn't declare a new level
 | 1 | first release after 3.3.0 | 1 | 1 |
 
 Builds of the same level are always interchangeable, so patch releases and rebuilds roll without restrictions.
-A new level lists how far back it can upgrade from.
-Unless its `upgrade_from` says otherwise, only adjacent levels are supported, and skipping a level needs an intermediate rollout or an offline upgrade.
+Within a protocol, every level upgrades from and rolls back to the first level of that protocol.
+Any release can therefore replace any earlier release of the same protocol in a rolling upgrade, including one that skips releases, and CI refuses a level that would break this.
+A new protocol is always a new major version, so automating minor and patch updates never needs an offline upgrade.
 Earlier releases pinned their exact executable and have no contract, so reaching level 1 is one last offline upgrade.
 
 These changes still need an offline upgrade:
 
 - Anything in the deployment identity, including enabling or disabling an MSC, changing the topic prefix, or moving media.
-- A level whose `upgrade_from` excludes the running level, for example a stream storage, retention, or subject change, which HA refuses to apply to an existing stream.
-- A rollback below the floor.
+- A major release that starts a new protocol, for example for a stream storage, retention, or subject change, which HA refuses to apply to an existing stream.
 
 ### Runbook
 

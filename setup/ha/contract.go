@@ -39,12 +39,14 @@ type Contract struct {
 
 // release is this build's contract.
 //
-// Raise Level for every change to the shared-state surface. Keep UpgradeFrom
-// and RollbackTo at the previous release's level while every change is
-// backward compatible: additive migrations, new tables, new optional message
-// fields. Raise UpgradeFrom when this build cannot take over from an older
-// one, and RollbackTo when an older build cannot take over from this one;
-// either turns the transition into an offline upgrade.
+// Raise Level for every change to the shared-state surface, and keep
+// UpgradeFrom and RollbackTo at the first level of the protocol: every change
+// within a protocol must be backward compatible, such as additive
+// migrations, new tables and new optional message fields, so any release
+// rolls over any earlier one. A change that older builds can never work with
+// raises Protocol instead, sets UpgradeFrom and RollbackTo to the new level,
+// and ships as a breaking release. TestLevelsKeepRollingUpgrades enforces
+// this.
 var release = Contract{Protocol: 1, Level: releaseLevel, UpgradeFrom: 1, RollbackTo: 1}
 
 // releaseLevel is the current shared-state surface level. Level 2 stores
